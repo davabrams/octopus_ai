@@ -3,15 +3,15 @@ import numpy as np
 import time as tm
 
 GameParameters: dict = {
-    'x_len': 12,
-    'y_len': 10,
+    'x_len': 10,
+    'y_len': 12,
     'rand_seed': 0,
     'agent_max_velocity': 0.2,
     'agent_max_theta': 0.1,
     'octo_max_body_velocity': 0.3,
     'octo_max_arm_theta': 0.1,
     'octo_num_arms': 8,
-    'octo_max_sucker_distance': 0.5,
+    'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,
     'octo_max_hue_change': 0.2, #max percentage of r, g, or b's total dynamic range that can change at a time
     'limb_rows': 16,
@@ -48,7 +48,7 @@ class RandomSurface:
         
         self._x_len = x_len
         self._y_len = y_len
-        self.grid = np.random.randint(2, size=(self._x_len, self._y_len), dtype=np.int8)
+        self.grid = np.random.randint(2, size=(self._y_len, self._x_len), dtype=np.int8)
         
     def get_val(self, x: float, y: float) -> int:
         # Gets the value 0 (black) and 1 (white) at any location
@@ -60,8 +60,6 @@ class RandomSurface:
         
         
 surf = RandomSurface(GameParameters)
-
-print(surf.grid)
 
 
 # %% Agent Generator
@@ -102,7 +100,6 @@ class AgentGenerator:
         # Generates a new agent with a random type if unspecified
         if not agent_type:
             flip = np.random.randint(0, 2)
-            print(flip)
             if (flip == 0):
                 agent_type = AgentType.PREY
             else:
@@ -174,7 +171,9 @@ class Sucker:
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
     
     def set_color(self, surf: RandomSurface):
-        c_val = surf.grid[int(self.y)][int(self.x)] * 1.0
+        x_grid_location = int(round(self.x))
+        y_grid_location = int(round(self.y))
+        c_val = surf.grid[y_grid_location][x_grid_location] * 1.0
         self.c.r = self.find_color_change(self.c.r, c_val)
         self.c.g = self.find_color_change(self.c.g, c_val)
         self.c.b = self.find_color_change(self.c.b, c_val)
@@ -202,7 +201,8 @@ class Limb:
         self.rows = GameParameters['limb_rows']
         self.cols = GameParameters['limb_cols']
         self.center_line = [CenterPoint() for _ in range(self.rows)]
-        
+        self.x_len = GameParameters['x_len']
+        self.y_len = GameParameters['y_len']
         self.max_hue_change = GameParameters['octo_max_hue_change']
 
 
@@ -215,6 +215,8 @@ class Limb:
         starting center line for octopus sucker locations and angles"""
         for row in range(self.rows):
             # add 1 to leave room for octopus center
+            # generates a horizontal row of sukers and then rotates it
+            # that's why there is no y_init component used in the calculation
             x_init = (1 + row) * self.min_sucker_distance
             x_prime = x_init * np.cos(init_angle) + x_octo
             y_prime = x_init * np.sin(init_angle) + y_octo
@@ -223,7 +225,10 @@ class Limb:
     def refresh_sucker_locations(self):
         """ given a center line with x,y,theta, recalculate individual sucker
         locations """
-        self.suckers = [Sucker(0, 0) for _ in range(self.cols * self.rows)]
+        if not self.suckers:
+            #the very first time we hit this, generate all sucker objects
+            self.suckers = [Sucker(0, 0) for _ in range(self.cols * self.rows)]
+            
         
         for row in range(self.rows):
             pt = self.center_line[row]
@@ -239,6 +244,11 @@ class Limb:
                 x_prime = x + offset * np.cos(t)
                 y_prime = y + offset * np.sin(t)
                 
+                x_prime = max(x_prime, -0.5)
+                x_prime = min(x_prime, self.x_len - 0.51)
+                y_prime = max(y_prime, -0.5)
+                y_prime = min(y_prime, self.y_len - 0.51)
+                
                 self.suckers[row + self.rows * col].x = x_prime
                 self.suckers[row + self.rows * col].y = y_prime
                 
@@ -246,6 +256,11 @@ class Limb:
     def drift(self, x_octo: float, y_octo: float):
         """randomly shift thetas, reconstruct centerline, and refresh sucker 
         locations """
+        
+        # TODO(davabrams): instead of doing it this way, adjust the final 
+        # centerpoint to move towards prey and away from threats, and then
+        # adjust the rest of the center points accordingly as a spline or 
+        # something
         self.sucker_distance += np.random.uniform(-.05, .05)
         self.sucker_distance = max(self.sucker_distance, self.min_sucker_distance)
         self.sucker_distance = min(self.sucker_distance, self.max_sucker_distance)
@@ -315,12 +330,13 @@ octo.set_color(surf)
 # Print the octopus
 for limb in octo.limbs:
     for sucker in limb.suckers:
-        plt.plot(sucker.x, sucker.y, marker='.', color=sucker.c.to_rgb(), mec=[0.5, 0.5, 0.5], lw=1)
+        plt.plot(sucker.x, sucker.y, marker='.', markersize = 10, mfc=sucker.c.to_rgb(), mec=[0.5, 0.5, 0.5], lw=1)
             
     for c_row in range(len(limb.center_line) - 1):
         pt_1 = limb.center_line[c_row]
         pt_2 = limb.center_line[c_row + 1]
-        plt.plot([pt_1.x, pt_2.x], [pt_1.y, pt_2.y], color = 'brown')
+        plt.plot([pt_1.x, pt_2.x], [pt_1.y, pt_2.y], color =
+                 'brown')
 
 
 # Print the agents
@@ -331,6 +347,7 @@ for agent in a.agents:
     else:
         color = 'violet'
     plt.plot(agent.x, agent.y, marker='o', color=color) 
+    
 
 plt.xticks([]) 
 plt.yticks([]) 
