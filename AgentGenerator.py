@@ -1,23 +1,8 @@
 # %% Agent Generator
-from enum import Enum
 import numpy as np
+from Octopus import Octopus
+from util import MovementMode, AgentType, Agent
 
-
-class AgentType(Enum):
-    PREY = 0
-    THREAT = 1
-    
-    
-class Agent:
-    x: float = 0
-    y: float = 0
-    vel: float = 0
-    t: float = 0
-    Type: AgentType = None
-    
-    def __repr__(self):
-        return f"<Agent\n\tType: {self.Type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}, \n\tTheta = {self.t}>\n"
-    
     
 class AgentGenerator:
     # Generates an agent at a location.
@@ -31,13 +16,14 @@ class AgentGenerator:
         self._y_len = GameParameters['y_len']
         self.max_velocity = GameParameters['agent_max_velocity']
         self.max_theta = GameParameters['agent_max_theta']
+        self.movement_mode = GameParameters['agent_movement_mode']
+        self.range_radius = GameParameters['agent_range_radius']
 
     def generate(self, num_agents: int = 1, fixed_agent_type: AgentType = None):
         # Generates (a/some) new agent(s) with a random type if unspecified
         for _ in range(num_agents):
             if not fixed_agent_type:
                 flip = np.random.randint(0, 2)
-                print(flip)
                 if (flip == 0):
                     agent_type = AgentType.PREY
                 else:
@@ -52,10 +38,16 @@ class AgentGenerator:
             new_agent.t = np.random.uniform(0, 2 * np.pi)
             self.agents.append(new_agent)
         
-    def increment_all(self):
-        self.agents = [self._increment(agent) for agent in self.agents]
+    def increment_all(self, octo: Octopus = None):
+        if self.movement_mode == MovementMode.ATTRACT_REPEL and octo == None:
+            assert False, "movement mode set to attract/repel but no octopus object passed"
+
+        if self.movement_mode == MovementMode.RANDOM:
+            self.agents = [self._increment_random(agent) for agent in self.agents]
+        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
+            self.agents = [self._increment_attract_repel(agent, octo) for agent in self.agents]
             
-    def _increment(self, agent: Agent) -> Agent:
+    def _increment_random(self, agent: Agent) -> Agent:
         new_agent = agent
         new_agent.x = new_agent.x + new_agent.vel * np.cos(new_agent.t)
         new_agent.x = min(max(new_agent.x, 0), self._x_len)
@@ -65,3 +57,8 @@ class AgentGenerator:
         new_agent.vel = np.random.uniform(0, self.max_velocity)
         new_agent.t = (new_agent.t + np.random.uniform(0, self.max_theta * np.pi)) % (2 * np.pi)
         return new_agent
+            
+    def _increment_attract_repel(self, agent: Agent, octo: Octopus) -> Agent:
+        dist = np.sqrt(np.power(agent.x - octo.x, 2) + np.power(agent.y - octo.y, 2))
+
+        

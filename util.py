@@ -1,6 +1,39 @@
+from dataclasses import dataclass
 import matplotlib.pyplot as plt
-from AgentGenerator import AgentType
+from enum import Enum
+import numpy as np
 
+class MovementMode(Enum):
+    RANDOM: int = 0
+    ATTRACT_REPEL: int = 1
+
+
+class AgentType(Enum):
+    PREY = 0
+    THREAT = 1
+
+
+@dataclass
+class Agent:
+    x: float = 0
+    y: float = 0
+    vel: float = 0
+    t: float = 0
+    Type: AgentType = None
+    
+    def __repr__(self):
+        return f"<Agent\n\tType: {self.Type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}, \n\tTheta = {self.t}>\n"
+
+
+@dataclass
+class Color:
+    r: float = 0.5
+    g: float = 0.5
+    b: float = 0.5
+    
+    def to_rgb(self):
+        return [self.r, self.g, self.b]
+    
 
 def print_setup():
     fig = plt.figure()
@@ -12,7 +45,7 @@ def print_setup():
     ax.set_title("Octopus AI Visualizer") 
     return fig, ax
 
-def print_all(ax, octo, ag, surf):
+def print_all(ax, octo, ag, surf, debug_mode = False):
 
     ax.clear()
 
@@ -31,7 +64,10 @@ def print_all(ax, octo, ag, surf):
 
     # Print the agents
     for agent in ag.agents:
+        agent_range_ms = np.pi * np.power(ag.range_radius, 2)
         color: str = 'violet'
         if agent.Type == AgentType.PREY:
-            color = 'lightgreen'                
-        ax.plot(agent.x, agent.y, marker='o', color=color) 
+            color = 'lightgreen'
+        if debug_mode:
+            ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)
+        ax.plot(agent.x, agent.y, marker='o', color=color)

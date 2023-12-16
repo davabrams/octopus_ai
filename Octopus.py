@@ -2,6 +2,8 @@
 from dataclasses import dataclass, field
 import numpy as np
 from RandomSurface import RandomSurface
+from util import MovementMode, Agent, Color
+
 
 @dataclass
 class CenterPoint:
@@ -9,15 +11,7 @@ class CenterPoint:
     y: float = 0
     t: float = 0
 
-@dataclass
-class Color:
-    r: float = 0.5
-    g: float = 0.5
-    b: float = 0.5
-    
-    def to_rgb(self):
-        return [self.r, self.g, self.b]
-    
+
 @dataclass
 class Sucker:
     x: float
@@ -62,7 +56,8 @@ class Limb:
         self.x_len = GameParameters['x_len']
         self.y_len = GameParameters['y_len']
         self.max_hue_change = GameParameters['octo_max_hue_change']
-
+        self.movement_mode = GameParameters['limb_movement_mode']
+        self.max_arm_theta = GameParameters['octo_max_arm_theta']
 
         """" generate the initial sucker positions within the arm"""
         self.gen_centerline(x_octo, y_octo, init_angle)
@@ -111,7 +106,7 @@ class Limb:
                 self.suckers[row + self.rows * col].y = y_prime
                 
                 
-    def drift(self, x_octo: float, y_octo: float):
+    def move(self, x_octo: float, y_octo: float):
         """randomly shift thetas, reconstruct centerline, and refresh sucker 
         locations """
         
@@ -119,6 +114,17 @@ class Limb:
         # centerpoint to move towards prey and away from threats, and then
         # adjust the rest of the center points accordingly as a spline or 
         # something
+        if self.movement_mode == MovementMode.RANDOM:
+            self._move_random(x_octo, y_octo)
+        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
+            self._move_attract_repel(x_octo, y_octo)
+            pass
+        else:
+            assert False, "Unknown movement mode"
+
+        self.refresh_sucker_locations()
+    
+    def _move_random(self, x_octo: float, y_octo: float):
         self.sucker_distance += np.random.uniform(-.05, .05)
         self.sucker_distance = max(self.sucker_distance, self.min_sucker_distance)
         self.sucker_distance = min(self.sucker_distance, self.max_sucker_distance)
@@ -126,7 +132,7 @@ class Limb:
         for row in range(self.rows):
             pt = self.center_line[row]
             t = pt.t
-            t += np.random.uniform(-.1, .1)
+            t += np.random.uniform(-self.max_arm_theta, self.max_arm_theta)
             
             x_prime = x_octo + self.sucker_distance * np.cos(t)
             y_prime = y_octo + self.sucker_distance * np.sin(t)
@@ -135,8 +141,14 @@ class Limb:
             self.center_line[row].t = t
             x_octo = x_prime
             y_octo = y_prime
-        self.refresh_sucker_locations()
-        
+
+    def _move_attract_repel(self, x_octo: float, y_octo: float):
+        print("Attract/Repel movement mode not complete")
+        # step 1: move the last centerpoint towards prey and away from threats
+        # step 2: shift the first centerpoint relative to the octopus new postion
+        # step 3: 
+        pass
+
     def set_color(self, surf: RandomSurface):
         for sucker in self.suckers:
             sucker.set_color(surf)
@@ -147,8 +159,8 @@ class Octopus:
         self.y = GameParameters['y_len'] / 2.0
 
         self.max_body_velocity = GameParameters['octo_max_body_velocity']
-        self.max_arm_theta = GameParameters['octo_max_arm_theta']
         self.num_arms = GameParameters['octo_num_arms']
+        self.movement_mode = GameParameters['octo_movement_mode']
 
         self.limbs = [
             Limb(
@@ -160,13 +172,25 @@ class Octopus:
             for ix in range(self.num_arms)
         ]
         
-    def move(self):
-        self.x += np.random.uniform(-0.25, 0.25)
-        self.y += np.random.uniform(-0.25, 0.25)
+    def move(self, ag: Agent = None):
+        if self.movement_mode == MovementMode.ATTRACT_REPEL and not ag:
+            assert False, "movement mode set to attract/repel but no agent object passed"
+
+        if self.movement_mode == MovementMode.RANDOM:
+            self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
+            self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
+        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
+            self._move_attract_repel(ag)
+        else:
+            assert False, "Unknown movement mode"
+            
         for l in self.limbs:
-            l.drift(self.x, self.y)
+            l.move(self.x, self.y)
+
+    def _move_attract_repel(self, ag: Agent = None):
+        print("Attract/Repel movement mode not complete")
+        pass
 
     def set_color(self, surf: RandomSurface):
         for l in self.limbs:
             l.set_color(surf)
-
