@@ -52,15 +52,24 @@ def print_all(ax, octo, ag, surf, debug_mode = False):
     # Print the patterned surface
     ax.imshow(surf.grid.astype(float), cmap="binary_r") 
 
+    #delete this.  used to check for transposed behavior
+    if debug_mode == True:
+        for i_x, row in enumerate(surf.grid):
+            for i_y, val in enumerate(row):
+                ax.plot(i_x, i_y, marker='.', mfc=[float(val)] * 3, markeredgewidth = 0)
+
     # Print the octopus
+    sucker_edge_width = 0
+    if debug_mode:
+        sucker_edge_width = 1
     for limb in octo.limbs:
         for sucker in limb.suckers:
-            ax.plot(sucker.x, sucker.y, marker='.', markersize = 10, mfc=sucker.c.to_rgb(), mec=[0.5, 0.5, 0.5], lw=1)
-                
-        for c_row in range(len(limb.center_line) - 1):
-            pt_1 = limb.center_line[c_row]
-            pt_2 = limb.center_line[c_row + 1]
-            ax.plot([pt_1.x, pt_2.x], [pt_1.y, pt_2.y], color = 'brown')
+            ax.plot(sucker.x, sucker.y, marker='.', markersize = 10, mfc=sucker.c.to_rgb(), mec=[0.5, 0.5, 0.5], markeredgewidth=sucker_edge_width)
+        if debug_mode:
+            for c_row in range(len(limb.center_line) - 1):
+                pt_1 = limb.center_line[c_row]
+                pt_2 = limb.center_line[c_row + 1]
+                ax.plot([pt_1.x, pt_2.x], [pt_1.y, pt_2.y], color = 'brown')
 
     # Print the agents
     for agent in ag.agents:

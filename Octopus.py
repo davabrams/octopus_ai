@@ -103,8 +103,7 @@ class Limb:
                 y_prime = min(y_prime, self.y_len - 0.51)
                 
                 self.suckers[row + self.rows * col].x = x_prime
-                self.suckers[row + self.rows * col].y = y_prime
-                
+                self.suckers[row + self.rows * col].y = y_prime                
                 
     def move(self, x_octo: float, y_octo: float):
         """randomly shift thetas, reconstruct centerline, and refresh sucker 

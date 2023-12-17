@@ -1,18 +1,17 @@
 import matplotlib.pyplot as plt 
-import tensorflow as tf
-import time as tm
 from AgentGenerator import AgentGenerator
 from Octopus import Octopus
 from RandomSurface import RandomSurface
 from util import print_setup, print_all, MovementMode
 
+""" Entry point for octopus data generation """
 
 GameParameters: dict = {
     # General game parameters
     'x_len': 15,
     'y_len': 15,
     'rand_seed': 0,
-    'debug_mode': True, #enables things like agent attract/repel regions
+    'debug_mode': False, #enables things like agent attract/repel regions
 
     # Agent parameters
     'agent_number_of_agents': 5,
@@ -37,23 +36,6 @@ GameParameters: dict = {
     'limb_movement_mode': MovementMode.RANDOM,
     }
 
-# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-if False:
-    start = tm.time()
-
-    x = tf.Variable(1.0)
-
-    def f(x):
-        y = x**2 + 2*x - 5
-        return y
-
-    print(f(1))
-
-
-    end = tm.time()
-    print(f"tensorflow took: {end - start:.4f} seconds")
-
-
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 surf = RandomSurface(GameParameters)
 ag = AgentGenerator(GameParameters)
@@ -74,3 +56,4 @@ while True:
 
     ag.increment_all(octo)
     octo.move(ag)
+    octo.set_color(surf)
