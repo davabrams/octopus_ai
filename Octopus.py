@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from RandomSurface import RandomSurface
-from util import MovementMode, Agent, Color
+from util import MovementMode, Agent, Color, MLMode
 
 
 @dataclass
@@ -22,15 +22,18 @@ class Sucker:
     def __repr__(self):
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
     
-    def set_color(self, surf: RandomSurface):
-        x_grid_location = int(round(self.x))
-        y_grid_location = int(round(self.y))
-        c_val = surf.grid[y_grid_location][x_grid_location] * 1.0
+    def set_color_no_model(self, surf: RandomSurface):
+        c_val = self.get_surf_color_at_this_sucker(surf)
         self.c.r = self.find_color_change(self.c.r, c_val)
         self.c.g = self.find_color_change(self.c.g, c_val)
         self.c.b = self.find_color_change(self.c.b, c_val)
         
-    
+    def get_surf_color_at_this_sucker(self, surf: RandomSurface):
+        x_grid_location = int(round(self.x))
+        y_grid_location = int(round(self.y))
+        c_val = surf.grid[y_grid_location][x_grid_location] * 1.0
+        return c_val
+
     def find_color_change(self, c_start, c_target):
         d_max = self.max_hue_change
         dc = c_target - c_start
@@ -148,9 +151,9 @@ class Limb:
         # step 3: 
         pass
 
-    def set_color(self, surf: RandomSurface):
+    def set_color_no_model(self, surf: RandomSurface):
         for sucker in self.suckers:
-            sucker.set_color(surf)
+            sucker.set_color_no_model(surf)
 
 class Octopus:
     def __init__(self, GameParameters: dict):
@@ -190,6 +193,8 @@ class Octopus:
         print("Attract/Repel movement mode not complete")
         pass
 
-    def set_color(self, surf: RandomSurface):
-        for l in self.limbs:
-            l.set_color(surf)
+    def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL):
+        if inference_mode == MLMode.NO_MODEL or inference_mode == MLMode.SUCKER:
+            for l in self.limbs:
+                l.set_color_no_model(surf)
+        

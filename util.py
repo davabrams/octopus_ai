@@ -2,6 +2,9 @@ from dataclasses import dataclass
 import matplotlib.pyplot as plt
 from enum import Enum
 import numpy as np
+np.set_printoptions(precision=4)
+
+""" utilities for octopus simulator """
 
 class MovementMode(Enum):
     RANDOM: int = 0
@@ -12,6 +15,11 @@ class AgentType(Enum):
     PREY = 0
     THREAT = 1
 
+class MLMode(Enum):
+    NO_MODEL = 0
+    SUCKER = 1
+    LIMB = 2
+    FULL = 3
 
 @dataclass
 class Agent:

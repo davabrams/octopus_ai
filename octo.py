@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 from AgentGenerator import AgentGenerator
 from Octopus import Octopus
 from RandomSurface import RandomSurface
-from util import print_setup, print_all, MovementMode
+from util import print_setup, print_all, MLMode, MovementMode
 
-""" Entry point for octopus data generation """
+""" Entry point for octopus visualizer """
 
 GameParameters: dict = {
     # General game parameters
@@ -12,6 +12,11 @@ GameParameters: dict = {
     'y_len': 15,
     'rand_seed': 0,
     'debug_mode': False, #enables things like agent attract/repel regions
+    'num_iterations': 10, #set this to -1 for infinite loop
+
+    # ML datagen parameters
+    'inference_mode': MLMode.SUCKER,
+    'datagen_mode': True,
 
     # Agent parameters
     'agent_number_of_agents': 5,
@@ -46,7 +51,11 @@ octo.set_color(surf)
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 fig, ax = print_setup()
-while True:
+
+run_iterations = 0
+while run_iterations != GameParameters['num_iterations']:
+    run_iterations += 1
+
     print_all(ax, octo, ag, surf, GameParameters['debug_mode'])
 
     fig.canvas.draw()
@@ -56,4 +65,7 @@ while True:
 
     ag.increment_all(octo)
     octo.move(ag)
-    octo.set_color(surf)
+
+    # run inference using the selected mode
+    octo.set_color(surf, GameParameters['inference_mode'])
+1
