@@ -88,3 +88,41 @@ def print_all(ax, octo, ag, surf, debug_mode = False):
         if debug_mode:
             ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)
         ax.plot(agent.x, agent.y, marker='o', color=color)
+
+        Python
+
+import numpy as np
+
+def train_test_split(data, labels, test_size=0.2, random_state=None):
+  """
+  Splits data and labels into training and test sets.
+
+  Args:
+    data: NumPy array of data points.
+    labels: NumPy array of corresponding labels.
+    test_size: Proportion of data to be used for testing (between 0 and 1).
+    random_state: Seed for random shuffling (optional).
+
+  Returns:
+    train_data, train_labels, test_data, test_labels: NumPy arrays of training and test data and labels.
+  """
+  if not isinstance(data, np.ndarray) or not isinstance(labels, np.ndarray):
+    raise TypeError("Both data and labels must be NumPy arrays.")
+
+  if test_size < 0 or test_size > 1:
+    raise ValueError("test_size must be between 0 and 1.")
+
+  num_samples = data.shape[0]
+  shuffle_indices = np.arange(num_samples)
+  if random_state is not None:
+    # np.random.seed(random_state)
+    np.random.shuffle(shuffle_indices)
+
+  split_point = int(num_samples * test_size)
+
+  train_data = data[shuffle_indices[:split_point]]
+  train_labels = labels[shuffle_indices[:split_point]]
+  test_data = data[shuffle_indices[split_point:]]
+  test_labels = labels[shuffle_indices[split_point:]]
+
+  return train_data, train_labels, test_data, test_labels

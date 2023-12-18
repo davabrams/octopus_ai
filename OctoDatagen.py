@@ -8,7 +8,7 @@ from RandomSurface import RandomSurface
 class OctoDatagen():
     """ Entry point for octopus datagen """
     def __init__(self, game_parameters: dict):
-        assert game_parameters >= 0, "Error, number of iterations configured in game parameters are not compatible with data generation"
+        assert game_parameters['num_iterations'] >= 0, "Error, number of iterations configured in game parameters are not compatible with data generation"
         self.game_parameters = game_parameters
         print(f"Instantiated OctDatagen with inference type {game_parameters['inference_mode']}")
 
@@ -37,7 +37,7 @@ class OctoDatagen():
         sucker_test = []
         run_iterations = 0
         while run_iterations != GameParameters['num_iterations']:
-            print(f'Iteration {run_iterations}')
+            print(f'Datagen Iteration {run_iterations}')
             run_iterations += 1
 
             ag.increment_all(octo)
