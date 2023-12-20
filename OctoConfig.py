@@ -10,6 +10,7 @@ GameParameters: dict = {
 
     # ML datagen parameters
     'inference_mode': MLMode.SUCKER,
+    'sucker_model_location': 'models/sucker.keras',
     'datagen_mode': True,
     'test_size': 0.2,
     'epochs': 8,

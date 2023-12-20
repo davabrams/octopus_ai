@@ -5,7 +5,7 @@ import time as tm
 from sklearn import preprocessing
 from tensorflow import keras
 
-from OctoDatagen import OctoDatagen
+from simulator.OctoDatagen import OctoDatagen
 from OctoConfig import GameParameters
 from util import ConstraintLoss, OctoNorm, train_test_split
 

@@ -1,8 +1,9 @@
-import tensorflow as tf
+from tensorflow import keras
 import time as tm
 from simulator.AgentGenerator import AgentGenerator
 from simulator.Octopus import Octopus
 from simulator.RandomSurface import RandomSurface
+from simulator.simutil import MLMode
 
 class OctoDatagen():
     """ Entry point for octopus datagen """
@@ -14,11 +15,15 @@ class OctoDatagen():
     def run_color_datagen(self):
         GameParameters = self.game_parameters
 
+        if GameParameters['inference_mode'] == MLMode.SUCKER:
+            model_path = GameParameters['sucker_model_location']
+            model = keras.models.load_model(model_path)
+
         surf = RandomSurface(GameParameters)
         ag = AgentGenerator(GameParameters)
         ag.generate(num_agents=GameParameters['agent_number_of_agents'])
         octo=Octopus(GameParameters)
-        octo.set_color(surf)
+        octo.set_color(surf, inference_mode=GameParameters['inference_mode'], model = model)
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")

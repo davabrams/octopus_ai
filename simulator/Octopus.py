@@ -23,29 +23,33 @@ class Sucker:
     def __repr__(self):
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
     
-    def set_color_no_model(self, surf: RandomSurface):
-        c_val = self.get_surf_color_at_this_sucker(surf)
-        self.c.r = self.find_color_change(self.c.r, c_val)
-        self.c.g = self.find_color_change(self.c.g, c_val)
-        self.c.b = self.find_color_change(self.c.b, c_val)
+    def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL, model = None):
+        if inference_mode is not MLMode.NO_MODEL:
+            assert model is not None, "model inference specified but no model was specified"
 
-    def set_color_sucker_model(self, surf: RandomSurface, model: keras.Sequential):
-        c_val = self.get_surf_color_at_this_sucker(surf)
-        self.c.r = model.predict([np.expand_dims(np.array(self.c.r), 0), 
-                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
-        self.c.g = model.predict([np.expand_dims(np.array(self.c.g), 0), 
-                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
-        self.c.b = model.predict([np.expand_dims(np.array(self.c.b), 0), 
-                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+        c_val = self._get_surf_color_at_this_sucker(surf)
 
+        if inference_mode == MLMode.NO_MODEL:
+            self.c.r = self._find_color_change(self.c.r, c_val)
+            self.c.g = self._find_color_change(self.c.g, c_val)
+            self.c.b = self._find_color_change(self.c.b, c_val)
+            return
+        elif inference_mode == MLMode.SUCKER:
+            self.c.r = model.predict([np.expand_dims(np.array(self.c.r), 0), 
+                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+            self.c.g = model.predict([np.expand_dims(np.array(self.c.g), 0), 
+                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+            self.c.b = model.predict([np.expand_dims(np.array(self.c.b), 0), 
+                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+            return
 
-    def get_surf_color_at_this_sucker(self, surf: RandomSurface):
+    def _get_surf_color_at_this_sucker(self, surf: RandomSurface):
         x_grid_location = int(round(self.x))
         y_grid_location = int(round(self.y))
         c_val = surf.grid[y_grid_location][x_grid_location] * 1.0
         return c_val
 
-    def find_color_change(self, c_start, c_target):
+    def _find_color_change(self, c_start, c_target):
         d_max = self.max_hue_change
         dc = c_target - c_start
         dc = min(dc, d_max)
@@ -162,13 +166,9 @@ class Limb:
         # step 3: 
         pass
 
-    def set_color_no_model(self, surf: RandomSurface):
+    def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL, model = None):
         for sucker in self.suckers:
-            sucker.set_color_no_model(surf)
-
-    def set_color_sucker_model(self, surf: RandomSurface, model):
-        for sucker in self.suckers:
-            sucker.set_color_sucker_model(surf, model)
+            sucker.set_color(surf, inference_mode, model)
 
 class Octopus:
     def __init__(self, GameParameters: dict):
@@ -209,17 +209,6 @@ class Octopus:
         print("Attract/Repel movement mode not complete")
         pass
 
-    def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL):
-        #TODO(davidabrams) remove this MLMode.SUCKER override
-        if inference_mode == MLMode.NO_MODEL or inference_mode == MLMode.SUCKER: 
-            for l in self.limbs:
-                l.set_color_no_model(surf)
-        elif inference_mode == MLMode.SUCKER:
-            #load the sucker model if it is not already loaded
-            if self.model is None:
-                assert Path('models/sucker.keras').is_file(), "sucker model not found"
-                self.model = keras.models.load_model('models/sucker.keras')
-            for l in self.limbs:
-                l.set_color_sucker_model(surf, self.model)
-
-        
+    def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL, model = None):
+        for l in self.limbs:
+            l.set_color(surf, inference_mode, model)
