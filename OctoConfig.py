@@ -1,4 +1,4 @@
-from util import MLMode, MovementMode
+from simulator.simutil import MLMode, MovementMode
 
 GameParameters: dict = {
     # General game parameters

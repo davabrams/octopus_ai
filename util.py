@@ -1,95 +1,12 @@
-from dataclasses import dataclass
-import matplotlib.pyplot as plt
-from enum import Enum
 import numpy as np
 from tensorflow import keras
 
 np.set_printoptions(precision=4)
 
-""" utilities for octopus simulator """
+""" Utilities for ML modeling """
 
-class MovementMode(Enum):
-    RANDOM: int = 0
-    ATTRACT_REPEL: int = 1
-
-
-class AgentType(Enum):
-    PREY = 0
-    THREAT = 1
-
-class MLMode(Enum):
-    NO_MODEL = 0
-    SUCKER = 1
-    LIMB = 2
-    FULL = 3
-
-@dataclass
-class Agent:
-    x: float = 0
-    y: float = 0
-    vel: float = 0
-    t: float = 0
-    Type: AgentType = None
-    
-    def __repr__(self):
-        return f"<Agent\n\tType: {self.Type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}, \n\tTheta = {self.t}>\n"
-
-
-@dataclass
-class Color:
-    r: float = 0.5
-    g: float = 0.5
-    b: float = 0.5
-    
-    def to_rgb(self):
-        return [self.r, self.g, self.b]
-    
-
-def print_setup():
-    fig = plt.figure()
-    fig.show()
-    ax = fig.add_subplot(1,1,1)
-    ax.set_xticks
-    ax.set_xticks([]) 
-    ax.set_xticks([]) 
-    ax.set_title("Octopus AI Visualizer") 
-    return fig, ax
-
-def print_all(ax, octo, ag, surf, debug_mode = False):
-
-    ax.clear()
-
-    # Print the patterned surface
-    ax.imshow(surf.grid.astype(float), cmap="binary_r") 
-
-    #delete this.  used to check for transposed behavior
-    if debug_mode == True:
-        for i_x, row in enumerate(surf.grid):
-            for i_y, val in enumerate(row):
-                ax.plot(i_x, i_y, marker='.', mfc=[float(val)] * 3, markeredgewidth = 0)
-
-    # Print the octopus
-    sucker_edge_width = 0
-    if debug_mode:
-        sucker_edge_width = 1
-    for limb in octo.limbs:
-        for sucker in limb.suckers:
-            ax.plot(sucker.x, sucker.y, marker='.', markersize = 10, mfc=sucker.c.to_rgb(), mec=[0.5, 0.5, 0.5], markeredgewidth=sucker_edge_width)
-        if debug_mode:
-            for c_row in range(len(limb.center_line) - 1):
-                pt_1 = limb.center_line[c_row]
-                pt_2 = limb.center_line[c_row + 1]
-                ax.plot([pt_1.x, pt_2.x], [pt_1.y, pt_2.y], color = 'brown')
-
-    # Print the agents
-    for agent in ag.agents:
-        agent_range_ms = np.pi * np.power(ag.range_radius, 2)
-        color: str = 'violet'
-        if agent.Type == AgentType.PREY:
-            color = 'lightgreen'
-        if debug_mode:
-            ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)
-        ax.plot(agent.x, agent.y, marker='o', color=color)
+def OctoNorm(x: np.array):
+   return np.subtract(np.multiply(x, 2), 1)
 
 def train_test_split(data, labels, test_size=0.2, random_state=None):
     """
@@ -156,6 +73,44 @@ class Excess20Loss(tf.keras.losses.Loss):
 
   def get_config(self):
     config = super(Excess20Loss, self).get_config()
+    config.update({
+      "original_values": self.original_values,
+      "threshold": self.threshold,
+    })
+    return config
+  
+  @classmethod
+  def from_config(cls, config: dict):
+    original_values = config.pop("original_values")
+    threshold = config.pop("threshold")
+    return cls(original_values=original_values, threshold=threshold)
+
+@keras.saving.register_keras_serializable(package="Octo", name="ConstraintLoss")
+class ConstraintLoss(tf.keras.losses.Loss):
+  """ This is the loss that maintains our color change rate constraint.
+  We have defined the color change rate to be a maximum of 0.25 per iteration.
+  This means that there is a cost incurred if the predicted value is 0.25
+  greater than or less than the original value. The true value is never used. """
+  def __init__(self, original_values, threshold=0.25):
+    super(ConstraintLoss, self).__init__()
+    self.original_values = original_values
+    self.threshold = threshold
+
+  def call(self, y_true, y_pred):
+
+    # Calculate absolute difference between predictions and original values
+    diff = tf.abs(y_pred - self.original_values)
+
+    # Apply threshold and square for stronger penalty
+    excess_penalty = tf.where(diff > self.threshold,
+                              tf.square(diff - self.threshold),
+                              tf.zeros_like(diff))
+
+    # Return scaled excess penalty as the loss
+    return 100 * tf.reduce_mean(excess_penalty)
+
+  def get_config(self):
+    config = super(ConstraintLoss, self).get_config()
     config.update({
       "original_values": self.original_values,
       "threshold": self.threshold,

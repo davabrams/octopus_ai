@@ -1,8 +1,8 @@
 # %% Octopus Class
 from dataclasses import dataclass, field
 import numpy as np
-from RandomSurface import RandomSurface
-from util import MovementMode, Agent, Color, MLMode
+from simulator.RandomSurface import RandomSurface
+from simulator.simutil import MovementMode, Agent, Color, MLMode
 from tensorflow import keras
 from pathlib import Path
 
@@ -210,7 +210,8 @@ class Octopus:
         pass
 
     def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL):
-        if inference_mode == MLMode.NO_MODEL:
+        #TODO(davidabrams) remove this MLMode.SUCKER override
+        if inference_mode == MLMode.NO_MODEL or inference_mode == MLMode.SUCKER: 
             for l in self.limbs:
                 l.set_color_no_model(surf)
         elif inference_mode == MLMode.SUCKER:

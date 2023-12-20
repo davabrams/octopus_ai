@@ -1,9 +1,8 @@
 import tensorflow as tf
-import numpy as np
 import time as tm
-from AgentGenerator import AgentGenerator
-from Octopus import Octopus
-from RandomSurface import RandomSurface
+from simulator.AgentGenerator import AgentGenerator
+from simulator.Octopus import Octopus
+from simulator.RandomSurface import RandomSurface
 
 class OctoDatagen():
     """ Entry point for octopus datagen """

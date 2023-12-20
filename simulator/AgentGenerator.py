@@ -1,7 +1,7 @@
 # %% Agent Generator
 import numpy as np
-from Octopus import Octopus
-from util import MovementMode, AgentType, Agent
+from simulator.Octopus import Octopus
+from simulator.simutil import MovementMode, AgentType, Agent
 
     
 class AgentGenerator:

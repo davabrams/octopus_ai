@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt 
-from AgentGenerator import AgentGenerator
+from simulator.AgentGenerator import AgentGenerator
 from OctoConfig import GameParameters
-from Octopus import Octopus
-from RandomSurface import RandomSurface
-from util import print_setup, print_all
+from simulator.Octopus import Octopus
+from simulator.RandomSurface import RandomSurface
+from simulator.simutil import print_setup, print_all
 
 """ Entry point for octopus visualizer """
 
