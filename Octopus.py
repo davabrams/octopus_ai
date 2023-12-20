@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from RandomSurface import RandomSurface
 from util import MovementMode, Agent, Color, MLMode
-
+from tensorflow import keras
+from pathlib import Path
 
 @dataclass
 class CenterPoint:
@@ -27,7 +28,17 @@ class Sucker:
         self.c.r = self.find_color_change(self.c.r, c_val)
         self.c.g = self.find_color_change(self.c.g, c_val)
         self.c.b = self.find_color_change(self.c.b, c_val)
-        
+
+    def set_color_sucker_model(self, surf: RandomSurface, model: keras.Sequential):
+        c_val = self.get_surf_color_at_this_sucker(surf)
+        self.c.r = model.predict([np.expand_dims(np.array(self.c.r), 0), 
+                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+        self.c.g = model.predict([np.expand_dims(np.array(self.c.g), 0), 
+                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+        self.c.b = model.predict([np.expand_dims(np.array(self.c.b), 0), 
+                                  np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+
+
     def get_surf_color_at_this_sucker(self, surf: RandomSurface):
         x_grid_location = int(round(self.x))
         y_grid_location = int(round(self.y))
@@ -155,6 +166,10 @@ class Limb:
         for sucker in self.suckers:
             sucker.set_color_no_model(surf)
 
+    def set_color_sucker_model(self, surf: RandomSurface, model):
+        for sucker in self.suckers:
+            sucker.set_color_sucker_model(surf, model)
+
 class Octopus:
     def __init__(self, GameParameters: dict):
         self.x = GameParameters['x_len'] / 2.0
@@ -163,6 +178,7 @@ class Octopus:
         self.max_body_velocity = GameParameters['octo_max_body_velocity']
         self.num_arms = GameParameters['octo_num_arms']
         self.movement_mode = GameParameters['octo_movement_mode']
+        self.model = None
 
         self.limbs = [
             Limb(
@@ -194,7 +210,15 @@ class Octopus:
         pass
 
     def set_color(self, surf: RandomSurface, inference_mode: MLMode = MLMode.NO_MODEL):
-        if inference_mode == MLMode.NO_MODEL or inference_mode == MLMode.SUCKER:
+        if inference_mode == MLMode.NO_MODEL:
             for l in self.limbs:
                 l.set_color_no_model(surf)
+        elif inference_mode == MLMode.SUCKER:
+            #load the sucker model if it is not already loaded
+            if self.model is None:
+                assert Path('models/sucker.keras').is_file(), "sucker model not found"
+                self.model = keras.models.load_model('models/sucker.keras')
+            for l in self.limbs:
+                l.set_color_sucker_model(surf, self.model)
+
         

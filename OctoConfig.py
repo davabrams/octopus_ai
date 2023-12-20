@@ -12,8 +12,8 @@ GameParameters: dict = {
     'inference_mode': MLMode.SUCKER,
     'datagen_mode': True,
     'test_size': 0.2,
-    'epochs': 10,
-    'batch_size': 32,
+    'epochs': 8,
+    'batch_size': 8,
 
     # Agent parameters
     'agent_number_of_agents': 5,
