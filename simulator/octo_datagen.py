@@ -1,8 +1,11 @@
-from tensorflow import keras
+"""Octopus Data Generation Class"""
 import time as tm
-from simulator.AgentGenerator import AgentGenerator
-from simulator.Octopus import Octopus
-from simulator.RandomSurface import RandomSurface
+import getpass
+import socket
+from tensorflow import keras
+from simulator.agent_generator import AgentGenerator
+from simulator.octopus import Octopus
+from simulator.random_surface import RandomSurface
 from simulator.simutil import MLMode
 
 class OctoDatagen():
@@ -14,6 +17,7 @@ class OctoDatagen():
 
     def run_color_datagen(self):
         GameParameters = self.game_parameters
+        model = None
         if GameParameters['inference_mode'] == MLMode.SUCKER:
             model_path = GameParameters['sucker_model_location']
             model = keras.models.load_model(model_path)
@@ -48,7 +52,7 @@ class OctoDatagen():
             for l in octo.limbs:
                 for s in l.suckers:
                     sucker_state.append(s.c.r)
-                    sucker_gt.append(s.get_surf_color_at_this_sucker(surf))
+                    sucker_gt.append(s._get_surf_color_at_this_sucker(surf))
 
             # run inference using the selected mode
             octo.set_color(surf, GameParameters['inference_mode'])
@@ -59,11 +63,8 @@ class OctoDatagen():
                     sucker_test.append(s.c.r)
 
         # Encapsulate data for use in training
-        import getpass
-        import socket
-        import time
         metadata = {
-            'datetime': time.time(),
+            'datetime': tm.time(),
             'user': getpass.getuser(),
             'machine': socket.gethostname(),
         }

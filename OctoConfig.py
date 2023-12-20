@@ -1,3 +1,6 @@
+"""
+Octopus game and ML parameters
+"""
 from simulator.simutil import MLMode, MovementMode
 
 GameParameters: dict = {
@@ -5,7 +8,7 @@ GameParameters: dict = {
     'x_len': 15,
     'y_len': 15,
     'rand_seed': 0,
-    'debug_mode': False, #enables things like agent attract/repel regions
+    'debug_mode': True, #enables things like agent attract/repel regions
     'num_iterations': 100, #set this to -1 for infinite loop
 
     # ML datagen parameters
@@ -30,7 +33,7 @@ GameParameters: dict = {
     'octo_num_arms': 8,
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,
-    'octo_max_hue_change': 0.2, #max percentage of r, g, or b's total dynamic range that can change at a time
+    'octo_max_hue_change': 0.25, #max val of r, g, or b's total dynamic range that can change at a time
     'octo_movement_mode': MovementMode.RANDOM,
 
     # Limb parameters
