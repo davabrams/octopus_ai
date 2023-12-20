@@ -14,11 +14,9 @@ class OctoDatagen():
 
     def run_color_datagen(self):
         GameParameters = self.game_parameters
-
         if GameParameters['inference_mode'] == MLMode.SUCKER:
             model_path = GameParameters['sucker_model_location']
             model = keras.models.load_model(model_path)
-
         surf = RandomSurface(GameParameters)
         ag = AgentGenerator(GameParameters)
         ag.generate(num_agents=GameParameters['agent_number_of_agents'])

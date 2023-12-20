@@ -44,9 +44,7 @@ class Sucker:
             return
 
     def _get_surf_color_at_this_sucker(self, surf: RandomSurface):
-        x_grid_location = int(round(self.x))
-        y_grid_location = int(round(self.y))
-        c_val = surf.grid[y_grid_location][x_grid_location] * 1.0
+        c_val = surf.get_val(self.x, self.y) * 1.0
         return c_val
 
     def _find_color_change(self, c_start, c_target):
@@ -78,10 +76,10 @@ class Limb:
         self.max_arm_theta = GameParameters['octo_max_arm_theta']
 
         """" generate the initial sucker positions within the arm"""
-        self.gen_centerline(x_octo, y_octo, init_angle)
-        self.refresh_sucker_locations()
+        self._gen_centerline(x_octo, y_octo, init_angle)
+        self._refresh_sucker_locations()
 
-    def gen_centerline(self, x_octo: float, y_octo: float, init_angle):
+    def _gen_centerline(self, x_octo: float, y_octo: float, init_angle):
         """" given an initial angle and some distance parameters, calculate a
         starting center line for octopus sucker locations and angles"""
         for row in range(self.rows):
@@ -93,7 +91,7 @@ class Limb:
             y_prime = x_init * np.sin(init_angle) + y_octo
             self.center_line[row] = CenterPoint(x_prime, y_prime, init_angle)
 
-    def refresh_sucker_locations(self):
+    def _refresh_sucker_locations(self):
         """ given a center line with x,y,theta, recalculate individual sucker
         locations """
         if not self.suckers:
@@ -139,7 +137,7 @@ class Limb:
         else:
             assert False, "Unknown movement mode"
 
-        self.refresh_sucker_locations()
+        self._refresh_sucker_locations()
     
     def _move_random(self, x_octo: float, y_octo: float):
         self.sucker_distance += np.random.uniform(-.05, .05)

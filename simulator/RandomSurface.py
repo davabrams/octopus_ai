@@ -25,4 +25,4 @@ class RandomSurface:
         assert x > 0 and x < self._x_len, f"x must be between 0 and {self._x_len}"
         assert y > 0 and y < self._y_len, f"y must be between 0 and {self._y_len}"
         
-        return self.grid[int(x)][int(y)]
+        return self.grid[int(round(y))][int(round(x))]

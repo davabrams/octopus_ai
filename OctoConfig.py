@@ -9,7 +9,7 @@ GameParameters: dict = {
     'num_iterations': 100, #set this to -1 for infinite loop
 
     # ML datagen parameters
-    'inference_mode': MLMode.SUCKER,
+    'inference_mode': MLMode.NO_MODEL,
     'sucker_model_location': 'models/sucker.keras',
     'datagen_mode': True,
     'test_size': 0.2,
