@@ -48,10 +48,10 @@ class Color:
 
     def to_rgb(self):
         """Getter function for vectorized values"""
-        return [self.r, self.g, self.b]
-    
+        return np.array([self.r, self.g, self.b])
 
-def print_setup():
+
+def setup_display():
     """Sets up the visualization figure"""
     fig = plt.figure()
     fig.show()
@@ -61,7 +61,7 @@ def print_setup():
     ax.set_title("Octopus Visualizer")
     return fig, ax
 
-def print_all(ax, octo, ag, surf, debug_mode = False):
+def display_refresh(ax, octo, ag, surf, debug_mode = False):
     """ Displays all of the octopus simulator components """
 
     ax.clear()

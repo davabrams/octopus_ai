@@ -96,6 +96,8 @@ if RUN_INFERENCE:
 
 # %% Model eval
 if RUN_EVAL:
+    # For sucker color, eval is defined as the average of RMS of the RGB values
+    # mean([rms(pred, gt) for each (pred, gt) in octopus])
     print(f"Model eval completed at time t={tm.time() - start}")
 
 # %% End and cleanup

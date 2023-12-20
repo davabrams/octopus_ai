@@ -35,12 +35,12 @@ class Sucker:
         if inference_mode is not MLMode.NO_MODEL:
             assert model is not None, "model inference specified but no model was specified"
 
-        c_val = self._get_surf_color_at_this_sucker(surf)
+        c_val = self.get_surf_color_at_this_sucker(surf)
 
         if inference_mode == MLMode.NO_MODEL:
-            self.c.r = self._find_color_change(self.c.r, c_val)
-            self.c.g = self._find_color_change(self.c.g, c_val)
-            self.c.b = self._find_color_change(self.c.b, c_val)
+            self.c.r = self._find_color_change(self.c.r, c_val.r)
+            self.c.g = self._find_color_change(self.c.g, c_val.g)
+            self.c.b = self._find_color_change(self.c.b, c_val.b)
         elif inference_mode == MLMode.SUCKER:
             self.c.r = model.predict([np.expand_dims(np.array(self.c.r), 0), 
                                     np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
@@ -49,13 +49,14 @@ class Sucker:
             self.c.b = model.predict([np.expand_dims(np.array(self.c.b), 0), 
                                     np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
 
-    def _get_surf_color_at_this_sucker(self, surf: RandomSurface):
+    def get_surf_color_at_this_sucker(self, surf: RandomSurface) -> Color:
+        """Gets the color of the surface underneath the sucker"""
         x_grid_location = int(round(self.x))
         y_grid_location = int(round(self.y))
         c_val = surf.get_val(x_grid_location, y_grid_location) * 1.0
-        return c_val
+        return Color(c_val, c_val, c_val)
 
-    def _find_color_change(self, c_start, c_target):
+    def _find_color_change(self, c_start: float, c_target: float):
         d_max = self.max_hue_change
         dc = c_target - c_start
         dc = min(dc, d_max)
@@ -246,3 +247,19 @@ class Octopus:
         """
         for l in self.limbs:
             l.set_color(surf, inference_mode, model)
+
+    def visibility(self, surf: RandomSurface):
+        """Computes octopus visibility as mean of square of octopus color error"""
+        sum_of_squares = 0.0
+        num_suckers = 0
+        for l in self.limbs:
+            num_suckers += (l.rows * l.cols)
+            for s in l.suckers:
+                pred = s.c.to_rgb()
+                truth = s.get_surf_color_at_this_sucker(surf).to_rgb()
+                diff = pred - truth
+                diff_sq = np.power(diff, 2)
+                error = np.sum(diff_sq)
+                sum_of_squares += error
+        mse = sum_of_squares / num_suckers
+        return mse
