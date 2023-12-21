@@ -52,44 +52,6 @@ def train_test_split(data, labels, test_size=0.2, random_state=None):
 
     return train_data, train_labels, test_data, test_labels
 
-
-@keras.saving.register_keras_serializable(package="Octo", name="Excess20Loss")
-class Excess20Loss(tf.keras.losses.Loss):
-    """ Custom keras loss function """
-    def __init__(self, original_values, threshold=0.2):
-        super().__init__()
-        self.original_values = original_values
-        self.threshold = threshold
-
-    def call(self, y_true, y_pred):
-        # Calculate absolute difference between predictions and original values
-        diff = tf.abs(y_pred - self.original_values)
-
-        # Calculate fraction of original value exceeded
-        excess_fraction = diff / self.original_values
-
-        # Apply threshold and square for stronger penalty
-        excess_penalty = tf.where(excess_fraction > self.threshold,
-                                  tf.square(excess_fraction - self.threshold),
-                                  tf.zeros_like(excess_fraction))
-
-        # Return scaled excess penalty as the loss
-        return tf.reduce_mean(excess_penalty)
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            "original_values": self.original_values,
-            "threshold": self.threshold,
-        })
-        return config
-
-    @classmethod
-    def from_config(cls, config: dict):
-        original_values = config.pop("original_values")
-        threshold = config.pop("threshold")
-        return cls(original_values=original_values, threshold=threshold)
-
 @keras.saving.register_keras_serializable(package="Octo", name="ConstraintLoss")
 class ConstraintLoss(tf.keras.losses.Loss):
     """ This is the loss that maintains our color change rate constraint.
@@ -112,7 +74,40 @@ class ConstraintLoss(tf.keras.losses.Loss):
                                   tf.zeros_like(diff))
 
         # Return scaled excess penalty as the loss
-        return 100 * tf.reduce_mean(excess_penalty)
+        return 10000 * tf.reduce_mean(excess_penalty)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "original_values": self.original_values,
+            "threshold": self.threshold,
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config: dict):
+        original_values = config.pop("original_values")
+        threshold = config.pop("threshold")
+        return cls(original_values=original_values, threshold=threshold)
+
+@keras.saving.register_keras_serializable(package="Octo", name="WeightedSumLoss")
+class WeightedSumLoss(tf.keras.losses.Loss):
+    """Takes the weighted sum of two loss functions"""
+    def __init__(self, original_values, threshold = 0.25):
+        super().__init__()
+        self.original_values = original_values
+        self.threshold = threshold
+        self.f1 = ConstraintLoss(self.original_values)
+        self.f2 = keras.losses.MeanSquaredError()
+        self.w1 = 0.99
+        self.w2 = 0.01
+
+    def call(self, y_true, y_pred):
+        loss1 = self.f1(y_true, y_pred)
+        loss2 = self.f2(y_true, y_pred)
+        w_loss1 = self.w1 * loss1
+        w_loss2 = self.w2 * loss2
+        return w_loss1 + w_loss2
 
     def get_config(self):
         config = super().get_config()

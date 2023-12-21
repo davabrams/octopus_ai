@@ -9,15 +9,15 @@ GameParameters: dict = {
     'y_len': 15,
     'rand_seed': 0,
     'debug_mode': True, #enables things like agent attract/repel regions
-    'num_iterations': -1, #set this to -1 for infinite loop
+    'num_iterations': 100, #set this to -1 for infinite loop
 
     # ML datagen parameters
     'inference_mode': MLMode.NO_MODEL,
     'sucker_model_location': 'models/sucker.keras',
-    'datagen_mode': True,
+    'datagen_mode': False,
     'test_size': 0.2,
-    'epochs': 8,
-    'batch_size': 8,
+    'epochs': 13,
+    'batch_size': 16,
 
     # Agent parameters
     'agent_number_of_agents': 5,
