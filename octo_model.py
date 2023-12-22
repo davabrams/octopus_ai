@@ -3,11 +3,13 @@ import datetime
 import pickle
 import time as tm
 import numpy as np
+import seaborn as sn
+import matplotlib.pyplot as plt
 from sklearn import preprocessing
 from tensorflow import keras
 from simulator.octo_datagen import OctoDatagen
 from OctoConfig import GameParameters
-from util import ConstraintLoss, OctoNorm, train_test_split
+from util import ConstraintLoss, octo_norm, train_test_split
 
 
 # %% Entry point for octopus modeling
@@ -47,20 +49,22 @@ if RUN_TRAINING:
     assert data, "No data found, can't run training."
     print(f"Training model with {len(data['gt_data'])} data points")
     scaler = preprocessing.MinMaxScaler()
-    input_data = np.array([data['state_data']]) #sucker's current color and the ground truth
+    input_data = np.array([data['state_data']]) #sucker's current color
     label_data = np.array([data['gt_data']]) #sucker's ground truth
-    input_data_norm = np.array(list(map(OctoNorm, input_data)))
-    label_data_norm = np.array(list(map(OctoNorm, label_data)))
+    input_data_norm = np.array(list(map(octo_norm, input_data)))
+    label_data_norm = np.array(list(map(octo_norm, label_data)))
     train_data, train_labels, val_data, val_labels = train_test_split(input_data_norm,
                                                                       label_data_norm)
     data_input = np.transpose(np.stack((train_data, train_labels)))
     data_val = np.transpose(np.stack((val_data, val_labels)))
 
     sucker_model = keras.Sequential()
-    sucker_model.add(keras.layers.Dense(units=3, input_dim=2, activation="relu", name="hidden_layer1"))
-    sucker_model.add(keras.layers.Dense(units=3, input_dim=2, activation="relu", name="hidden_layer2"))
-    sucker_model.add(keras.layers.Dense(units=3, activation="tanh", name="prediction"))
+    sucker_model.add(keras.layers.Dense(units=5, input_dim=2, activation="relu", name="hidden_layer1"))
+    sucker_model.add(keras.layers.Dense(units=5, activation="relu", name="hidden_layer2"))
+    # sucker_model.add(keras.layers.Dense(units=5, activation="relu", name="hidden_layer3"))
+    sucker_model.add(keras.layers.Dense(units=1, activation="tanh", name="prediction"))
 
+    losses = [ConstraintLoss(original_values=input_data), keras.losses.MeanSquaredError()]
     # Tensorboard configuration. To start tensorboard, use:
     # tensorboard serve --logdir <log directory>
     callbacks = []
@@ -69,8 +73,8 @@ if RUN_TRAINING:
         tensorboard_callback = keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         callbacks.append(tensorboard_callback)
 
-    sucker_model.compile(optimizer="adam",
-                loss=[keras.losses.MeanSquaredError(), ConstraintLoss(original_values=input_data)],
+    sucker_model.compile(optimizer="sgd",
+                loss=losses,
                 metrics=["mse"])
 
     sucker_model.fit(x=data_input,
@@ -94,17 +98,41 @@ if RUN_TRAINING:
 
 # %% Model inference
 if RUN_INFERENCE:
+    np.set_printoptions(precision=4)
     if RESTORE_MODEL_FROM_DISK:
         custom_objects = {"ConstraintLoss": ConstraintLoss}
         sucker_model = keras.models.load_model('models/sucker.keras', custom_objects)
 
     assert sucker_model, "No model found, can't run inference"
-    for curr in map(OctoNorm, [0.0,0.25,0.5,0.75,1.0]):
-        for gt in map(OctoNorm, [0.0,0.25,0.5,0.75,1.0]):
+    range_vals = [0.0,0.25,0.5,0.75,1.0]
+    res = []
+    for curr in map(octo_norm, range_vals):
+        row = []
+        for gt in map(octo_norm, range_vals):
             test_input = np.array([[curr, gt]])
-            pred = sucker_model.predict(test_input, verbose = 0)[0][0]
-            print(f"{curr:.2f}, {gt:.2f} -> {pred:.3f}")
 
+            #computes prediction output
+            pred = sucker_model.predict(test_input, verbose = 0)[0][0]
+            row.append(pred)
+
+            #computes loss
+            loss_str = ""
+            for loss_func in losses:
+                loss = float(loss_func([gt], [pred]))
+                loss_str += f"{loss:.3f}, "
+            print(f"{curr:.2f}, {gt:.2f} -> {pred:.3f} (losses = {loss_str})")
+        res.append(octo_norm(row, True))
+
+    #plots out the results
+    plt.figure(figsize = (10,7))
+    sn.heatmap(res, annot=True)
+    plt.xlabel('surface color')
+    locs, labels = plt.xticks()
+    plt.xticks(locs, range_vals)
+    plt.ylabel('suckers previous color')
+    locs, labels = plt.yticks()
+    plt.yticks(locs, range_vals)
+    plt.show()
     print(f"Model inference completed at time t={tm.time() - start}")
 
 # %% Model eval

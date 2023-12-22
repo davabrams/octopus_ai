@@ -36,8 +36,8 @@ while i != GameParameters['num_iterations']:
 
     y.set_text(f"Visibility = {octo.visibility(surf):.4f}")
     fig.canvas.draw()
-    # if fig.waitforbuttonpress(timeout=10) d:
-        # break
+    if fig.waitforbuttonpress(timeout=-1):
+        break
     plt.pause(0.1)
 
     ag.increment_all(octo)

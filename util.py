@@ -1,16 +1,21 @@
 """ Utilities for Octopus ML modeling """
 import numpy as np
 from tensorflow import keras
+from keras.utils import losses_utils
 import tensorflow as tf
 
 np.set_printoptions(precision=4)
 
 
-def OctoNorm(_x: np.array):
+def octo_norm(_x: np.array, reverse=False):
     """
     Normalizer for convertinbg color gradients (0..1) to tf inputs (-1..+1)
+    Also includes the reverse operation
     """
-    return np.subtract(np.multiply(_x, 2), 1)
+    if reverse:
+        return np.divide(np.add(_x, 1), 2)
+    else:
+        return np.subtract(np.multiply(_x, 2), 1)
 
 def train_test_split(data, labels, test_size=0.2, random_state=None):
     """
@@ -64,8 +69,12 @@ class ConstraintLoss(tf.keras.losses.Loss):
         self.threshold = threshold
 
     def call(self, y_true, y_pred):
-
         # Calculate absolute difference between predictions and original values
+        if tf.is_tensor(y_pred) and tf.is_tensor(y_true):
+            y_pred, y_true = losses_utils.squeeze_or_expand_dimensions(
+                y_pred, y_true
+            )
+
         diff = tf.abs(y_pred - self.original_values)
 
         # Apply threshold and square for stronger penalty
@@ -74,7 +83,7 @@ class ConstraintLoss(tf.keras.losses.Loss):
                                   tf.zeros_like(diff))
 
         # Return scaled excess penalty as the loss
-        return 10000 * tf.reduce_mean(excess_penalty)
+        return 100 * tf.reduce_mean(excess_penalty)
 
     def get_config(self):
         config = super().get_config()

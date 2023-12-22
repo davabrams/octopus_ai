@@ -16,8 +16,8 @@ GameParameters: dict = {
     'sucker_model_location': 'models/sucker.keras',
     'datagen_mode': False,
     'test_size': 0.2,
-    'epochs': 13,
-    'batch_size': 16,
+    'epochs': 10,
+    'batch_size': 1,
 
     # Agent parameters
     'agent_number_of_agents': 5,
