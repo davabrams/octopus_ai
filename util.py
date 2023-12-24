@@ -57,33 +57,64 @@ def train_test_split(data, labels, test_size=0.2, random_state=None):
 
     return train_data, train_labels, test_data, test_labels
 
+def sucker_model_data_constructor(data, labels):
+    """Convert and configure data types for training:
+    y_true: Ground truth values. shape = `[batch_size, d0, .. dN]`
+    y_pred: The predicted values. shape = `[batch_size, d0, .. dN]`
+    original_values: The sucker's existing value state"""
+
+    # (batch_size, num_features)
+    input_data = convert_pytype_to_model_input_type(np.transpose(np.stack((data, labels))))
+    # (batch_size, 1)
+    gt_data = convert_pytype_to_model_input_type(np.transpose(labels))
+    # (batch_size, 1)
+    orig_data = convert_pytype_to_model_input_type(data)
+
+    return input_data, gt_data, orig_data
+
+def convert_pytype_to_model_input_type(input_float):
+    """Converts native types to 2 dimensional tensors for tf model input"""
+    output_tensor = tf.convert_to_tensor(input_float, dtype='float32')
+    while len(output_tensor.shape) < 2:
+        output_tensor = tf.expand_dims(output_tensor, axis=len(output_tensor.shape))
+    return output_tensor
+
 @keras.saving.register_keras_serializable(package="Octo", name="ConstraintLoss")
 class ConstraintLoss(tf.keras.losses.Loss):
     """ This is the loss that maintains our color change rate constraint.
     We have defined the color change rate to be a maximum of 0.25 per iteration.
     This means that there is a cost incurred if the predicted value is 0.25
-    greater than or less than the original value. The true value is never used. """
-    def __init__(self, original_values, threshold=0.25):
+    greater than or less than the original value. The GT value is never used. """
+    def __init__(self, original_values, threshold=0.25, weight=1.0):
         super().__init__()
+
+        # The original_values tensor should have a 2D shape of (batch_size, num_features)
+        assert tf.is_tensor(original_values), "error: original values must be a tensor"
+        ov_size = original_values.shape
+        assert len(ov_size) == 2, "error: original value must have two dimensions"
+        batch_size = ov_size[0]
+        num_features = ov_size[1]
+        assert num_features == 1, "error: The original_values tensor should have a 2D shape of (batch_size = N, num_features = 1)"
         self.original_values = original_values
         self.threshold = threshold
+        self.weight = float(weight)
 
     def call(self, y_true, y_pred):
+        
         # Calculate absolute difference between predictions and original values
-        if tf.is_tensor(y_pred) and tf.is_tensor(y_true):
-            y_pred, y_true = losses_utils.squeeze_or_expand_dimensions(
-                y_pred, y_true
-            )
+        assert tf.is_tensor(y_pred) and tf.is_tensor(y_true), "error: inputs must be tensors"
 
         diff = tf.abs(y_pred - self.original_values)
 
         # Apply threshold and square for stronger penalty
-        excess_penalty = tf.where(diff > self.threshold,
+        excess_penalty = tf.where(diff > self.threshold, 
                                   tf.square(diff - self.threshold),
                                   tf.zeros_like(diff))
 
+        weighted_penalty =  tf.multiply(self.weight, excess_penalty)
+
         # Return scaled excess penalty as the loss
-        return 100 * tf.reduce_mean(excess_penalty)
+        return weighted_penalty
 
     def get_config(self):
         config = super().get_config()
@@ -108,8 +139,8 @@ class WeightedSumLoss(tf.keras.losses.Loss):
         self.threshold = threshold
         self.f1 = ConstraintLoss(self.original_values)
         self.f2 = keras.losses.MeanSquaredError()
-        self.w1 = 0.99
-        self.w2 = 0.01
+        self.w1 = tf.convert_to_tensor(0.99)
+        self.w2 = tf.convert_to_tensor(0.01)
 
     def call(self, y_true, y_pred):
         loss1 = self.f1(y_true, y_pred)
