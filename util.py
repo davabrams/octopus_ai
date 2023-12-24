@@ -133,14 +133,14 @@ class ConstraintLoss(tf.keras.losses.Loss):
 @keras.saving.register_keras_serializable(package="Octo", name="WeightedSumLoss")
 class WeightedSumLoss(tf.keras.losses.Loss):
     """Takes the weighted sum of two loss functions"""
-    def __init__(self, original_values, threshold = 0.25):
+    def __init__(self, original_values, threshold = tf.convert_to_tensor(0.25), weight=tf.convert_to_tensor(0.99)):
         super().__init__()
         self.original_values = original_values
         self.threshold = threshold
         self.f1 = ConstraintLoss(self.original_values)
         self.f2 = keras.losses.MeanSquaredError()
-        self.w1 = tf.convert_to_tensor(0.99)
-        self.w2 = tf.convert_to_tensor(0.01)
+        self.w1 = weight
+        self.w2 = tf.convert_to_tensor(1.0) - weight
 
     def call(self, y_true, y_pred):
         loss1 = self.f1(y_true, y_pred)

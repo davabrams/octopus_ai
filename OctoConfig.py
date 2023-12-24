@@ -18,7 +18,7 @@ GameParameters: dict = {
     'test_size': 0.2,
     'epochs': 2,
     'batch_size': 1,
-    'constraint_loss_weight': 1.0,
+    'constraint_loss_weight': 0.5,
 
     # Agent parameters
     'agent_number_of_agents': 5,

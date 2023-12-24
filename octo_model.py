@@ -12,7 +12,7 @@ from simulator.octo_datagen import OctoDatagen
 from OctoConfig import GameParameters
 from util import (
     sucker_model_data_constructor, 
-    ConstraintLoss, 
+    WeightedSumLoss, 
     octo_norm, 
     train_test_split, 
     convert_pytype_to_model_input_type
@@ -75,10 +75,9 @@ if RUN_TRAINING:
     sucker_model.add(keras.layers.Dense(units=1, activation="tanh", name="prediction"))
 
     losses = [
-        ConstraintLoss(original_values=train_orig_data,
+        WeightedSumLoss(original_values=train_orig_data,
                        threshold=max_hue_change,
-                       weight=constraint_loss_weight),
-        keras.losses.MeanSquaredError()]
+                       weight=constraint_loss_weight)]
     # Tensorboard configuration. To start tensorboard, use:
     # tensorboard serve --logdir <log directory>
     callbacks = []
@@ -100,12 +99,11 @@ if RUN_TRAINING:
     if GENERATE_TENSORBOARD:
         print(f"Tensorboard generated, run with:\n\n\ttensorboard serve --logdir {log_dir}\n")
 
-    # These need to change because now our ConstraintLoss original value should be the val set 
+    # These need to change because now our WeightedSumLos original value should be the val set 
     eval_losses = [
-        ConstraintLoss(original_values=val_orig_data,
+        WeightedSumLoss(original_values=val_orig_data,
                        threshold=max_hue_change,
-                       weight=constraint_loss_weight),
-        keras.losses.MeanSquaredError()]
+                       weight=constraint_loss_weight)]
     sucker_model.compile(optimizer="sgd",
                 loss=eval_losses,
                 metrics=["mse"])
@@ -126,7 +124,7 @@ if RUN_TRAINING:
 if RUN_INFERENCE:
     np.set_printoptions(precision=4)
     if RESTORE_MODEL_FROM_DISK:
-        custom_objects = {"ConstraintLoss": ConstraintLoss}
+        custom_objects = {"WeightedSumLoss": WeightedSumLoss}
         sucker_model = keras.models.load_model('models/sucker.keras', custom_objects)
 
     assert sucker_model, "No model found, can't run inference"
@@ -146,10 +144,9 @@ if RUN_INFERENCE:
             gt_inference_input = convert_pytype_to_model_input_type(gt)
             pred_inference_input = convert_pytype_to_model_input_type(pred)
 
-            inference_losses = [ConstraintLoss(original_values=original_value,
+            inference_losses = [WeightedSumLoss(original_values=original_value,
                                     threshold=max_hue_change,
-                                    weight=constraint_loss_weight),
-                                keras.losses.MeanSquaredError()]
+                                    weight=constraint_loss_weight)]
 
             loss_str = ""
             for loss_func in inference_losses:
@@ -171,7 +168,7 @@ if RUN_INFERENCE:
     locs, labels = plt.yticks()
     plt.yticks(locs, range_vals)
     plt.show()
-    
+
     print(f"Model inference completed at time t={tm.time() - start:.3f}")
 
 # %% Model eval
