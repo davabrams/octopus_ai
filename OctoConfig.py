@@ -16,9 +16,9 @@ GameParameters: dict = {
     'sucker_model_location': 'models/sucker.keras',
     'datagen_mode': False,
     'test_size': 0.2,
-    'epochs': 2,
+    'epochs': 100,
     'batch_size': 32, #32 is tf default
-    'constraint_loss_weight': 0.5,
+    'constraint_loss_weight': 0.8,
 
     # Agent parameters
     'agent_number_of_agents': 5,

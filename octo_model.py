@@ -121,17 +121,17 @@ if RUN_TRAINING:
 
                 # Logits for this minibatch
                 # https://en.wikipedia.org/wiki/Logit
-                logits = sucker_model(x_batch_train, training=True)  
+                logits = sucker_model(x_batch_train, training=True)
 
                 # Recompile the loss function with the updated step (for logging)
                 loss_fn = WeightedSumLoss(threshold=max_hue_change,
                                           weight=constraint_loss_weight,
                                           step=step,
                                           logwriter=summary_writer)
-                
+             
                 # Compute the loss value for this minibatch.
                 loss_value = loss_fn(y_batch_train, logits)
-                # epoch_loss_mse(loss_value)
+                epoch_loss_mse(y_batch_train, logits)
             # Use the gradient tape to automatically retrieve
             # the gradients of the trainable variables with respect to the loss.
             grads = tape.gradient(loss_value, sucker_model.trainable_weights)
@@ -148,20 +148,13 @@ if RUN_TRAINING:
                 )
                 print("Seen so far: %s samples" % ((step + 1) * batch_size))
 
-        # if GENERATE_TENSORBOARD:
-        #     with summary_writer.as_default():
-        #         tf.summary.scalar('epoch_loss_mse', epoch_loss_mse.result, step=optimizer.iterations)
+        if GENERATE_TENSORBOARD:
+            with summary_writer.as_default():
+                tf.summary.scalar('epoch_loss_mse', epoch_loss_mse.result(), step=optimizer.iterations)
 
     if GENERATE_TENSORBOARD:
         print(f"Tensorboard generated, run with:\n\n\ttensorboard serve --logdir {log_dir}\n")
 
-    # # These need to change because now our WeightedSumLoss original value should be the val set
-    # eval_losses = [
-    #     WeightedSumLoss(threshold=max_hue_change,
-    #                    weight=constraint_loss_weight)]
-    # sucker_model.compile(optimizer="sgd",
-    #             loss=eval_losses,
-    #             metrics=["mse"])
     print(f"Model training completed at time t={tm.time() - start:.3f}")
 
     # %% Model deployment (this is only run if a new model was successfully trained)
@@ -195,16 +188,6 @@ if RUN_INFERENCE:
 
             inference_losses = [WeightedSumLoss(threshold=max_hue_change,
                                     weight=constraint_loss_weight)]
-
-            loss_str = ""
-            # for loss_func in inference_losses:
-            #     with tf.GradientTape() as tape:
-            #         loss, loss_details = loss_func(gt_inference_input, pred_inference_input)
-            #         print(loss_details)
-            #     gradients = tape.gradient(loss, tf.constant(pred))
-            #     loss_str += f"\t{float(loss):.3f} \t<𝝳={gradients}>"
-
-            print(f"{curr:.2f}, \t{gt:.2f} -> \t{pred:.3f} \t(losses = {loss_str})")
         res.append(row)
 
     ####### Plot inference results
