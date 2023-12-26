@@ -17,7 +17,7 @@ GameParameters: dict = {
     'datagen_mode': False,
     'test_size': 0.2,
     'epochs': 2,
-    'batch_size': 8,
+    'batch_size': 32, #32 is tf default
     'constraint_loss_weight': 0.5,
 
     # Agent parameters
