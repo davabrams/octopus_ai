@@ -1,9 +1,9 @@
 """ Utilities for Octopus ML modeling """
-import os
+import os, shutil
 import numpy as np
-from tensorflow import keras
-from keras.utils import losses_utils
 import tensorflow as tf
+import seaborn as sn
+import matplotlib.pyplot as plt
 
 np.set_printoptions(precision=4)
 
@@ -14,23 +14,75 @@ def erase_all_logs():
     log_dir = "./logs"
     log_prefix = "events.out.tfevents"
     if not os.path.exists(log_dir):
-        print("Log folder not found, nothing erased.")
-        return
-    onlyfiles = [f for f in os.listdir(log_dir) if
-                 os.path.isfile(os.path.join(log_dir, f)) and
-                 len(f) >= len(log_prefix) and
-                 f.startswith(log_prefix)]
-    if len(onlyfiles) == 0:
-        print("No log files found in log folder, nothing erased.")
-    for f in onlyfiles:
-        try:
-            os.remove(log_dir + "/" + f)
-        except:
-            print(f"Could not remove log file: {f}")
-        else:
-            print(f"Removed log file: {f}")
+        print("Log folder not found, nothing erased from." + log_dir)
+    else:
+        onlyfiles = [f for f in os.listdir(log_dir) if
+                    os.path.isfile(os.path.join(log_dir, f)) and
+                    len(f) >= len(log_prefix) and
+                    f.startswith(log_prefix)]
+        if len(onlyfiles) == 0:
+            print("No log files found in log folder, nothing erased.")
+        for f in onlyfiles:
+            try:
+                os.remove(log_dir + "/" + f)
+            except:
+                print(f"Could not remove log file: {f}")
+            else:
+                print(f"Removed log file: {f}")
 
 
+
+    log_dir = "./models/logs/sucker/fit"
+    if not os.path.exists(log_dir):
+        print("Log folder not found, nothing erased from." + log_dir)
+    else:
+        onlyfolders = [f for f in os.listdir(log_dir) if
+                        os.path.isdir(os.path.join(log_dir, f))]
+        if len(onlyfolders) == 0:
+            print("No log folders found in sucker training log folder, nothing erased.")
+        for f in onlyfolders:
+            try:
+                shutil.rmtree(log_dir + "/" + f) # Be careful changing this line!
+            except:
+                print(f"Could not remove log folder: {f}")
+            else:
+                print(f"Removed log folder: {f}")
+
+def run_sucker_model_inference(sucker_model=None, GameParameters: dict = None):
+    """
+    Runs a standard sweep inference on the input domain
+    """
+    assert sucker_model, "No model found, can't run inference"
+    assert GameParameters, "No parameters found, can't run inference"
+
+    # batch_size = GameParameters['batch_size']
+    # max_hue_change = GameParameters['octo_max_hue_change']
+    # constraint_loss_weight = GameParameters['constraint_loss_weight']
+
+    ####### Iterate over domain space
+    range_vals = [0.0,0.25,0.5,0.75,1.0]
+    res = []
+    for curr in range_vals:
+        row = []
+        for gt in range_vals:
+            test_input = np.array([[curr, gt]])
+
+            #computes prediction output
+            pred = sucker_model.predict(test_input, verbose = 0)[0][0]
+            row.append(pred)
+
+        res.append(row)
+
+    ####### Plot inference results
+    plt.figure(figsize = (10,7))
+    sn.heatmap(res, annot=True)
+    plt.xlabel('surface color')
+    locs, labels = plt.xticks()
+    plt.xticks(locs, range_vals)
+    plt.ylabel('sucker previous color')
+    locs, labels = plt.yticks()
+    plt.yticks(locs, range_vals)
+    plt.show()
 
 def octo_norm(_x: np.array, reverse=False):
     """

@@ -18,7 +18,7 @@ GameParameters: dict = {
     'test_size': 0.2,
     'epochs': 100,
     'batch_size': 32, #32 is tf default
-    'constraint_loss_weight': 0.8,
+    'constraint_loss_weight': 0.5,
 
     # Agent parameters
     'agent_number_of_agents': 5,
@@ -42,6 +42,7 @@ GameParameters: dict = {
     'limb_movement_mode': MovementMode.RANDOM,
 
     # Sucker parameters
-    'octo_max_hue_change': 0.25, #max val of rgb that can change at a time
+    'octo_max_hue_change': 0.25, #max val of rgb that can change at a time, 
+                                 # used as constraint threshold
 
     }

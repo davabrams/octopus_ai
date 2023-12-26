@@ -22,9 +22,8 @@ class ConstraintLoss(tf.keras.losses.Loss):
         # Calculate absolute difference between predictions and original values
         assert tf.is_tensor(y_pred) and tf.is_tensor(y_true), "error: inputs must be tensors"
 
-        # the ground truth input is y_true[0] and is not important for this loss
-        original_value = y_true[:,1]
-        predicted_value = y_pred[:,0]
+        original_value = y_true
+        predicted_value = y_pred
 
         diff = tf.abs(predicted_value - original_value)
 
@@ -35,15 +34,28 @@ class ConstraintLoss(tf.keras.losses.Loss):
 
         if self.writer:
             with self.writer.as_default():
+                base_step = self.step
+                i = 0
                 for d in diff:
-                    tf.summary.scalar('ConstraintLoss_diff', d, step = self.step)
+                    step = base_step + i
+                    tf.summary.scalar('ConstraintLoss_diff', d, step = step)
+                    i = i + 1
+                i = 0
                 for ov in original_value:
-                    tf.summary.scalar('ConstraintLoss_original_value', ov, step = self.step)
+                    step = base_step + i
+                    tf.summary.scalar('ConstraintLoss_original_value', ov, step = step)
+                    i = i + 1
+                i = 0
                 for pv in predicted_value:
+                    step = base_step + i
                     tf.summary.scalar('ConstraintLoss_predicted_value', pv, step = self.step)
+                    i = i + 1
+                i = 0
                 for ep in excess_penalty:
+                    step = base_step + i
                     tf.summary.scalar('ConstraintLoss_excess_penalty', ep, step = self.step)
-            
+                    i = i + 1
+
 
         # Return excess penalty as the loss
         return excess_penalty
@@ -72,6 +84,8 @@ class WeightedSumLoss(tf.keras.losses.Loss):
         self.threshold = threshold
         self.f1 = ConstraintLoss(threshold, step, logwriter)
         self.f2 = keras.losses.MeanSquaredError()
+        self.f1_fields = 1
+        self.f2_fields = 0
         self.w1 = weight
         self.w2 = tf.convert_to_tensor(1.0) - weight
         if logwriter:
@@ -79,17 +93,22 @@ class WeightedSumLoss(tf.keras.losses.Loss):
         self.step = step
 
     def call(self, y_true, y_pred):
-        loss1 = self.f1(y_true, y_pred)
-        loss2 = self.f2(y_true[:,0], y_pred)
+        
+        # the previous state is y_true[1] and is the only input used for this loss
+        loss1 = self.f1(y_true[:,self.f1_fields], y_pred[:,0])
+        # the ground truth is y_true[0] is the only input used for this loss
+        loss2 = self.f2(y_true[:,self.f1_fields], y_pred[:,0])
         w_loss1 = tf.math.multiply(self.w1, loss1)
         w_loss2 = tf.math.multiply(self.w2, loss2)
 
+        step = self.step * y_true.shape[0]
+
         if self.writer:
             with self.writer.as_default():
-                tf.summary.scalar('WeightedSumLoss_w_loss1_(reduced)', w_loss1, step = self.step)
-                tf.summary.scalar('WeightedSumLoss_w_loss2_(reduced)', w_loss2, step = self.step)
-                tf.summary.scalar('WeightedSumLoss_loss1_(reduced)', loss1, step = self.step)
-                tf.summary.scalar('WeightedSumLoss_loss2_(reduced)', loss2, step = self.step)
+                tf.summary.scalar('WeightedSumLoss_w_loss1_(reduced)', w_loss1, step = step)
+                tf.summary.scalar('WeightedSumLoss_w_loss2_(reduced)', w_loss2, step = step)
+                tf.summary.scalar('WeightedSumLoss_loss1_(reduced)', loss1, step = step)
+                tf.summary.scalar('WeightedSumLoss_loss2_(reduced)', loss2, step = step)
                 self.writer.flush()
             
         # Return w1*loss1 + w2*loss2 as the loss
