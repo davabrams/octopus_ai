@@ -17,7 +17,7 @@ GameParameters: dict = {
     'datagen_mode': False,
     'test_size': 0.2,
     'epochs': 2,
-    'batch_size': 1,
+    'batch_size': 8,
     'constraint_loss_weight': 0.5,
 
     # Agent parameters

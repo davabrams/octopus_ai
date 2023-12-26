@@ -1,10 +1,35 @@
 """ Utilities for Octopus ML modeling """
+import os
 import numpy as np
 from tensorflow import keras
 from keras.utils import losses_utils
 import tensorflow as tf
 
 np.set_printoptions(precision=4)
+
+def erase_all_logs():
+    """
+    Erases tensorboard logs from log folder generated during training.
+    """
+    log_dir = "./logs"
+    log_prefix = "events.out.tfevents"
+    if not os.path.exists(log_dir):
+        print("Log folder not found, nothing erased.")
+        return
+    onlyfiles = [f for f in os.listdir(log_dir) if
+                 os.path.isfile(os.path.join(log_dir, f)) and
+                 len(f) >= len(log_prefix) and
+                 f.startswith(log_prefix)]
+    if len(onlyfiles) == 0:
+        print("No log files found in log folder, nothing erased.")
+    for f in onlyfiles:
+        try:
+            os.remove(log_dir + "/" + f)
+        except:
+            print(f"Could not remove log file: {f}")
+        else:
+            print(f"Removed log file: {f}")
+
 
 
 def octo_norm(_x: np.array, reverse=False):
@@ -57,26 +82,14 @@ def train_test_split(data, labels, test_size=0.2, random_state=None):
 
     return train_data, train_labels, test_data, test_labels
 
-def sucker_model_data_constructor(data, labels, batch_size):
-    """Convert and configure data types for training:
-    y_true: Ground truth values. shape = `[batch_size, d0, .. dN]`
-    y_pred: The predicted values. shape = `[batch_size, d0, .. dN]`
-    original_values: The sucker's existing value state"""
-
-    # (batch_size, num_features)
-    input_data = convert_pytype_to_model_input_type(np.transpose(np.stack((data, labels))))
-    # (batch_size, 1)
-    gt_data = convert_pytype_to_model_input_type(np.transpose(labels))
-    # (batch_size, 1)
-    orig_data = convert_pytype_to_model_input_type(data)
-
-    return input_data, gt_data, orig_data
-
 def convert_pytype_to_model_input_type(input_float):
-    """Converts native types to 2 dimensional tensors for tf model input"""
-    output_tensor = tf.convert_to_tensor(input_float, dtype='float32')
-    while len(output_tensor.shape) < 2:
-        output_tensor = tf.expand_dims(output_tensor, axis=len(output_tensor.shape))
+    """
+    Converts native types to 2 dimensional tensors for tf model input
+    """
+    shaped_tensor = tf.convert_to_tensor(input_float, dtype='float32')
+    while len(shaped_tensor.shape) < 2:
+        shaped_tensor = tf.expand_dims(shaped_tensor, axis=len(shaped_tensor.shape))
+    output_tensor = tf.data.Dataset.from_tensor_slices((shaped_tensor, shaped_tensor))
     return output_tensor
 
 @keras.saving.register_keras_serializable(package="Octo", name="ConstraintLoss")
