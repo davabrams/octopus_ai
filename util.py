@@ -94,7 +94,7 @@ def octo_norm(_x: np.array, reverse=False):
     else:
         return np.subtract(np.multiply(_x, 2), 1)
 
-def train_test_split(data, labels, test_size=0.2, random_state=None):
+def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
     """
     Splits data and labels into training and test sets.
 
@@ -108,31 +108,32 @@ def train_test_split(data, labels, test_size=0.2, random_state=None):
         train_data, train_labels, test_data, test_labels: 
                 NumPy arrays of training and test data and labels.
     """
-    if not isinstance(data, np.ndarray) or not isinstance(labels, np.ndarray):
+    if not isinstance(state_data, np.ndarray) or not isinstance(gt_data, np.ndarray):
         raise TypeError("Both data and labels must be NumPy arrays.")
 
     if test_size < 0 or test_size > 1:
         raise ValueError("test_size must be between 0 and 1.")
 
-    num_data_fields = data.shape[0]
-    num_labels_fields = labels.shape[0]
-    num_samples = data.shape[1]
+    num_data_fields = state_data.shape[0]
+    num_labels_fields = gt_data.shape[0]
+    num_samples = state_data.shape[1]
     shuffle_indices = np.arange(num_samples)
     if random_state is not None:
         # np.random.seed(random_state)
-        np.random.shuffle(shuffle_indices)
+        pass
+    np.random.shuffle(shuffle_indices)
 
     split_point = int(num_samples * test_size)
 
     for _df in range(num_data_fields):
-        train_data = data[_df][shuffle_indices[:split_point]]
-        test_data = data[_df][shuffle_indices[split_point:]]
+        train_state_data = state_data[_df][shuffle_indices[:split_point]]
+        test_state_data = state_data[_df][shuffle_indices[split_point:]]
 
     for _df in range(num_labels_fields):
-        train_labels = labels[_df][shuffle_indices[:split_point]]
-        test_labels = labels[_df][shuffle_indices[split_point:]]
+        train_gt_data = gt_data[_df][shuffle_indices[:split_point]]
+        test_gt_data = gt_data[_df][shuffle_indices[split_point:]]
 
-    return train_data, train_labels, test_data, test_labels
+    return train_state_data, train_gt_data, test_state_data, test_gt_data
 
 def convert_pytype_to_tf_dataset(input_np_array, batch_size):
     """

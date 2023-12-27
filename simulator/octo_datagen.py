@@ -52,7 +52,7 @@ class OctoDatagen():
             for l in octo.limbs:
                 for s in l.suckers:
                     sucker_state.append(s.c.r)
-                    sucker_gt.append(s._get_surf_color_at_this_sucker(surf))
+                    sucker_gt.append(s.get_surf_color_at_this_sucker(surf))
 
             # run inference using the selected mode
             octo.set_color(surf, GameParameters['inference_mode'])
@@ -82,4 +82,3 @@ class OctoDatagen():
         print(f"{len(res)} datapoints written")
 
         return data
-

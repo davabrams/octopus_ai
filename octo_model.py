@@ -20,15 +20,15 @@ tf.config.run_functions_eagerly(False)
 
 # %% Entry point for octopus modeling
 RUN_DATAGEN = GameParameters['datagen_mode']
-SAVE_DATA_TO_DISK = True
+SAVE_DATA_TO_DISK = False
 
-RESTORE_DATA_FROM_DISK = True
-RUN_TRAINING = True
-ERASE_OLD_TENSORBOARD_LOGS = True
-GENERATE_TENSORBOARD = True
-SAVE_MODEL_TO_DISK = True
+RESTORE_DATA_FROM_DISK = False
+RUN_TRAINING = False
+ERASE_OLD_TENSORBOARD_LOGS = False
+GENERATE_TENSORBOARD = False
+SAVE_MODEL_TO_DISK = False
 
-RESTORE_MODEL_FROM_DISK = False
+RESTORE_MODEL_FROM_DISK = True
 RUN_INFERENCE = True
 
 RUN_EVAL = False
@@ -41,6 +41,8 @@ if ERASE_OLD_TENSORBOARD_LOGS:
 
 # %% Data Gen
 data = None
+test_dataset = None
+train_dataset = None
 if RUN_DATAGEN:
     datagen = OctoDatagen(GameParameters)
     data = datagen.run_color_datagen()
@@ -66,11 +68,11 @@ if RUN_TRAINING:
     state_data = np.array([data['state_data']], dtype='float32') #sucker's current color
     gt_data = np.array([data['gt_data']], dtype='float32') #sucker's ground truth
 
-    train_data, train_labels, val_data, val_labels = train_test_split(state_data, gt_data)
+    train_state_data, train_gt_data, test_state_data, test_gt_data = train_test_split(state_data, gt_data)
 
-    train_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((train_data, train_labels))),
+    train_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((train_state_data, train_gt_data))),
                                                  batch_size)
-    val_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((val_data, val_labels))),
+    test_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((test_state_data, test_gt_data))),
                                                batch_size)
     sucker_model = train_sucker_model(GameParameters=GameParameters,
                                       train_dataset=train_dataset,
@@ -99,10 +101,7 @@ if RUN_EVAL:
     # For sucker color, eval is defined as the average of RMS of the RGB values
     # mean([rms(pred, gt) for each (pred, gt) in octopus])
     batch_size = GameParameters['batch_size']
-
-    loss, accuracy = sucker_model.evaluate(x=tf.convert_to_tensor(val_data, dtype='float32'),
-                                           y=tf.convert_to_tensor([val_labels], dtype='float32'),
-                                           batch_size=batch_size)
+    loss, accuracy = sucker_model.evaluate(test_dataset, batch_size=batch_size)
 
     print(f"Loss: {loss:.3f}, Accuracy: {accuracy:.3f}")
 

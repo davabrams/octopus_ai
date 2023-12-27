@@ -32,8 +32,8 @@ class AgentGenerator:
                 agent_type = fixed_agent_type
             new_agent = Agent()
             new_agent.Type = agent_type
-            new_agent.x = np.random.uniform(0, self._x_len)
-            new_agent.y = np.random.uniform(0, self._y_len)
+            new_agent.x = np.random.uniform(0, self._x_len - 1)
+            new_agent.y = np.random.uniform(0, self._y_len - 1)
             new_agent.vel = np.random.uniform(0, self.max_velocity)
             new_agent.t = np.random.uniform(0, 2 * np.pi)
             self.agents.append(new_agent)
@@ -50,9 +50,9 @@ class AgentGenerator:
     def _increment_random(self, agent: Agent) -> Agent:
         new_agent = agent
         new_agent.x = new_agent.x + new_agent.vel * np.cos(new_agent.t)
-        new_agent.x = min(max(new_agent.x, 0), self._x_len)
+        new_agent.x = min(max(new_agent.x, 0), self._x_len - 1)
         new_agent.y = new_agent.y + new_agent.vel * np.sin(new_agent.t)
-        new_agent.y = min(max(new_agent.y, 0), self._y_len)
+        new_agent.y = min(max(new_agent.y, 0), self._y_len - 1)
 
         new_agent.vel = np.random.uniform(0, self.max_velocity)
         new_agent.t = (new_agent.t + np.random.uniform(0, self.max_theta * np.pi)) % (2 * np.pi)

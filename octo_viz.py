@@ -1,4 +1,5 @@
 """ Octopus visualizer """
+import time    
 import matplotlib.pyplot as plt
 from OctoConfig import GameParameters
 from simulator.agent_generator import AgentGenerator
@@ -20,32 +21,35 @@ model = None
 if GameParameters['inference_mode'] == MLMode.SUCKER:
     # Override `model` with the model from disk
     from tensorflow import keras
-    from util import ConstraintLoss
+    from losses import ConstraintLoss
     custom_objects = {"ConstraintLoss": ConstraintLoss}
     model = keras.models.load_model(model_path, custom_objects)
 
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 inference_mode = GameParameters['inference_mode']
-num_iterations = GameParameters['num_iterations']
+NUM_ITERATIONS = GameParameters['num_iterations']
 debug_mode = GameParameters['debug_mode']
+SAVE_IMAGES = GameParameters['save_images']
 
 fig, ax = setup_display()
 font = {'family':'monospace','color':'green','size':20}
 y = fig.text(.1, .025, "", fontdict=font)
 
 i: int = 0
-while i != num_iterations:
+while i != NUM_ITERATIONS:
     i += 1
 
     display_refresh(ax, octo, ag, surf, debug_mode=debug_mode)
 
     y.set_text(f"Visibility = {octo.visibility(surf):.4f}")
     fig.canvas.draw()
-    if fig.waitforbuttonpress(timeout=-1):
-        break
+    # if fig.waitforbuttonpress(timeout=-1):
+    #     break
+    if SAVE_IMAGES:
+        plt.savefig(f'foo{time.time()}.png')
+    print(f"Iteration: {i}")
     plt.pause(0.1)
-
     ag.increment_all(octo)
     octo.move(ag)
 

@@ -42,12 +42,9 @@ class Sucker:
             self.c.g = self._find_color_change(self.c.g, c_val.g)
             self.c.b = self._find_color_change(self.c.b, c_val.b)
         elif inference_mode == MLMode.SUCKER:
-            self.c.r = model.predict([np.expand_dims(np.array(self.c.r), 0), 
-                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
-            self.c.g = model.predict([np.expand_dims(np.array(self.c.g), 0), 
-                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
-            self.c.b = model.predict([np.expand_dims(np.array(self.c.b), 0), 
-                                    np.expand_dims(np.array(c_val), 0)], verbose = 0)[0][0]
+            self.c.r = model.predict(np.array([[self.c.r, c_val.r]]), verbose=0)[0][0]
+            self.c.g = self.c.r
+            self.c.b = self.c.r
 
     def get_surf_color_at_this_sucker(self, surf: RandomSurface) -> Color:
         """Gets the color of the surface underneath the sucker"""

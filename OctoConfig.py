@@ -5,20 +5,21 @@ from simulator.simutil import MLMode, MovementMode
 
 GameParameters: dict = {
     # General game parameters
+    'num_iterations': 120, #set this to -1 for infinite loop
     'x_len': 15,
     'y_len': 15,
     'rand_seed': 0,
     'debug_mode': False, #enables things like agent attract/repel regions
-    'num_iterations': 100, #set this to -1 for infinite loop
+    'save_images': True,
 
     # ML datagen parameters
-    'inference_mode': MLMode.NO_MODEL,
+    'inference_mode': MLMode.SUCKER,
     'sucker_model_location': 'models/sucker.keras',
     'datagen_mode': False,
     'test_size': 0.2,
     'epochs': 100,
     'batch_size': 32, #32 is tf default
-    'constraint_loss_weight': 0.5,
+    'constraint_loss_weight': 0.95,
 
     # Agent parameters
     'agent_number_of_agents': 5,
