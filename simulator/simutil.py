@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 np.set_printoptions(precision=4)
 
-
 class MovementMode(Enum):
     """Enum stores agent, octopus, and limb movement types"""
     RANDOM: int = 0
@@ -37,6 +36,16 @@ class Agent:
     
     def __repr__(self):
         return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}, \n\tTheta = {self.t}>\n"
+
+@dataclass
+class State:
+    """ Contains the limb spline nodes' kinematic info"""
+    x: float = 0
+    y: float = 0
+    t: float = 0
+
+class CenterPoint(State):
+    """ Contains the limb spline nodes' kinematic info"""
 
 
 @dataclass

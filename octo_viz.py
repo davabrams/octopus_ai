@@ -21,7 +21,7 @@ model = None
 if GameParameters['inference_mode'] == MLMode.SUCKER:
     # Override `model` with the model from disk
     from tensorflow import keras
-    from losses import ConstraintLoss
+    from training.losses import ConstraintLoss
     custom_objects = {"ConstraintLoss": ConstraintLoss}
     model = keras.models.load_model(model_path, custom_objects)
 

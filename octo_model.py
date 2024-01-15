@@ -4,28 +4,24 @@ import time as tm
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from simulator.octo_datagen import OctoDatagen
 from OctoConfig import GameParameters
-from util import (
-    erase_all_logs,
-    run_sucker_model_inference,
-    convert_pytype_to_tf_dataset,
-    train_test_split
-)
-from training import train_sucker_model, WeightedSumLoss
-
+from util import erase_all_logs
+from training.sucker import SuckerTrainer
+from training.losses import WeightedSumLoss
+from simulator.simutil import MLMode
 
 np.set_printoptions(precision=4)
 tf.config.run_functions_eagerly(False)
 
 # %% Entry point for octopus modeling
+ML_MODE = GameParameters['ml_mode']
 RUN_DATAGEN = GameParameters['datagen_mode']
 SAVE_DATA_TO_DISK = False
 
-RESTORE_DATA_FROM_DISK = False
-RUN_TRAINING = False
+RESTORE_DATA_FROM_DISK = True
+RUN_TRAINING = True
 ERASE_OLD_TENSORBOARD_LOGS = False
-GENERATE_TENSORBOARD = False
+GENERATE_TENSORBOARD = True
 SAVE_MODEL_TO_DISK = False
 
 RESTORE_MODEL_FROM_DISK = True
@@ -33,56 +29,50 @@ RUN_INFERENCE = True
 
 RUN_EVAL = False
 
+test_dataset = None
+train_dataset = None
+
 start = tm.time()
 print(f"Octo Model started at {start}, setting t=0.0")
 
 if ERASE_OLD_TENSORBOARD_LOGS:
     erase_all_logs()
 
+if ML_MODE == MLMode.SUCKER:
+    trainer = SuckerTrainer(GameParameters, start)
+    datagen_location = GameParameters['sucker_datagen_location']
+    model_location = GameParameters['sucker_model_location']
+else:
+    raise ValueError("No trainer available for selected ML Mode, check GameParameters")
+
 # %% Data Gen
 data = None
-test_dataset = None
-train_dataset = None
 if RUN_DATAGEN:
-    datagen = OctoDatagen(GameParameters)
-    data = datagen.run_color_datagen()
-    if SAVE_DATA_TO_DISK:
-        with open('datagen/sucker_data.pkl', 'wb') as file:
-            pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
-    print(f"Datagen completed at time t={tm.time() - start}")
+    data = trainer.datagen(SAVE_DATA_TO_DISK)
+    train_dataset, test_dataset = trainer.data_format(data)
+
+elif RESTORE_DATA_FROM_DISK:
+    with open(datagen_location, 'rb') as file:
+        data = pickle.load(file)
+    assert data, "No data found, can't run training."
+    train_dataset, test_dataset = trainer.data_format(data)
+
+    print(f"Training model with {len(data['gt_data'])} data points")
+else:
+    # No data is specified.  It may not be needed.
+    pass
+
 
 # %% Model training
 if RUN_TRAINING:
-    ####### Import Data
-    if RESTORE_DATA_FROM_DISK and not RUN_DATAGEN:
-        del data
-        with open('datagen/sucker_data.pkl', 'rb') as file:
-            data = pickle.load(file)
-    assert data, "No data found, can't run training."
-    print(f"Training model with {len(data['gt_data'])} data points")
 
-
-    ####### Format Data for Train and Val
-    batch_size = GameParameters['batch_size']
-
-    state_data = np.array([data['state_data']], dtype='float32') #sucker's current color
-    gt_data = np.array([data['gt_data']], dtype='float32') #sucker's ground truth
-
-    train_state_data, train_gt_data, test_state_data, test_gt_data = train_test_split(state_data, gt_data)
-
-    train_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((train_state_data, train_gt_data))),
-                                                 batch_size)
-    test_dataset = convert_pytype_to_tf_dataset(np.transpose(np.stack((test_state_data, test_gt_data))),
-                                               batch_size)
-    sucker_model = train_sucker_model(GameParameters=GameParameters,
-                                      train_dataset=train_dataset,
-                                      GENERATE_TENSORBOARD=GENERATE_TENSORBOARD)
+    model = trainer.train(train_dataset)
 
     print(f"Model training completed at time t={tm.time() - start:.3f}")
 
     # %% Model deployment (this is only run if a new model was successfully trained)
     if SAVE_MODEL_TO_DISK:
-        sucker_model.save('models/sucker.keras')
+        model.save(model_location)
         print(f"Model deployment completed at time t={tm.time() - start:.3f}")
 
 # %% Model inference
@@ -90,18 +80,21 @@ if RUN_INFERENCE:
     ####### Load model
     if RESTORE_MODEL_FROM_DISK:
         custom_objects = {"WeightedSumLoss": WeightedSumLoss}
-        sucker_model = keras.models.load_model('models/sucker.keras', custom_objects)
+        model = keras.models.load_model(model_location, custom_objects)
 
-    run_sucker_model_inference(sucker_model=sucker_model, GameParameters=GameParameters)
+
+    trainer.inference(model)
 
     print(f"Model inference completed at time t={tm.time() - start:.3f}")
 
 # %% Model eval
 if RUN_EVAL:
-    # For sucker color, eval is defined as the average of RMS of the RGB values
+    assert "test_dataset" in dir(), "Error: eval specified but not test_dataset exists"
+    assert test_dataset is not None, "Error: empty test_dataset"
+    # For color, eval is defined as the average of RMS of the RGB values
     # mean([rms(pred, gt) for each (pred, gt) in octopus])
-    batch_size = GameParameters['batch_size']
-    loss, accuracy = sucker_model.evaluate(test_dataset, batch_size=batch_size)
+    BATCH_SIZE = GameParameters['batch_size']
+    loss, accuracy = model.evaluate(test_dataset, batch_size=BATCH_SIZE)
 
     print(f"Loss: {loss:.3f}, Accuracy: {accuracy:.3f}")
 

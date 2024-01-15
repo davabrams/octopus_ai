@@ -13,22 +13,25 @@ GameParameters: dict = {
     'save_images': True,
 
     # ML datagen parameters
-    'inference_mode': MLMode.SUCKER,
-    'sucker_model_location': 'models/sucker.keras',
+    'ml_mode': MLMode.SUCKER,
+    'sucker_model_location': 'training/models/sucker.keras',
+    'sucker_datagen_location': 'training/datagen/sucker_data.pkl',
+    'limb_model_location': 'training/models/limb.keras',
+    'limb_datagen_location': 'training/datagen/limb_data.pkl',
     'datagen_mode': False,
     'test_size': 0.2,
     'epochs': 100,
     'batch_size': 32, #32 is tf default
     'constraint_loss_weight': 0.95,
 
-    # Agent parameters
+    # Agent parameters 👾
     'agent_number_of_agents': 5,
     'agent_max_velocity': 0.2,
     'agent_max_theta': 0.1,
     'agent_movement_mode': MovementMode.RANDOM,
     'agent_range_radius': 5,
 
-    # Octopus parameters
+    # Octopus parameters 🐙
     'octo_max_body_velocity': 0.25,
     'octo_max_arm_theta': 0.1, #used for random drift movement
     'octo_max_limb_offset': 0.5, #used for attract/repel distance
@@ -37,12 +40,12 @@ GameParameters: dict = {
     'octo_min_sucker_distance': 0.1,
     'octo_movement_mode': MovementMode.RANDOM,
 
-    # Limb parameters
+    # Limb parameters 💪
     'limb_rows': 16,
     'limb_cols': 2,
     'limb_movement_mode': MovementMode.RANDOM,
 
-    # Sucker parameters
+    # Sucker parameters 🪠
     'octo_max_hue_change': 0.25, #max val of rgb that can change at a time, 
                                  # used as constraint threshold
 

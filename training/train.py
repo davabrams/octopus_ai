@@ -2,7 +2,7 @@ import os
 import datetime
 import tensorflow as tf
 from tensorflow import keras
-from losses import WeightedSumLoss
+from training.losses import WeightedSumLoss
 
 def train_sucker_model(GameParameters, train_dataset, GENERATE_TENSORBOARD=False):
     """
@@ -45,7 +45,7 @@ def train_sucker_model(GameParameters, train_dataset, GENERATE_TENSORBOARD=False
         # Iterate over the batches of the dataset.
         for step, (x_batch_train, y_batch_train) in enumerate(train_dataset):
             sucker_model.reset_states()
-            
+
             # Open a GradientTape to record the operations run
             # during the forward pass, which enables auto-differentiation.
             with tf.GradientTape() as tape:
@@ -63,7 +63,7 @@ def train_sucker_model(GameParameters, train_dataset, GENERATE_TENSORBOARD=False
                                           weight=constraint_loss_weight,
                                           step=total_steps,
                                           logwriter=summary_writer)
-             
+
                 # Compute the loss value for this minibatch.
                 loss_value = loss_fn(y_batch_train, logits)
                 epoch_loss_mse(y_batch_train, logits)

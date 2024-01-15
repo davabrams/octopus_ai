@@ -2,15 +2,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from simulator.random_surface import RandomSurface
-from simulator.simutil import MovementMode, Agent, Color, MLMode
-
-@dataclass
-class CenterPoint:
-    """ Contains the limb spline nodes' kinematic info"""
-    x: float = 0
-    y: float = 0
-    t: float = 0
-
+from simulator.simutil import MovementMode, Agent, Color, MLMode, CenterPoint
 
 @dataclass
 class Sucker:
