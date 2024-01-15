@@ -1,5 +1,5 @@
 """
-Library for sucker model training
+Library for limb model training
 """
 import pickle
 import time as tm
@@ -14,7 +14,7 @@ from training.train import train_sucker_model
 
 from .trainutil import Trainer
 
-class SuckerTrainer(Trainer):
+class LimbTrainer(Trainer):
     def __init__(self, GameParameters):
         self.GameParameters = GameParameters
 
@@ -22,7 +22,7 @@ class SuckerTrainer(Trainer):
         datagen = OctoDatagen(self.GameParameters)
         data = datagen.run_color_datagen()
         if SAVE_DATA_TO_DISK:
-            with open(self.GameParameters['sucker_datagen_location'], 'wb') as file:
+            with open(self.GameParameters['limb_datagen_location'], 'wb') as file:
                 pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
         return data
 
@@ -31,6 +31,8 @@ class SuckerTrainer(Trainer):
         Format Data for Train and Val
         """
         batch_size = self.GameParameters['batch_size']
+
+        raise NotImplementedError("not implemented beyond this point")
 
         state_data = np.array([data['state_data']], dtype='float32') #sucker's current color
         gt_data = np.array([data['gt_data']], dtype='float32') #sucker's ground truth

@@ -11,14 +11,16 @@ GameParameters: dict = {
     'rand_seed': 0,
     'debug_mode': False, #enables things like agent attract/repel regions
     'save_images': True,
+    'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
+    'inference_mode': MLMode.NO_MODEL,
 
     # ML datagen parameters
-    'ml_mode': MLMode.SUCKER,
+    'ml_mode': MLMode.LIMB,
     'sucker_model_location': 'training/models/sucker.keras',
     'sucker_datagen_location': 'training/datagen/sucker_data.pkl',
     'limb_model_location': 'training/models/limb.keras',
     'limb_datagen_location': 'training/datagen/limb_data.pkl',
-    'datagen_mode': False,
+    'datagen_mode': True,
     'test_size': 0.2,
     'epochs': 100,
     'batch_size': 32, #32 is tf default

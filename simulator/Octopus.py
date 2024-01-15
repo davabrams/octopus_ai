@@ -10,10 +10,21 @@ class Sucker:
     Stores location and color of a sucker, and includes methods to change the sucker color.
     This object is instantiated by Limb objects.
     """
+
     x: float
     y: float
     c: Color = field(default_factory=Color)
-    max_hue_change: float = 0.25
+    prev: "Sucker" = field(default_factory="Sucker")
+
+    def __init__(self, x: float, y: float, c: Color = Color(), GameParameters = None):
+        self.x = x
+        self.y = y
+        self.c = c
+        if GameParameters is not None:
+            self.max_hue_change = GameParameters['octo_max_hue_change']
+        else:
+            self.max_hue_change = float(0.25)
+
     def __repr__(self):
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
     def set_color(self,
@@ -26,7 +37,6 @@ class Sucker:
         """
         if inference_mode is not MLMode.NO_MODEL:
             assert model is not None, "model inference specified but no model was specified"
-
         c_val = self.get_surf_color_at_this_sucker(surf)
 
         if inference_mode == MLMode.NO_MODEL:
@@ -37,6 +47,12 @@ class Sucker:
             self.c.r = model.predict(np.array([[self.c.r, c_val.r]]), verbose=0)[0][0]
             self.c.g = self.c.r
             self.c.b = self.c.r
+
+    def set_loc(self, x: float, y: float):
+        self.prev = self
+        self.prev.prev = None #Prevents unbound memory
+        self.x = x
+        self.y = y
 
     def get_surf_color_at_this_sucker(self, surf: RandomSurface) -> Color:
         """Gets the color of the surface underneath the sucker"""
@@ -50,11 +66,21 @@ class Sucker:
         dc = c_target - c_start
         dc = min(dc, d_max)
         dc = max(dc, -d_max)
-        
+
         new_c = c_start + dc
         new_c = min(new_c, 1.0)
         new_c = max(new_c, 0.0)
         return new_c
+
+    def distance_to(self, s: "Sucker"):
+        """
+        Finds the distance from this sucker to another one
+        Uses euclidean distance
+        """
+        x = s.x - self.x
+        y = s.y - self.y
+        dist = np.sqrt(x * x + y * y, dtype=float)
+        return dist
 
 
 class Limb:
@@ -118,8 +144,7 @@ class Limb:
                 y_prime = max(y_prime, -0.5)
                 y_prime = min(y_prime, self.y_len - 0.51)
 
-                self.suckers[row + self.rows * col].x = x_prime
-                self.suckers[row + self.rows * col].y = y_prime                
+                self.suckers[row + self.rows * col].set_loc(x_prime, y_prime)
 
     def move(self, x_octo: float, y_octo: float):
         """randomly shift thetas, reconstruct centerline, and refresh sucker 
@@ -156,12 +181,21 @@ class Limb:
             y_octo = y_prime
 
     def _move_attract_repel(self, x_octo: float, y_octo: float):
-        print("Attract/Repel movement mode not complete")
+        raise NotImplementedError("Not implemented yet")
         # step 1: move the last centerpoint towards prey and away from threats
         # step 2: shift the first centerpoint relative to the octopus new postion
         # step 3:
-        print(x_octo, y_octo)
 
+    def find_adjacents(self, s_target: Sucker, radius: float):
+        """
+        Finds all suckers within a specified radius
+        """
+        adjacents = []
+        for s in self.suckers:
+            dist = s.distance_to(s_target)
+            if dist <= radius:
+                adjacents.append(tuple((s, dist)))
+        return adjacents
 
     def set_color(self,
                   surf: RandomSurface,

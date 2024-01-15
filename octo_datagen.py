@@ -21,11 +21,9 @@ class OctoDatagen():
         if GameParameters['inference_mode'] == MLMode.SUCKER:
             model_path = GameParameters['sucker_model_location']
             model = keras.models.load_model(model_path)
-        surf = RandomSurface(GameParameters)
-        ag = AgentGenerator(GameParameters)
-        ag.generate(num_agents=GameParameters['agent_number_of_agents'])
-        octo=Octopus(GameParameters)
-        octo.set_color(surf, inference_mode=GameParameters['inference_mode'], model = model)
+        elif GameParameters['inference_mode'] == MLMode.LIMB:
+            model_path = GameParameters['limb_model_location']
+            model = keras.models.load_model(model_path)
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")
@@ -35,7 +33,7 @@ class OctoDatagen():
         ag = AgentGenerator(GameParameters)
         ag.generate(num_agents=GameParameters['agent_number_of_agents'])
         octo=Octopus(GameParameters)
-        octo.set_color(surf)
+        octo.set_color(surf, inference_mode=GameParameters['inference_mode'], model = model)
 
         # %% Data Gen
         sucker_state = []
@@ -51,7 +49,19 @@ class OctoDatagen():
 
             for l in octo.limbs:
                 for s in l.suckers:
-                    sucker_state.append(s.c.r)
+                    # Different ML modes will want to capture different state info
+                    if GameParameters['ml_mode'] == MLMode.SUCKER:
+                        state = s.c.r
+                    elif GameParameters['ml_mode'] == MLMode.LIMB:
+                        radius = GameParameters['adjacency_radius']
+                        state = {}
+                        state['color'] = s.c.r
+                        adjacents = []
+                        for adj in l.find_adjacents(s, radius):
+                            adjacents.append(adj)
+                        state['adjacents'] = adjacents
+
+                    sucker_state.append(state)
                     sucker_gt.append(s.get_surf_color_at_this_sucker(surf))
 
             # run inference using the selected mode
