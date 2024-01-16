@@ -135,6 +135,54 @@ def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
 
     return train_state_data, train_gt_data, test_state_data, test_gt_data
 
+def train_test_split_multiple_state_vectors(state_data, gt_data, test_size=0.2, random_state=None):
+    """
+    Splits data and labels into training and test sets, but takes an array of state_data
+
+    Args:
+        data: NumPy array of data points.
+        labels: NumPy array of corresponding labels.
+        test_size: Proportion of data to be used for testing (between 0 and 1).
+        random_state: Seed for random shuffling (optional).
+
+    Returns:
+        [train_data], train_labels, [test_data], test_labels: 
+                NumPy arrays of training and test data and labels.
+    """
+    if not isinstance(state_data, list) or not isinstance(gt_data, list):
+        raise TypeError("State data and labels must be a list.")
+    
+    for state_type in state_data:
+        if not isinstance(state_type, list):
+            raise TypeError("State data fields must be a list.")
+
+    if test_size < 0 or test_size > 1:
+        raise ValueError("test_size must be between 0 and 1.")
+
+    num_samples = len(gt_data)
+
+    shuffle_indices = np.arange(num_samples)
+    if random_state is not None:
+        np.random.seed(random_state)
+        pass
+    np.random.shuffle(shuffle_indices)
+
+    split_point = int(num_samples * (1 - test_size))
+
+    train_state_data = [[] for _ in range(len(state_data))]
+    test_state_data = [[] for _ in range(len(state_data))]
+    for state_type_ix, state_type in enumerate(state_data):
+        state_type_shuffled = [state_type[ix] for ix in shuffle_indices]
+        train_state_data[state_type_ix] = state_type_shuffled[:split_point]
+        test_state_data[state_type_ix] = state_type_shuffled[split_point:]
+
+    gt_data_shuffled = [gt_data[ix] for ix in shuffle_indices]
+    train_gt_data = gt_data_shuffled[:split_point]
+    test_gt_data = gt_data_shuffled[split_point:]
+
+    return train_state_data, train_gt_data, test_state_data, test_gt_data
+
+
 def convert_pytype_to_tf_dataset(input_np_array, batch_size):
     """
     Converts native types to 2 dimensional tensors for tf model input
