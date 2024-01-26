@@ -17,13 +17,16 @@ class OctoDatagen():
 
     def run_color_datagen(self):
         GameParameters = self.game_parameters
-        model = None
         if GameParameters['inference_mode'] == MLMode.SUCKER:
             model_path = GameParameters['sucker_model_location']
             model = keras.models.load_model(model_path)
         elif GameParameters['inference_mode'] == MLMode.LIMB:
             model_path = GameParameters['limb_model_location']
             model = keras.models.load_model(model_path)
+        else:
+            model_path = None
+            model = None
+
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")

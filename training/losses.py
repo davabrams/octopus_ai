@@ -101,9 +101,9 @@ class WeightedSumLoss(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
         
         # the previous state is y_true[1] and is the only input used for this loss
-        loss1 = self.f1(y_true[:,self.f1_fields], y_pred[:,0])
+        loss1 = self.f1(y_true[self.f1_fields], y_pred[0])
         # the ground truth is y_true[0] is the only input used for this loss
-        loss2 = self.f2(y_true[:,self.f2_fields], y_pred[:,0])
+        loss2 = self.f2(tf.expand_dims(y_true[self.f2_fields], axis=0), y_pred[0])
         w_loss1 = tf.multiply(self.w1, loss1)
         w_loss2 = tf.multiply(self.w2, loss2)
 

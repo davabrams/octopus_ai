@@ -22,7 +22,7 @@ GameParameters: dict = {
     'limb_datagen_location': 'training/datagen/limb_data.pkl',
     'datagen_mode': True,
     'test_size': 0.2,
-    'epochs': 100,
+    'epochs': 10,
     'batch_size': 32, #32 is tf default
     'constraint_loss_weight': 0.95,
 
