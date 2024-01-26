@@ -10,9 +10,9 @@ GameParameters: dict = {
     'y_len': 15,
     'rand_seed': 0,
     'debug_mode': False, #enables things like agent attract/repel regions
-    'save_images': True,
+    'save_images': False,
     'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
-    'inference_mode': MLMode.NO_MODEL,
+    'inference_mode': MLMode.LIMB,
 
     # ML datagen parameters
     'ml_mode': MLMode.LIMB,

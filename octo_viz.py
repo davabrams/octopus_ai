@@ -18,7 +18,7 @@ ag.generate(num_agents=num_agents)
 octo.set_color(surf)
 
 model = None
-if GameParameters['inference_mode'] == MLMode.SUCKER:
+if GameParameters['inference_mode'] is not MLMode.NO_MODEL:
     # Override `model` with the model from disk
     from tensorflow import keras
     from training.losses import ConstraintLoss
