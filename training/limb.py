@@ -6,6 +6,7 @@ import datetime
 import tensorflow as tf
 from tensorflow import keras
 from training.losses import WeightedSumLoss
+from training.trainutil import ConcurrentRNN
 import seaborn as sn
 import matplotlib.pyplot as plt
 import pickle
@@ -19,8 +20,9 @@ from simulator.simutil import MLMode
 from .trainutil import Trainer
 
 class LimbTrainer(Trainer):
-    def __init__(self, GameParameters):
+    def __init__(self, GameParameters, TrainingParameters):
         self.GameParameters = GameParameters
+        self.TrainingParameters = TrainingParameters
 
     def datagen(self, SAVE_DATA_TO_DISK):
         datagen = OctoDatagen(self.GameParameters)
@@ -34,7 +36,6 @@ class LimbTrainer(Trainer):
         """
         Format Data for Train and Val
         """
-        batch_size = self.GameParameters['batch_size']
         if self.GameParameters['ml_mode'] == MLMode.SUCKER:
             state_data = np.array([data['state_data']], dtype='float32') #sucker's current color
         elif self.GameParameters['ml_mode'] == MLMode.LIMB:
@@ -78,6 +79,7 @@ class LimbTrainer(Trainer):
 
     def train(self, train_dataset, GENERATE_TENSORBOARD=False):
         return self.train_limb_model(GameParameters=self.GameParameters,
+                            TrainingParameters=self.TrainingParameters,
                            train_dataset=train_dataset,
                            GENERATE_TENSORBOARD=GENERATE_TENSORBOARD)
 
@@ -119,15 +121,14 @@ class LimbTrainer(Trainer):
         plt.yticks(locs, range_vals)
         plt.show()
 
-
-    def train_limb_model(self, GameParameters, train_dataset, GENERATE_TENSORBOARD=False):
+    def train_limb_model(self, GameParameters, TrainingParameters, train_dataset, GENERATE_TENSORBOARD=False):
         """
         Contains model construction, loss construction, and training loop.
         """
-        batch_size = GameParameters['batch_size']
+        batch_size = TrainingParameters['batch_size']
 
         ####### Configure loss function settings
-        constraint_loss_weight = GameParameters['constraint_loss_weight']
+        constraint_loss_weight = TrainingParameters['constraint_loss_weight']
         max_hue_change = tf.constant(GameParameters['octo_max_hue_change'], dtype='float32')
 
         ####### Model constructor
@@ -204,7 +205,7 @@ class LimbTrainer(Trainer):
 
             if GENERATE_TENSORBOARD:
                 with summary_writer.as_default():
-                    tf.summary.scalar('epoch_loss_mse', epoch_loss_mse.result(), step=optimizer.iterations)
+                    tf.summary.scalar('epoch_loss_mse', epoch_loss_mse.result(), step=optimizer.iterations) # pylint: disable=not-callable
 
         if GENERATE_TENSORBOARD:
             print(f"Tensorboard generated, run with:\n\n\ttensorboard serve --logdir {log_dir}\n")
@@ -223,7 +224,7 @@ class LimbTrainer(Trainer):
         fixed_model = tf.keras.Model(inputs=fixed_input, outputs=fixed_model, name="fixed_output_layer")
 
         # the second branch operates on the ragged input
-        ragged_model = tf.keras.layers.SimpleRNN(units=5, activation="relu", name="ragged_rnn_layer")(ragged_input)
+        ragged_model = ConcurrentRNN(units=5, activation="relu", name="ragged_rnn_layer")(ragged_input)
         ragged_model = tf.keras.layers.Dense(units=5, activation="relu", name="ragged_hidden_layer")(ragged_model)
         ragged_model = tf.keras.layers.Dense(units=4, activation="relu", name="ragged_prediction_layer")(ragged_model)
         ragged_model = tf.keras.Model(inputs=ragged_input, outputs=ragged_model, name="ragged_output_layer")

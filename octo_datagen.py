@@ -59,10 +59,7 @@ class OctoDatagen():
                         radius = GameParameters['adjacency_radius']
                         state = {}
                         state['color'] = s.c.r
-                        adjacents = []
-                        for adj in l.find_adjacents(s, radius):
-                            adjacents.append(adj)
-                        state['adjacents'] = adjacents
+                        state['adjacents'] = l.find_adjacents(s, radius)
 
                     sucker_state.append(state)
                     sucker_gt.append(s.get_surf_color_at_this_sucker(surf))

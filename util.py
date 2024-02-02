@@ -2,8 +2,6 @@
 import os, shutil
 import numpy as np
 import tensorflow as tf
-import seaborn as sn
-import matplotlib.pyplot as plt
 
 np.set_printoptions(precision=4)
 
@@ -48,42 +46,6 @@ def erase_all_logs():
             else:
                 print(f"Removed log folder: {f}")
 
-def run_sucker_model_inference(sucker_model=None, GameParameters: dict = None):
-    """
-    Runs a standard sweep inference on the input domain
-    """
-    assert sucker_model, "No model found, can't run inference"
-    assert GameParameters, "No parameters found, can't run inference"
-
-    # batch_size = GameParameters['batch_size']
-    # max_hue_change = GameParameters['octo_max_hue_change']
-    # constraint_loss_weight = GameParameters['constraint_loss_weight']
-
-    ####### Iterate over domain space
-    range_vals = [0.0,0.25,0.5,0.75,1.0]
-    res = []
-    for curr in range_vals:
-        row = []
-        for gt in range_vals:
-            test_input = np.array([[curr, gt]])
-
-            #computes prediction output
-            pred = sucker_model.predict(test_input, verbose = 0)[0][0]
-            row.append(pred)
-
-        res.append(row)
-
-    ####### Plot inference results
-    plt.figure(figsize = (10,7))
-    sn.heatmap(res, annot=True)
-    plt.xlabel('surface color')
-    locs, labels = plt.xticks()
-    plt.xticks(locs, range_vals)
-    plt.ylabel('sucker previous color')
-    locs, labels = plt.yticks()
-    plt.yticks(locs, range_vals)
-    plt.show()
-
 def octo_norm(_x: np.array, reverse=False):
     """
     Normalizer for convertinbg color gradients (0..1) to tf inputs (-1..+1)
@@ -93,6 +55,22 @@ def octo_norm(_x: np.array, reverse=False):
         return np.divide(np.add(_x, 1), 2)
     else:
         return np.subtract(np.multiply(_x, 2), 1)
+
+def convert_adjacents_to_ragged_tensor(adjacents: list):
+    """
+    Converts a list of adjacent suckers to a ragged tensor for model ingestion
+    """
+    c_array = []
+    dist_array = []
+    for adj in adjacents:
+        S = adj[0]
+        c = S.c.r
+        dist = adj[1]
+        c_array.append(c)
+        dist_array.append(dist)
+    ragged = tf.ragged.constant([c_array, dist_array])
+    return ragged
+
 
 def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
     """

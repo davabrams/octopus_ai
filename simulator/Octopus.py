@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from simulator.random_surface import RandomSurface
 from simulator.simutil import MovementMode, Agent, Color, MLMode, CenterPoint
+from util import convert_adjacents_to_ragged_tensor
 
 @dataclass
 class Sucker:
@@ -30,7 +31,8 @@ class Sucker:
     def set_color(self,
                   surf: RandomSurface,
                   inference_mode: MLMode = MLMode.NO_MODEL,
-                  model = None
+                  model = None,
+                  adjacents = None
                   ):
         """ 
         Sets the sucker's new color using either a heuristic or an ML model. 
@@ -47,6 +49,11 @@ class Sucker:
             self.c.r = model.predict(np.array([[self.c.r, c_val.r]]), verbose=0)[0][0]
             self.c.g = self.c.r
             self.c.b = self.c.r
+        elif inference_mode == MLMode.LIMB:
+            fixed_test_input = np.array([[self.c.r, c_val.r]])
+            ragged_test_input = convert_adjacents_to_ragged_tensor(adjacents)
+            self.c.r = model.predict([fixed_test_input, ragged_test_input])[0][0]
+
 
     def set_loc(self, x: float, y: float):
         self.prev = self
@@ -102,6 +109,7 @@ class Limb:
         self.max_hue_change = GameParameters['octo_max_hue_change']
         self.movement_mode = GameParameters['limb_movement_mode']
         self.max_arm_theta = GameParameters['octo_max_arm_theta']
+        self.agent_range_radius = GameParameters['agent_range_radius']
 
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
@@ -206,7 +214,10 @@ class Limb:
         Passes through the set_color command from the octopus to the stored suckers.
         """
         for sucker in self.suckers:
-            sucker.set_color(surf, inference_mode, model)
+            adjacents = None
+            if inference_mode == MLMode.LIMB:
+                adjacents = self.find_adjacents(sucker, self.agent_range_radius)
+            sucker.set_color(surf, inference_mode, model, adjacents)
 
 class Octopus:
     """

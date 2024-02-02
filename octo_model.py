@@ -4,7 +4,7 @@ import time as tm
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from OctoConfig import GameParameters
+from OctoConfig import GameParameters, TrainingParameters
 from util import erase_all_logs
 from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
@@ -15,20 +15,20 @@ np.set_printoptions(precision=4)
 tf.config.run_functions_eagerly(False)
 
 # %% Entry point for octopus modeling
-ML_MODE = GameParameters['ml_mode']
-RUN_DATAGEN = GameParameters['datagen_mode']
-SAVE_DATA_TO_DISK = True
+ML_MODE = TrainingParameters['ml_mode']
+RUN_DATAGEN = TrainingParameters['datagen_mode']
+SAVE_DATA_TO_DISK = TrainingParameters['save_data_to_disk']
 
-RESTORE_DATA_FROM_DISK = False
-RUN_TRAINING = False
-ERASE_OLD_TENSORBOARD_LOGS = False
-GENERATE_TENSORBOARD = False
-SAVE_MODEL_TO_DISK = True
+RESTORE_DATA_FROM_DISK = TrainingParameters["restore_data_from_disk"]
+RUN_TRAINING = TrainingParameters["run_training"]
+ERASE_OLD_TENSORBOARD_LOGS = TrainingParameters["erase_old_tensorboard_logs"]
+GENERATE_TENSORBOARD = TrainingParameters["generate_tensorboard"]
+SAVE_MODEL_TO_DISK = TrainingParameters["save_model_to_disk"]
 
-RESTORE_MODEL_FROM_DISK = True
-RUN_INFERENCE = True
+RESTORE_MODEL_FROM_DISK = TrainingParameters["restore_model_from_disk"]
+RUN_INFERENCE = TrainingParameters["run_inference"]
 
-RUN_EVAL = False
+RUN_EVAL = TrainingParameters["run_eval"]
 
 test_dataset = None
 train_dataset = None
@@ -41,12 +41,12 @@ if ERASE_OLD_TENSORBOARD_LOGS:
 
 if ML_MODE == MLMode.SUCKER:
     trainer = SuckerTrainer(GameParameters)
-    datagen_location = GameParameters['sucker_datagen_location']
-    model_location = GameParameters['sucker_model_location']
+    datagen_location = TrainingParameters['sucker_datagen_location']
+    model_location = TrainingParameters['sucker_model_location']
 elif ML_MODE == MLMode.LIMB:
-    trainer = LimbTrainer(GameParameters)
-    datagen_location = GameParameters['limb_datagen_location']
-    model_location = GameParameters['limb_model_location']
+    trainer = LimbTrainer(GameParameters, TrainingParameters)
+    datagen_location = TrainingParameters['limb_datagen_location']
+    model_location = TrainingParameters['limb_model_location']
 else:
     raise ValueError("No trainer available for selected ML Mode, check GameParameters")
 
@@ -68,7 +68,10 @@ else:
     # No data is specified.  It may not be needed.
     pass
 
-print(f"Training model with {len(data['gt_data'])} data points")
+if data:
+    print(f"Training model with {len(data['gt_data'])} data points")
+
+
 
 # %% Model training
 if RUN_TRAINING:
@@ -98,7 +101,7 @@ if RUN_EVAL:
     assert test_dataset is not None, "Error: empty test_dataset"
     # For color, eval is defined as the average of RMS of the RGB values
     # mean([rms(pred, gt) for each (pred, gt) in octopus])
-    BATCH_SIZE = GameParameters['batch_size']
+    BATCH_SIZE = TrainingParameters['batch_size']
     loss, accuracy = model.evaluate(test_dataset, batch_size=BATCH_SIZE)
     print(f"Loss: {loss:.3f}, Accuracy: {accuracy:.3f}")
     print(f"Model eval completed at time t={tm.time() - start:.3f}")
