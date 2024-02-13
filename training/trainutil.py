@@ -1,6 +1,7 @@
 """
 Trainer utilities
 """
+import tensorflow as tf
 from tensorflow.python.util.tf_export import keras_export  # pylint: disable=no-name-in-module
 from keras.engine import base_layer
 from keras import activations
@@ -104,6 +105,57 @@ class ConcurrentRNN(base_layer.Layer):
     """
     Class for SimpleRNN.
     """
-    def __init__(self):
+
+
+    def __init__(
+        self,
+        cell,
+        return_sequences=False,
+        return_state=False,
+        go_backwards=False,
+        stateful=False,
+        unroll=False,
+        time_major=False,
+        **kwargs,
+    ):
+        if "state_size" not in dir(cell):
+            raise ValueError(
+                "The RNN cell should have a `state_size` attribute "
+                "(tuple of integers, one integer per RNN state). "
+                f"Received: cell={cell}"
+            )
+        self.zero_output_for_mask = kwargs.pop("zero_output_for_mask", False)
+        if "input_shape" not in kwargs and (
+            "input_dim" in kwargs or "input_length" in kwargs
+        ):
+            input_shape = (
+                kwargs.pop("input_length", None),
+                kwargs.pop("input_dim", None),
+            )
+            kwargs["input_shape"] = input_shape
         super().__init__()
 
+        self.cell = cell
+        self.return_sequences = return_sequences
+        self.return_state = return_state
+        self.go_backwards = go_backwards
+        self.stateful = stateful
+        self.unroll = unroll
+        self.time_major = time_major
+
+        self.supports_masking = True
+        # The input shape is unknown yet, it could have nested tensor inputs,
+        # and the input spec will be the list of specs for nested inputs, the
+        # structure of the input_spec will be the same as the input.
+        self.input_spec = None
+        self.state_spec = None
+        self._states = None
+        self.constants_spec = None
+        self._num_constants = 0
+        
+        if stateful:
+            if tf.distribute.has_strategy():
+                raise ValueError(
+                    "Stateful RNNs (created with `stateful=True`) "
+                    "are not yet supported with tf.distribute.Strategy."
+                )

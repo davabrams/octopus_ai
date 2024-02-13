@@ -6,7 +6,7 @@ import datetime
 import tensorflow as tf
 from tensorflow import keras
 from training.losses import WeightedSumLoss
-from training.trainutil import ConcurrentRNN
+from training.trainutil import ConcurrentRNN, ConcurrentRNNCell
 import seaborn as sn
 import matplotlib.pyplot as plt
 import pickle
@@ -224,7 +224,8 @@ class LimbTrainer(Trainer):
         fixed_model = tf.keras.Model(inputs=fixed_input, outputs=fixed_model, name="fixed_output_layer")
 
         # the second branch operates on the ragged input
-        ragged_model = ConcurrentRNN(units=5, activation="relu", name="ragged_rnn_layer")(ragged_input)
+        rnn_cell = ConcurrentRNNCell(units=5)
+        ragged_model = ConcurrentRNN(cell=rnn_cell, activation="relu", name="ragged_rnn_layer")(ragged_input)
         ragged_model = tf.keras.layers.Dense(units=5, activation="relu", name="ragged_hidden_layer")(ragged_model)
         ragged_model = tf.keras.layers.Dense(units=4, activation="relu", name="ragged_prediction_layer")(ragged_model)
         ragged_model = tf.keras.Model(inputs=ragged_input, outputs=ragged_model, name="ragged_output_layer")
