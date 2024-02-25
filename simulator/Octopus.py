@@ -1,5 +1,7 @@
 """Octopus Class"""
 from dataclasses import dataclass, field
+from typing import Tuple, List
+from multiprocessing.pool import ThreadPool
 import numpy as np
 from simulator.random_surface import RandomSurface
 from simulator.simutil import MovementMode, Agent, Color, MLMode, CenterPoint
@@ -28,32 +30,40 @@ class Sucker:
 
     def __repr__(self):
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
-    def set_color(self,
-                  surf: RandomSurface,
-                  inference_mode: MLMode = MLMode.NO_MODEL,
-                  model = None,
-                  adjacents = None
-                  ):
+
+    def set_color(self, inp: Tuple):
+        (surf, inference_mode, model, adjacents) = inp
+        c = self.find_color(surf, inference_mode, model, adjacents, None)
+        self.force_color(c)
+
+    def force_color(self, c: Color):
+        assert isinstance(c, Color)
+        self.c = c
+
+
+    def find_color(self, *args, **kwds):
+        # surf, inference_mode, model, adjacents, ix):
         """ 
         Sets the sucker's new color using either a heuristic or an ML model. 
         """
+        surf, inference_mode, model, adjacents, ix = args[0]
+        
         if inference_mode is not MLMode.NO_MODEL:
             assert model is not None, "model inference specified but no model was specified"
         c_val = self.get_surf_color_at_this_sucker(surf)
+        c_ret = Color()
 
         if inference_mode == MLMode.NO_MODEL:
-            self.c.r = self._find_color_change(self.c.r, c_val.r)
-            self.c.g = self._find_color_change(self.c.g, c_val.g)
-            self.c.b = self._find_color_change(self.c.b, c_val.b)
+            c_ret.r = self._find_color_change(self.c.r, c_val.r)
         elif inference_mode == MLMode.SUCKER:
-            self.c.r = model.predict(np.array([[self.c.r, c_val.r]]), verbose=0)[0][0]
-            self.c.g = self.c.r
-            self.c.b = self.c.r
+            c_ret.r = model.predict(np.array([[self.c.r, c_val.r]]), verbose=0)[0][0]
         elif inference_mode == MLMode.LIMB:
             fixed_test_input = np.array([[self.c.r, c_val.r]])
             ragged_test_input = convert_adjacents_to_ragged_tensor(adjacents)
-            self.c.r = model.predict([fixed_test_input, ragged_test_input])[0][0]
-
+            c_ret.r = model.predict([fixed_test_input, ragged_test_input])[0][0]
+        c_ret.g = c_ret.r
+        c_ret.b = c_ret.r
+        return c_ret, ix
 
     def set_loc(self, x: float, y: float):
         self.prev = self
@@ -110,6 +120,7 @@ class Limb:
         self.movement_mode = GameParameters['limb_movement_mode']
         self.max_arm_theta = GameParameters['octo_max_arm_theta']
         self.agent_range_radius = GameParameters['agent_range_radius']
+        self.threading = GameParameters['octo_threading']
 
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
@@ -205,19 +216,77 @@ class Limb:
                 adjacents.append(tuple((s, dist)))
         return adjacents
 
+    def find_color(self,
+                   surf: RandomSurface,
+                   inference_mode: MLMode,
+                   model
+                    ):
+        """
+        Finds the color of the suckers in this limb, in parallel
+        """
+        pool = ThreadPool()
+
+        find_color_parameter_list = [(surf, inference_mode, model,
+                self.find_adjacents(s, self.agent_range_radius)
+                if inference_mode == MLMode.LIMB
+                else None,
+                ix,) for ix, s in enumerate(self.suckers)]
+        pool_iterable = zip(self.suckers, find_color_parameter_list)
+        color_tuple_array = pool.imap_unordered(
+            func = lambda x: x[0].find_color(x[1]),
+            iterable = pool_iterable)
+        color_tuple_array_sorted = sorted(color_tuple_array, key = lambda x: x[1])
+        color_array_sorted = [c[0] for c in color_tuple_array_sorted]
+        return color_array_sorted
+
+    def force_color(self,
+                    color_array: List[Color]):
+        """
+        Directly changes the color of the suckers in the limb to a specified Color in a list of colors
+        """
+        assert len(color_array) == len(self.suckers), "The length of the color list does not match the length of the sucker list"
+        assert isinstance(color_array, list)
+        assert isinstance(color_array[0], Color)
+        for ix, s in enumerate(self.suckers):
+            s.force_color(color_array[ix])
+        # map(lambda x, y: x.force_color(y[0]), self.suckers, color_iterable)
+        
+
     def set_color(self,
                   surf: RandomSurface,
-                  inference_mode: MLMode = MLMode.NO_MODEL,
-                  model = None
+                  inference_mode: MLMode,
+                  model
                   ):
         """
         Passes through the set_color command from the octopus to the stored suckers.
         """
-        for sucker in self.suckers:
+        pool = ThreadPool()
+        status_array = []
+
+        for s in self.suckers:
             adjacents = None
             if inference_mode == MLMode.LIMB:
-                adjacents = self.find_adjacents(sucker, self.agent_range_radius)
-            sucker.set_color(surf, inference_mode, model, adjacents)
+                adjacents = self.find_adjacents(s, self.agent_range_radius)
+            inp = (surf, inference_mode, model, adjacents)
+            if self.threading:
+                t = pool.apply_async(
+                        func=s.find_color,
+                        args=inp,
+                        callback=s.force_color,
+                        error_callback=print
+                        )
+                status_array.append(t)
+            else:
+                s.set_color(inp)
+        for s in status_array:
+            s.wait()
+            # if s.successful():
+            #     print('Successful')
+            # else:
+            #     print('Unsuccessful')
+        pool.close()
+        pool.join()
+
 
 class Octopus:
     """
@@ -234,6 +303,7 @@ class Octopus:
         self.max_body_velocity = GameParameters['octo_max_body_velocity']
         self.movement_mode = GameParameters['octo_movement_mode']
         self.model = None
+        self.threading = GameParameters['octo_threading']
 
         num_arms = GameParameters['octo_num_arms']
         self.limbs = [
@@ -271,6 +341,25 @@ class Octopus:
     def _move_attract_repel(self, ag: Agent = None):
         print("Attract/Repel movement mode not complete", ag.Type)
 
+    def find_color(
+            self,
+            surf: RandomSurface,
+            inference_mode: MLMode = MLMode.NO_MODEL,
+            model = None
+    ) -> List[List[Color]]:
+        """
+        Finds the color of the suckers in the limbs, in parallel
+        """
+        pool = ThreadPool(processes = 2)
+        pool_iterable = [(l, ix) for ix, l in enumerate(self.limbs)]
+        result = pool.imap_unordered(
+            func = lambda x: (x[0].find_color(surf, inference_mode, model), x[1],),
+            iterable = pool_iterable)
+        ret = sorted(result, key = lambda x: x[1])
+        ret = [x[0] for x in ret]
+        return ret
+
+
     def set_color(self,
                   surf: RandomSurface,
                   inference_mode: MLMode = MLMode.NO_MODEL,
@@ -279,8 +368,8 @@ class Octopus:
         """
         Main entry point for setting color.  Calls the child Limb object's set_color method.
         """
-        for l in self.limbs:
-            l.set_color(surf, inference_mode, model)
+        color_matrix = self.find_color(surf, inference_mode, model)
+        map(lambda l, c_array: l.force_color[c_array], self.limbs, color_matrix)
 
     def visibility(self, surf: RandomSurface):
         """Computes octopus visibility as mean of square of octopus color error"""

@@ -1,15 +1,15 @@
 """ Octopus visualizer """
-import time    
+import time
 import matplotlib.pyplot as plt
-from OctoConfig import GameParameters
+from OctoConfig import GameParameters, TrainingParameters
 from simulator.agent_generator import AgentGenerator
-from simulator.octopus import Octopus
+from simulator import Octopus, Color
 from simulator.random_surface import RandomSurface
 from simulator.simutil import setup_display, display_refresh, MLMode
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 num_agents = GameParameters['agent_number_of_agents']
-model_path = GameParameters['sucker_model_location']
+model_path = TrainingParameters['sucker_model_location']
 
 ag = AgentGenerator(GameParameters)
 octo = Octopus(GameParameters)
@@ -27,9 +27,9 @@ if GameParameters['inference_mode'] is not MLMode.NO_MODEL:
 
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-inference_mode = GameParameters['inference_mode']
+INFERENCE_MODE = GameParameters['inference_mode']
 NUM_ITERATIONS = GameParameters['num_iterations']
-debug_mode = GameParameters['debug_mode']
+DEBUG_MODE = GameParameters['debug_mode']
 SAVE_IMAGES = GameParameters['save_images']
 
 fig, ax = setup_display()
@@ -38,9 +38,10 @@ y = fig.text(.1, .025, "", fontdict=font)
 
 i: int = 0
 while i != NUM_ITERATIONS:
+    t_start: int = time.time_ns()
     i += 1
 
-    display_refresh(ax, octo, ag, surf, debug_mode=debug_mode)
+    display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE)
 
     y.set_text(f"Visibility = {octo.visibility(surf):.4f}")
     fig.canvas.draw()
@@ -48,10 +49,21 @@ while i != NUM_ITERATIONS:
     #     break
     if SAVE_IMAGES:
         plt.savefig(f'foo{time.time()}.png')
-    print(f"Iteration: {i}")
-    plt.pause(0.1)
+    # plt.pause(0.1)
     ag.increment_all(octo)
     octo.move(ag)
 
-    # run inference using the selected mode and model
-    octo.set_color(surf, inference_mode=inference_mode, model=model)
+    # run inference using œthe selected mode and model
+    
+    # octo.set_color(surf, inference_mode=INFERENCE_MODE, model=model)
+    color_matrix = octo.find_color(surf, INFERENCE_MODE, model)
+    assert isinstance(color_matrix, list)
+    assert isinstance(color_matrix[0], list)
+    assert isinstance(color_matrix[0][0], Color)
+    for ix, l in enumerate(octo.limbs):
+        l.force_color(color_matrix[ix])
+    
+    t_end: int = time.time_ns()
+    print(f"Iteration: {i} complete with Δt = {(t_end - t_start)/1000000000} sec")
+
+    # map(lambda l, c_array: l.force_color[c_array], octo.limbs, color_matrix)

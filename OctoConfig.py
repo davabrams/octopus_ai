@@ -12,7 +12,7 @@ GameParameters: dict = {
     'debug_mode': False, #enables things like agent attract/repel regions
     'save_images': False,
     'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
-    'inference_mode': MLMode.LIMB,
+    'inference_mode': MLMode.SUCKER,
 
     # Agent parameters 👾
     'agent_number_of_agents': 5,
@@ -29,6 +29,7 @@ GameParameters: dict = {
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,
     'octo_movement_mode': MovementMode.RANDOM,
+    'octo_threading': True,
 
     # Limb parameters 💪
     'limb_rows': 16,
