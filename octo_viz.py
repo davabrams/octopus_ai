@@ -65,5 +65,3 @@ while i != NUM_ITERATIONS:
     
     t_end: int = time.time_ns()
     print(f"Iteration: {i} complete with Δt = {(t_end - t_start)/1000000000} sec")
-
-    # map(lambda l, c_array: l.force_color[c_array], octo.limbs, color_matrix)

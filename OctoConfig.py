@@ -3,9 +3,21 @@ Octopus game and ML parameters
 """
 from simulator.simutil import MLMode, MovementMode
 
+default_models = {
+        MLMode.NO_MODEL: None,
+        MLMode.SUCKER: 'training/models/sucker.keras',
+        MLMode.LIMB: 'training/models/limb.keras',
+    }
+
+default_datasets = {
+        MLMode.NO_MODEL: None,
+        MLMode.SUCKER: 'training/datagen/sucker_data.pkl',
+        MLMode.LIMB: 'training/datagen/limb_data.pkl',
+    }
+
 GameParameters: dict = {
     # General game parameters 🎛️
-    'num_iterations': 120, #set this to -1 for infinite loop
+    'num_iterations': 1, #set this to -1 for infinite loop
     'x_len': 15,
     'y_len': 15,
     'rand_seed': 0,
@@ -13,6 +25,8 @@ GameParameters: dict = {
     'save_images': False,
     'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
     'inference_mode': MLMode.SUCKER,
+    'datagen_data_write_format': MLMode.LIMB,
+    'models': default_models,
 
     # Agent parameters 👾
     'agent_number_of_agents': 5,
@@ -44,26 +58,25 @@ GameParameters: dict = {
 
 
 TrainingParameters = {
-    "save_data_to_disk": False,
+    "save_data_to_disk": True,
     "restore_data_from_disk": False,
     "run_training": True,
-    "erase_old_tensorboard_logs": True,
-    "generate_tensorboard": False,
+    "erase_old_tensorboard_logs": False,
+    "generate_tensorboard": True,
     "save_model_to_disk": True,
 
     "restore_model_from_disk": False,
-    "run_inference": True,
 
+    "run_inference": False,
     "run_eval": False,
 
 
     # ML training & datagen parameters 🕸️
     'ml_mode': MLMode.LIMB,
-    'datagen_mode': False,
-    'sucker_model_location': 'training/models/sucker.keras',
-    'sucker_datagen_location': 'training/datagen/sucker_data.pkl',
-    'limb_model_location': 'training/models/limb.keras',
-    'limb_datagen_location': 'training/datagen/limb_data.pkl',
+    'datagen_mode': True,
+    'models': default_models,
+    'datasets': default_datasets,
+
     'test_size': 0.2,
     'epochs': 10,
     'batch_size': 32, #32 is tf default

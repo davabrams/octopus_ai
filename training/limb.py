@@ -3,15 +3,14 @@ Library for limb model training
 """
 import os
 import datetime
+import pickle
 import tensorflow as tf
-from tensorflow import keras
-from training.losses import WeightedSumLoss
-from training.trainutil import ConcurrentRNN, ConcurrentRNNCell
 import seaborn as sn
 import matplotlib.pyplot as plt
-import pickle
 import numpy as np
-import tensorflow as tf
+from enum import Enum
+from tensorflow import keras
+from training.losses import WeightedSumLoss
 from octo_datagen import OctoDatagen
 from util import (
     train_test_split_multiple_state_vectors,
@@ -20,6 +19,9 @@ from simulator.simutil import MLMode
 from .trainutil import Trainer
 
 class LimbTrainer(Trainer):
+    """
+    Limb-level trainer class
+    """
     def __init__(self, GameParameters, TrainingParameters):
         self.GameParameters = GameParameters
         self.TrainingParameters = TrainingParameters
@@ -27,8 +29,10 @@ class LimbTrainer(Trainer):
     def datagen(self, SAVE_DATA_TO_DISK):
         datagen = OctoDatagen(self.GameParameters)
         data = datagen.run_color_datagen()
+        ml_mode = self.TrainingParameters['ml_mode']
+        datagen_path = self.TrainingParameters['datasets'][ml_mode]
         if SAVE_DATA_TO_DISK:
-            with open(self.GameParameters['limb_datagen_location'], 'wb') as file:
+            with open(datagen_path, 'wb') as file:
                 pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
         return data
 
@@ -36,9 +40,11 @@ class LimbTrainer(Trainer):
         """
         Format Data for Train and Val
         """
-        if self.GameParameters['ml_mode'] == MLMode.SUCKER:
+        datagen_data_format = data['game_parameters']['datagen_data_write_format']
+        print(f"Found data format:", datagen_data_format)
+        if datagen_data_format == MLMode.SUCKER:
             state_data = np.array([data['state_data']], dtype='float32') #sucker's current color
-        elif self.GameParameters['ml_mode'] == MLMode.LIMB:
+        elif datagen_data_format == MLMode.LIMB:
             c_ragged_list = []
             dist_ragged_list = []
             # Iterate over data points
@@ -61,20 +67,20 @@ class LimbTrainer(Trainer):
         state_data = [x['color'] for x in data['state_data']]
         gt_data = [x.r for x in data['gt_data']]
 
-        train_state_data, train_gt_data, test_state_data, test_gt_data = train_test_split_multiple_state_vectors([state_data, gt_data, c_ragged_list, dist_ragged_list], gt_data)
-
-        def gen(data: list):
+        train_state_data, train_gt_data, test_state_data, test_gt_data = train_test_split_multiple_state_vectors([state_data,
+                                                                                                                  gt_data,
+                                                                                                                  c_ragged_list,
+                                                                                                                  dist_ragged_list]
+                                                                                                                  , gt_data)
+        def gen(data):
             for ix in range(len(data[0])):
-                yield data[0][ix], data[1][ix], tf.ragged.constant(data[2][ix]), tf.ragged.constant(data[3][ix])
+                n = [[data[0][ix]], [data[1][ix]], data[2][ix], data[3][ix]]
+                yield tf.ragged.constant(n, dtype=tf.float32)
 
-        output_signature = (tf.TensorSpec(shape=(), dtype=tf.float32),
-                            tf.TensorSpec(shape=(), dtype=tf.float32),
-                            tf.TensorSpec(shape=(None,), dtype=tf.float32),
-                            tf.TensorSpec(shape=(None,), dtype=tf.float32),)
-        test_gen = gen(test_state_data)
-        test_dataset = tf.data.Dataset.from_generator(lambda: map(tuple, test_gen), output_signature=output_signature)
-        train_gen = gen(train_state_data)
-        train_dataset = tf.data.Dataset.from_generator(lambda: map(tuple, train_gen), output_signature=output_signature)
+        output_signature = tf.RaggedTensorSpec(shape=(4, None), dtype=tf.float32)
+        train_dataset = tf.data.Dataset.from_generator(lambda: gen(train_state_data), output_signature=output_signature)
+        test_dataset = tf.data.Dataset.from_generator(lambda: gen(test_state_data), output_signature=output_signature)
+
         return train_dataset, test_dataset
 
     def train(self, train_dataset, GENERATE_TENSORBOARD=False):
@@ -114,10 +120,10 @@ class LimbTrainer(Trainer):
         plt.figure(figsize = (10,7))
         sn.heatmap(res, annot=True)
         plt.xlabel('surface color')
-        locs, labels = plt.xticks()
+        locs = plt.xticks()
         plt.xticks(locs, range_vals)
         plt.ylabel('sucker previous color')
-        locs, labels = plt.yticks()
+        locs = plt.yticks()
         plt.yticks(locs, range_vals)
         plt.show()
 
@@ -128,7 +134,7 @@ class LimbTrainer(Trainer):
         batch_size = TrainingParameters['batch_size']
 
         ####### Configure loss function settings
-        constraint_loss_weight = TrainingParameters['constraint_loss_weight']
+        constraint_loss_weight = tf.constant(TrainingParameters['constraint_loss_weight'], dtype='float32')
         max_hue_change = tf.constant(GameParameters['octo_max_hue_change'], dtype='float32')
 
         ####### Model constructor
@@ -142,7 +148,7 @@ class LimbTrainer(Trainer):
             summary_writer = tf.summary.create_file_writer(logdir=log_dir)
 
         ####### Custom training loop
-        epochs = GameParameters["epochs"]
+        epochs = TrainingParameters["epochs"]
         optimizer = keras.optimizers.SGD(learning_rate=1e-3)
 
         total_steps = 0
@@ -152,7 +158,8 @@ class LimbTrainer(Trainer):
             epoch_loss_mse = tf.keras.metrics.MeanSquaredError()
 
             # Iterate over the batches of the dataset.
-            
+            if not train_dataset:
+                raise ValueError("train_dataset is empty, there is no way to train")
             for step, train_data in enumerate(train_dataset):
                 (state_data, gt_data, c_ragged_list, dist_ragged_list) = train_data
                 y_train_data = tf.stack([state_data, gt_data])
@@ -192,7 +199,7 @@ class LimbTrainer(Trainer):
 
                 total_steps += 1
 
-                # Log every 20 batches.
+                # Report every 20 batches to the console.
                 if step % 20 == 0:
                     print(
                         "Training loss (for one batch) at step %d: %.4f"
@@ -215,21 +222,20 @@ class LimbTrainer(Trainer):
     def _model_constructor(self):
         # define two sets of inputs
         fixed_input = tf.keras.Input(shape=(2), dtype=tf.float32, name="fixed_input", ragged=False)
-        ragged_input = tf.keras.Input(type_spec=tf.RaggedTensorSpec(shape=(1, None, 2), dtype=tf.float32, ragged_rank=1)) #, name="ragged_input", ragged=True)
+        ragged_input = tf.keras.Input(type_spec=tf.RaggedTensorSpec(shape=(1,None, 2), dtype=tf.float32, ragged_rank=1)) #, name="ragged_input", ragged=True)
 
         # the first branch operates on the fixed input
-        fixed_model = tf.keras.layers.Dense(units=5, activation="relu", name="fixed_hidden_layer1")(fixed_input)
-        fixed_model = tf.keras.layers.Dense(units=5, activation="relu", name="fixed_hidden_layer2")(fixed_model)
-        fixed_model = tf.keras.layers.Dense(units=4, activation="relu", name="fixed_prediction_layer")(fixed_model)
-        fixed_model = tf.keras.Model(inputs=fixed_input, outputs=fixed_model, name="fixed_output_layer")
+        fixed_layer_stack = tf.keras.layers.Dense(units=5, activation="relu", name="fixed_hidden_layer1")(fixed_input)
+        fixed_layer_stack = tf.keras.layers.Dense(units=5, activation="relu", name="fixed_hidden_layer2")(fixed_layer_stack)
+        fixed_layer_stack = tf.keras.layers.Dense(units=4, activation="relu", name="fixed_prediction_layer")(fixed_layer_stack)
+        fixed_model = tf.keras.Model(inputs=fixed_input, outputs=fixed_layer_stack, name="fixed_output_layer")
 
         # the second branch operates on the ragged input
-        rnn_cell = ConcurrentRNNCell(units=5)
-        ragged_model = ConcurrentRNN(cell=rnn_cell, activation="relu", name="ragged_rnn_layer")(ragged_input)
-        ragged_model = tf.keras.layers.Dense(units=5, activation="relu", name="ragged_hidden_layer")(ragged_model)
-        ragged_model = tf.keras.layers.Dense(units=4, activation="relu", name="ragged_prediction_layer")(ragged_model)
-        ragged_model = tf.keras.Model(inputs=ragged_input, outputs=ragged_model, name="ragged_output_layer")
-
+        ragged_layer_stack = tf.keras.layers.SimpleRNN(units=5, activation="relu", name="ragged_rnn_layer")(ragged_input)
+        ragged_layer_stack = tf.keras.layers.Dense(units=5, activation="relu", name="ragged_hidden_layer")(ragged_layer_stack)
+        ragged_layer_stack = tf.keras.layers.Dense(units=4, activation="relu", name="ragged_prediction_layer")(ragged_layer_stack)
+        ragged_model = tf.keras.Model(inputs=ragged_input, outputs=ragged_layer_stack, name="ragged_output_layer")
+        
         # combine the output of the two branches
         combined = tf.keras.layers.concatenate([fixed_model.output, ragged_model.output])
 

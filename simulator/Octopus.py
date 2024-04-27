@@ -1,6 +1,6 @@
 """Octopus Class"""
 from dataclasses import dataclass, field
-from typing import Tuple, List
+from typing import List
 from multiprocessing.pool import ThreadPool
 import numpy as np
 from simulator.random_surface import RandomSurface
@@ -31,17 +31,11 @@ class Sucker:
     def __repr__(self):
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
 
-    def set_color(self, inp: Tuple):
-        (surf, inference_mode, model, adjacents) = inp
-        c = self.find_color(surf, inference_mode, model, adjacents, None)
-        self.force_color(c)
-
     def force_color(self, c: Color):
         assert isinstance(c, Color)
         self.c = c
 
-
-    def find_color(self, *args, **kwds):
+    def find_color(self, *args):
         # surf, inference_mode, model, adjacents, ix):
         """ 
         Sets the sucker's new color using either a heuristic or an ML model. 
@@ -66,6 +60,9 @@ class Sucker:
         return c_ret, ix
 
     def set_loc(self, x: float, y: float):
+        """
+        Sets the sucker location and iterates it
+        """
         self.prev = self
         self.prev.prev = None #Prevents unbound memory
         self.x = x
@@ -249,43 +246,6 @@ class Limb:
         assert isinstance(color_array[0], Color)
         for ix, s in enumerate(self.suckers):
             s.force_color(color_array[ix])
-        # map(lambda x, y: x.force_color(y[0]), self.suckers, color_iterable)
-        
-
-    def set_color(self,
-                  surf: RandomSurface,
-                  inference_mode: MLMode,
-                  model
-                  ):
-        """
-        Passes through the set_color command from the octopus to the stored suckers.
-        """
-        pool = ThreadPool()
-        status_array = []
-
-        for s in self.suckers:
-            adjacents = None
-            if inference_mode == MLMode.LIMB:
-                adjacents = self.find_adjacents(s, self.agent_range_radius)
-            inp = (surf, inference_mode, model, adjacents)
-            if self.threading:
-                t = pool.apply_async(
-                        func=s.find_color,
-                        args=inp,
-                        callback=s.force_color,
-                        error_callback=print
-                        )
-                status_array.append(t)
-            else:
-                s.set_color(inp)
-        for s in status_array:
-            s.wait()
-            # if s.successful():
-            #     print('Successful')
-            # else:
-            #     print('Unsuccessful')
-        pool.close()
-        pool.join()
 
 
 class Octopus:
@@ -366,7 +326,8 @@ class Octopus:
                   model = None
                   ):
         """
-        Main entry point for setting color.  Calls the child Limb object's set_color method.
+        Main entry point for setting color.  Calls the child Limb object's find_color method,
+        and then its force_color method
         """
         color_matrix = self.find_color(surf, inference_mode, model)
         map(lambda l, c_array: l.force_color[c_array], self.limbs, color_matrix)

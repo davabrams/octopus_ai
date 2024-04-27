@@ -13,37 +13,33 @@ class OctoDatagen():
     def __init__(self, game_parameters: dict):
         assert game_parameters['num_iterations'] >= 0, "Error, number of iterations configured in game parameters are not compatible with data generation"
         self.game_parameters = game_parameters
-        print(f"Instantiated OctDatagen with inference type {game_parameters['inference_mode']}")
+        self.data_write_mode = game_parameters['datagen_data_write_format']
+        self.inference_mode = game_parameters['inference_mode']
+        self.model_path = self.game_parameters['models'][self.inference_mode]
+        print(f"Instantiated OctDatagen with inference type {self.inference_mode} and model {self.model_path}")
 
     def run_color_datagen(self):
-        GameParameters = self.game_parameters
-        if GameParameters['inference_mode'] == MLMode.SUCKER:
-            model_path = GameParameters['sucker_model_location']
-            model = keras.models.load_model(model_path)
-        elif GameParameters['inference_mode'] == MLMode.LIMB:
-            model_path = GameParameters['limb_model_location']
-            model = keras.models.load_model(model_path)
-        else:
-            model_path = None
-            model = None
-
+        params = self.game_parameters
+        model = keras.models.load_model(self.model_path) if self.model_path else None
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")
 
         # %% Configure game
-        surf = RandomSurface(GameParameters)
-        ag = AgentGenerator(GameParameters)
-        ag.generate(num_agents=GameParameters['agent_number_of_agents'])
-        octo=Octopus(GameParameters)
-        octo.set_color(surf, inference_mode=GameParameters['inference_mode'], model = model)
+        surf = RandomSurface(params)
+        ag = AgentGenerator(params)
+        ag.generate(num_agents=params['agent_number_of_agents'])
+        octo=Octopus(params)
+
+        # Always start with no-model
+        octo.set_color(surf, inference_mode=MLMode.NO_MODEL, model = model) 
 
         # %% Data Gen
         sucker_state = []
         sucker_gt = []
         sucker_test = []
         run_iterations = 0
-        while run_iterations != GameParameters['num_iterations']:
+        while run_iterations != params['num_iterations']:
             print(f'Datagen Iteration {run_iterations}')
             run_iterations += 1
 
@@ -53,10 +49,10 @@ class OctoDatagen():
             for l in octo.limbs:
                 for s in l.suckers:
                     # Different ML modes will want to capture different state info
-                    if GameParameters['ml_mode'] == MLMode.SUCKER:
+                    if self.data_write_mode == MLMode.SUCKER:
                         state = s.c.r
-                    elif GameParameters['ml_mode'] == MLMode.LIMB:
-                        radius = GameParameters['adjacency_radius']
+                    elif self.data_write_mode == MLMode.LIMB:
+                        radius = params['adjacency_radius']
                         state = {}
                         state['color'] = s.c.r
                         state['adjacents'] = l.find_adjacents(s, radius)
@@ -65,7 +61,7 @@ class OctoDatagen():
                     sucker_gt.append(s.get_surf_color_at_this_sucker(surf))
 
             # run inference using the selected mode
-            octo.set_color(surf, GameParameters['inference_mode'])
+            octo.set_color(surf, self.inference_mode, model)
 
             # log the test results (the output of inference)
             for l in octo.limbs:
@@ -80,7 +76,7 @@ class OctoDatagen():
         }
         data = {
             'metadata': metadata,
-            'game_parameters': GameParameters,
+            'game_parameters': params,
             'state_data': sucker_state,
             'gt_data': sucker_gt,
         }

@@ -39,14 +39,13 @@ print(f"Octo Model started at {start}, setting t=0.0")
 if ERASE_OLD_TENSORBOARD_LOGS:
     erase_all_logs()
 
+datagen_location = TrainingParameters['models'][ML_MODE]
+model_location = TrainingParameters['models'][ML_MODE]
+
 if ML_MODE == MLMode.SUCKER:
     trainer = SuckerTrainer(GameParameters)
-    datagen_location = TrainingParameters['sucker_datagen_location']
-    model_location = TrainingParameters['sucker_model_location']
 elif ML_MODE == MLMode.LIMB:
     trainer = LimbTrainer(GameParameters, TrainingParameters)
-    datagen_location = TrainingParameters['limb_datagen_location']
-    model_location = TrainingParameters['limb_model_location']
 else:
     raise ValueError("No trainer available for selected ML Mode, check GameParameters")
 
@@ -65,7 +64,7 @@ elif RESTORE_DATA_FROM_DISK:
     print(f"Data load completed at time t={tm.time() - start}")
 
 else:
-    # No data is specified.  It may not be needed.
+    # No data is specified.  It may not be needed?
     pass
 
 if data:
@@ -76,7 +75,7 @@ if data:
 # %% Model training
 if RUN_TRAINING:
 
-    model = trainer.train(train_dataset)
+    model = trainer.train(train_dataset, GENERATE_TENSORBOARD=GENERATE_TENSORBOARD)
     print(f"Model training completed at time t={tm.time() - start:.3f}")
 
     # %% Model deployment (this is only run if a new model was successfully trained)
@@ -90,6 +89,7 @@ if RUN_INFERENCE:
     if RESTORE_MODEL_FROM_DISK:
         custom_objects = {"WeightedSumLoss": WeightedSumLoss}
         model = keras.models.load_model(model_location, custom_objects)
+        model.compile()
         print(f"Model load completed at time t={tm.time() - start:.3f}")
 
     trainer.inference(model)
