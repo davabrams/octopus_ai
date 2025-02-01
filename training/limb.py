@@ -8,6 +8,7 @@ import tensorflow as tf
 import seaborn as sn
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 from enum import Enum
 from tensorflow import keras
 from training.losses import WeightedSumLoss
@@ -151,7 +152,13 @@ class LimbTrainer(Trainer):
         epochs = TrainingParameters["epochs"]
         optimizer = keras.optimizers.SGD(learning_rate=1e-3)
 
-        total_steps = 0
+        """
+        Epoch = # of times we go over each element in the data set
+        Batch = how many data points are passed through at once, before sgd
+        Step = which index in the data set we are on, after the data is batched
+        """
+
+        start_time = time.time()
         for epoch in range(epochs):
             print("\nStart of epoch %d" % (epoch,))
 
@@ -183,7 +190,7 @@ class LimbTrainer(Trainer):
                     # Recompile the loss function with the updated step (for logging)
                     loss_fn = WeightedSumLoss(threshold=max_hue_change,
                                             weight=constraint_loss_weight,
-                                            step=total_steps,
+                                            step=epoch,
                                             logwriter=summary_writer)
 
                     # Compute the loss value for this minibatch.
@@ -197,18 +204,17 @@ class LimbTrainer(Trainer):
                 # the value of the variables to minimize the loss.
                 optimizer.apply_gradients(zip(grads, limb_model.trainable_weights))
 
-                total_steps += 1
-
-                # Report every 20 batches to the console.
-                if step % 20 == 0:
+                # Report every 100 steps (3,200 data points) to the console.
+                if step % 100 == 0:
                     print(
-                        "Training loss (for one batch) at step %d: %.4f"
-                        % (step, float(loss_value))
-                    )
-                    print("Seen so far: %s samples" % ((step + 1) * batch_size))
-
-                if total_steps % 100 == 0:
-                    print(f"Total Steps: {total_steps}, total data points: {total_steps * batch_size}")
+                        "Training loss (for one batch) at step %d: %.4f | " % (step, float(loss_value)),
+                        f"Seen so far: {((step + 1) * batch_size)} samples")
+            t = time.time()
+            t_elapsed = t - start_time
+            t_remaining = (t_elapsed / epoch) * epochs
+            t_eta = start_time + t_remaining
+            print(f"\n\Epoch {epoch}/{epochs}")
+            print(f"Time Elapsed: {t_elapsed}, Time Remaining: {t_remaining}, ETA: {t_eta}\n\n")
 
             if GENERATE_TENSORBOARD:
                 with summary_writer.as_default():
