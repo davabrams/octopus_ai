@@ -4,12 +4,11 @@ Library for limb model training
 import os
 import datetime
 import pickle
+import time
+import numpy as np
 import tensorflow as tf
 import seaborn as sn
 import matplotlib.pyplot as plt
-import numpy as np
-import time
-from enum import Enum
 from tensorflow import keras
 from training.losses import WeightedSumLoss
 from octo_datagen import OctoDatagen

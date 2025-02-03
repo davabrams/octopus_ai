@@ -13,7 +13,7 @@ void server_loop() {
     int opt = 1;
     int addrlen = sizeof(address);
     char buffer[1024] = {0};
-    const char *ack = "Message Acknowledged";
+    const char *ack = "Message Processed";
 
     // Creating socket file descriptor
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -43,7 +43,9 @@ void server_loop() {
         exit(EXIT_FAILURE);
     }
 
+    int msg_ix = 0;
     while(1) {
+        std::cout << "Awaiting message #" << msg_ix << std::endl;
         // Accepting incoming connections
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
             perror("accept");
@@ -54,19 +56,25 @@ void server_loop() {
         std::cout << "Client: " << buffer << std::endl;
 
         // Execute inference in its own thread
-        std::future<std::optional<std::string>> fp = std::async(std::launch::async, infer, buffer);
+        std::optional<std::string> result = std::nullopt;
+        std::future<std::optional<std::string>> fp = std::async(std::launch::async, infer, msg_ix, buffer);
         if(fp.valid()) {
-            std::optional<std::string> result = fp.get();
+            result = fp.get();
             if (result.has_value()) {
-                std::cout << "Return value from async thread is => " << result.value() << std::endl;
+                // Print the resultant string
+                std::string result_string = result.value();
+                std::cout << "Return value from async thread is => " << result_string << std::endl;
+
+                // Socket wants a character array sent
+                char result_char[1024];
+                strcpy(result_char, result_string.c_str());
+                result_char[sizeof(result_char) - 1] = 0; // Truncate the result
+                send(new_socket, result_char, strlen(result_char), 0);
             } else {
                 std::cout << "Async thread returned null result";
             }
         }
-
-        std::cout << "Sending ACK to client...";
-        send(new_socket, ack, strlen(ack), 0);
-        std::cout << "Done." << std::endl;
+        msg_ix++;
     }
     // Closing the socket
     close(new_socket);
