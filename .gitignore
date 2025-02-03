@@ -5,3 +5,6 @@
 *.pkl
 *.pyc
 .DS_Store
+ml_server/server
+.vscode/settings.json
+.vscode/tasks.json
