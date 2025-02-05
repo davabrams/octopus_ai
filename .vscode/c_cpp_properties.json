@@ -1,0 +1,29 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/Users/davabrams/tensorflow/",
+                "/Users/davabrams/tensorflow/third_party/xla",
+                "/Users/davabrams/tensorflow/third_party/xla/third_party/tsl",
+                "/Users/davabrams/tensorflow/third_party/xla/third_party/tsl/third_party/py/ml_dtypes",
+                "/Users/davabrams/Desktop/__Projects/Project - Octo/abseil-cpp",
+                "/Users/davabrams/Desktop/__Projects/Project - Octo/eigen",
+                "/Users/davabrams/Desktop/__Projects/Project - Octo/ml_dtypes-0.5.1",
+                "/Users/davabrams/Desktop/__Projects/Project - Octo/ml_dtypes-0.5.1/ml_dtypes",
+                "/Users/davabrams/Desktop/__Projects/Project - Octo/xla",
+                "/Users/davabrams/anaconda3/pkgs/tensorflow-base-2.12.0-eigen_py311h0a52ebb_0/lib/python3.11/site-packages/tensorflow/include"
+            ],
+            "defines": [],
+            "macFrameworkPath": [
+                "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "macos-clang-arm64"
+        }
+    ],
+    "version": 4
+}
