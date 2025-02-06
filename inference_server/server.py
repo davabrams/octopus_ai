@@ -1,5 +1,6 @@
 """
-Octopus model inference server.  Originally done in C++ but tensorflow in C++ was too much of a pain.
+Octopus model inference server.  
+Originally done in C++ but tensorflow in C++ was too much of a pain.
 """
 import logging
 from flask import Flask, request, jsonify
@@ -11,9 +12,14 @@ logging.info('The log level for this message is INFO.')
 
 jobs = InferenceQueue()
 
-@app.post('/crash')
-def crash():
-    raise NotImplementedError
+@app.get('/shutdown')
+def shutdown():
+    """Server shutdown.  Does not kill the process."""
+    func = request.environ.get('werkzeug.server.shutdown')
+    if func is None:
+        raise RuntimeError('Not running with the Werkzeug Server')
+    func()
+    return 'Server shutting down...'
 
 @app.route('/list_jobs', methods=['GET'])
 def get_items():
@@ -24,11 +30,12 @@ def get_items():
     for job in iter(jobs):
         job_status_queue.append({job.job_id: job.status})
     res = jsonify(job_status_queue)
-    logging.info(res)
+    logging.info("job_status_queue: %s", res)
     return res, 201
 
 @app.route('/show_queues', methods=['GET'])
 def show_queues():
+    """Expose all three job queues"""
     return jobs.all_queues(), 201
 
 @app.route('/jobs', methods=['POST'])
@@ -42,13 +49,22 @@ def add_item():
     jobs.add(InferenceJob(new_item))
     return f"Added Job {new_item['job_id']}", 201
 
+@app.route('/collect_and_clear', methods=['POST'])
+def collect_and_clear():
+    """Collect completed tasks from completed queue and clear them"""
+    logging.warning("Collecting and clearing...")
+    res = jobs.collect_and_clear()
+    logging.warning("%s jobs collected and cleared", len(res))
+    return res, 201
+
+
 @app.route('/jobs/<int:job_id>', methods=['GET'])
 def get_item(job_id):
     """
     Get a specific result for a job based on job ID
     """
     if job_id not in jobs.all_job_ids():
-        return jsonify({"error": "Item not found"}), 404
+        return "Item not found", 404
     job = jobs.get(job_id)
     res = job.as_json()
     if job.status == "Success":
