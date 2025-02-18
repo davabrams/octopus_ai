@@ -8,6 +8,7 @@ python3 server.py & python3 test_server.py
 import time
 import requests
 from server import app
+import threading
 
 def decode_response(r):
     encoding = r.encoding
@@ -47,7 +48,6 @@ def show_queues():
         return None
     return response.json()
 
-
 def kill_server():
     response = requests.post('http://localhost:8080/kill')
     code = response.status_code
@@ -56,10 +56,11 @@ def kill_server():
     print(response.text)
 
 def shutdown_server():
-    response = requests.post('http://localhost:8080/shutdown')
+    print("Shutting down server")
+    response = requests.get('http://localhost:8080/shutdown')
     code = response.status_code
     if code >= 400:
-        return None
+        return f"Error {code}"
     print(response.text)
 
 def collect_and_clear():
@@ -71,8 +72,11 @@ def collect_and_clear():
 
 
 if __name__ == '__main__':
+    t1 = threading.Thread(target=lambda: app.run(host='localhost', port=8080, debug=False, use_reloader=False))
+    t1.start()
+
     # Client usage
-    time.sleep(2.5)
+    time.sleep(.5)
     print(get_all_items())
     print(add_new_item({"job_id": 3, "data": {"c.r": 0.52, "c_val.r": 1.0}}))
     print(show_queues())
@@ -82,12 +86,16 @@ if __name__ == '__main__':
     print(show_queues())
     print(add_new_item({"job_id": 5, "data": {"c.r": 0.22, "c_val.r": 1.0}}))
     print(show_queues())
-    time.sleep(2.5)
     print(get_item_by_id(3))
-    time.sleep(2.5)
     print(get_all_items())
     print(show_queues())
     print(collect_and_clear())
     print(get_all_items())
     print(show_queues())
-    shutdown_server()
+    print(shutdown_server())
+    print("Tests complete.")
+    while t1.is_alive():
+        time.sleep(0.5)
+        print("thread alive")
+    t1.join()
+    print("Existing test script.")

@@ -12,12 +12,13 @@ logging.info('The log level for this message is INFO.')
 
 jobs = InferenceQueue()
 
-@app.get('/shutdown')
+@app.route('/shutdown', methods=['GET'])
 def shutdown():
     """Server shutdown.  Does not kill the process."""
+    jobs.kill_queue()
     func = request.environ.get('werkzeug.server.shutdown')
     if func is None:
-        raise RuntimeError('Not running with the Werkzeug Server')
+        raise RuntimeError('Shutdown request received')
     func()
     return 'Server shutting down...'
 

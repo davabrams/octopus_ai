@@ -154,6 +154,7 @@ class InferenceQueue:
     _execution_queue = []
     _completion_queue = []
     _ts_index = None
+    _keep_alive: bool = True
 
     def __init__(self) -> None:
         # Start the queue watchdog
@@ -162,7 +163,7 @@ class InferenceQueue:
             target=self.queue_watchdog, name="InferenceQueue Watchdog"
         )
         t1.start()
-        logging.info("Spawned watchdog thread")
+        logging.info("Spawned watchdog thread %s", t1.getName())
 
     # End user commands:
     def add(self, job: InferenceJob) -> None:
@@ -231,6 +232,10 @@ class InferenceQueue:
         self._q_ptr += 1
         job_id = self._ts_index[ptr][1]
         return self._q[job_id]
+    
+    def kill_queue(self) -> None:
+        logging.warning("Kill signal received")
+        self._keep_alive = False
 
     # Internal commands for watchdog and executions
     def clear_stale(self) -> None:
@@ -292,7 +297,7 @@ class InferenceQueue:
         logging.info("Thread ID: %s", threading.get_ident())
         logging.info("Thread Name: %s", threading.current_thread().name)
 
-        while True:
+        while self._keep_alive:
             time.sleep(0.5)
             # self.clear_stale()
             if (
