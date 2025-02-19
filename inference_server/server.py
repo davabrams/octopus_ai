@@ -61,7 +61,8 @@ def get_item(job_id):
     Get a specific result for a job based on job ID
     """
     if job_id not in jobs.all_job_ids():
-        return "Item not found", 404
+        res = ",".join([str(job) for job in jobs.all_job_ids()])
+        return f"Item not found.  Items: {res}", 404
     job = jobs.get(job_id)
     res = job.as_json()
     if job.status == "Success":
@@ -70,7 +71,7 @@ def get_item(job_id):
     if job.status == "Failure":
         jobs.delete(job_id)
         return res, 500
-    return res, 201
+    return res, 200
 
 if __name__ == '__main__':
     app.run(host='localhost', port=8080, debug=True)

@@ -2,10 +2,11 @@
 Test for inference server
 
 run using:
-python3 server.py & python3 test_server.py
+python3 test_server.py TestClientServer
 
 """
 import time
+import unittest
 import requests
 from server import app
 import threading
@@ -82,29 +83,47 @@ def list_threads_and_processes() -> None:
     for ix, proc in enumerate(mp.active_children()):
         print(f"Process {ix}: {proc.name}")
 
+class TestClientServer(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        t1 = threading.Thread(target=lambda: app.run(host='localhost',port=8080, debug=True, use_reloader=False), name="REST Server")
+        t1.daemon = True
+        t1.start()
+        time.sleep(1)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutdown_server()
+
+    def test_communications(self):
+        """
+        tests major communication functionality
+        """
+        res = get_all_items()
+        self.assertListEqual(res, [])
+        add_new_item({"job_id": 3, "data": {"c.r": 0.52, "c_val.r": 1.0}})
+        add_new_item({"job_id": 4, "data": {"c.r": 0.45, "c_val.r": 1.0}})
+        add_new_item({"job_id": 5, "data": {"c.r": 0.32, "c_val.r": 1.0}})
+        add_new_item({"job_id": 6, "data": {"c.r": 0.22, "c_val.r": 1.0}})
+        item = get_item_by_id(3)
+        self.assertDictEqual(item, {"job_id": "3","result": "None","status": "Pending"})
+        res = get_all_items()
+        self.assertEqual(len(res), 4)
+
+        #let the jobs complete, then clear them
+        time.sleep(3)
+        item = get_item_by_id(3)
+        self.assertDictEqual(item, {"job_id": "3","result": "0.74155515","status": "Complete"})
+        collect_and_clear()
+        res = get_all_items()
+        self.assertListEqual(res, [])
+        queues = show_queues()
+        self.assertDictEqual(queues, {'completion_queue': [], 'execution_queue': [], 'pending_queue': []})
+
+        
+
 if __name__ == '__main__':
-    t1 = threading.Thread(target=lambda: app.run(host='localhost',port=8080, debug=True, use_reloader=False), name="REST Server")
-    t1.daemon = True
-    t1.start()
+    unittest.main()
+
     list_threads_and_processes()
-    # Client usage
-    time.sleep(.5)
-    print(get_all_items())
-    print(add_new_item({"job_id": 3, "data": {"c.r": 0.52, "c_val.r": 1.0}}))
-    print(show_queues())
-    print(add_new_item({"job_id": 4, "data": {"c.r": 0.45, "c_val.r": 1.0}}))
-    print(show_queues())
-    print(add_new_item({"job_id": 5, "data": {"c.r": 0.32, "c_val.r": 1.0}}))
-    print(show_queues())
-    print(add_new_item({"job_id": 5, "data": {"c.r": 0.22, "c_val.r": 1.0}}))
-    print(show_queues())
-    print(get_item_by_id(3))
-    print(get_all_items())
-    print(show_queues())
-    print(collect_and_clear())
-    print(get_all_items())
-    print(show_queues())
-    print(shutdown_server())
-    print("Tests complete.")
-    list_threads_and_processes()
-    print("Existing test script.")
