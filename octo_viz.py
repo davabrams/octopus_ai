@@ -1,7 +1,7 @@
 """ Octopus visualizer """
 import time
 import matplotlib.pyplot as plt
-from OctoConfig import GameParameters, TrainingParameters
+from OctoConfig import GameParameters
 from simulator.agent_generator import AgentGenerator
 from simulator import Octopus, Color
 from simulator.random_surface import RandomSurface
@@ -9,7 +9,7 @@ from simulator.simutil import setup_display, display_refresh, MLMode
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 num_agents = GameParameters['agent_number_of_agents']
-model_path = TrainingParameters['sucker_model_location']
+INFERENCE_MODE = GameParameters['inference_mode']
 
 ag = AgentGenerator(GameParameters)
 octo = Octopus(GameParameters)
@@ -18,16 +18,17 @@ ag.generate(num_agents=num_agents)
 octo.set_color(surf)
 
 model = None
+
 if GameParameters['inference_mode'] is not MLMode.NO_MODEL:
     # Override `model` with the model from disk
     from tensorflow import keras
     from training.losses import ConstraintLoss
+    model_path = GameParameters["models"][INFERENCE_MODE]
     custom_objects = {"ConstraintLoss": ConstraintLoss}
     model = keras.models.load_model(model_path, custom_objects)
 
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-INFERENCE_MODE = GameParameters['inference_mode']
 NUM_ITERATIONS = GameParameters['num_iterations']
 DEBUG_MODE = GameParameters['debug_mode']
 SAVE_IMAGES = GameParameters['save_images']

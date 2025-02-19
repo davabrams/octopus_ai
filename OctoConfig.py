@@ -1,7 +1,7 @@
 """
 Octopus game and ML parameters
 """
-from simulator.simutil import MLMode, MovementMode
+from simulator.simutil import MLMode, MovementMode, InferenceLocation
 
 default_models = {
         MLMode.NO_MODEL: None,
@@ -25,6 +25,7 @@ GameParameters: dict = {
     'save_images': False,
     'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
     'inference_mode': MLMode.SUCKER,
+    'inference_location': InferenceLocation.LOCAL,
     'datagen_data_write_format': MLMode.LIMB,
     'models': default_models,
 

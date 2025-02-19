@@ -24,6 +24,10 @@ class MLMode(Enum):
     LIMB = 2
     FULL = 3
 
+class InferenceLocation(Enum):
+    """Configuration for local v remote inference"""
+    LOCAL = 0 #local inference
+    REMOTE = 0 #remote server inference
 
 @dataclass
 class Agent:

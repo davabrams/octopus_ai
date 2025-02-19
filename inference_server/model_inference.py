@@ -55,8 +55,13 @@ class ExecuteSuckerInference(InferenceExecutionBase):
             threading.current_thread().name,
             threading.get_ident(),
         )
-        res = sucker_model.predict(np.array([[c, c_val]]), verbose=0)[0][0]
-        self.parent.result = res
+        try:
+            res = sucker_model.predict(np.array([[c, c_val]]), verbose=0)[0][0]
+            self.parent.result = res
+            self.parent.status = JobStatus.COMPLETE
+        except Exception as e:
+            logging.error("Error in inference: %s", e)
+            self.parent.status = JobStatus.FAILED
 
 
 class InferenceJob:
@@ -119,16 +124,21 @@ class InferenceJob:
         ExecuteSuckerInference(parent=self, data=self.data)
 
         self.inference_end_timestamp = time.time()
-        self.status = JobStatus.COMPLETE  # a little optimistic? lol
+        assert(self.status in (JobStatus.COMPLETE , JobStatus.FAILED))
+
 
         logging.info(
-            "%s started at %s compelted at %s (thread %s)",
+            "%s started at %s compelted at %s (thread %s), resolution: %s",
             threading.current_thread().name,
             self.inference_start_timestamp,
             self.inference_end_timestamp,
             threading.get_ident(),
+            self.status
         )
-        parent_queue.move_to_complete(self.job_id)
+        if self.status == JobStatus.COMPLETE:
+            parent_queue.move_to_complete(self.job_id)
+        else:
+            logging.error("Job failed, not writing to completion queue")
 
 
 class InferenceQueue:
@@ -162,12 +172,18 @@ class InferenceQueue:
         # Start the queue watchdog
         logging.info("Starting Watchdog Thread")
         self._kill_watchdog = threading.Event()
+        self._kill_watchdog.clear()
+        if self.is_watchdog_alive():
+            logging.error("A watchdog is already alive on %s", self._watchdog_thread.native_id)
+            return
         t1 = threading.Thread(
-            target=self.queue_watchdog, args=(self._kill_watchdog,), name="InferenceQueue Watchdog"
+            target=self.queue_watchdog, args=(self._kill_watchdog,), name="InferenceQueue Watchdog",
+            
         )
         t1.daemon = True
         t1.start()
-        logging.info("Spawned watchdog thread %s", t1.getName())
+        self._watchdog_thread = t1
+        logging.info("Spawned watchdog thread %s", t1.name)
 
     # End user commands:
     def add(self, job: InferenceJob) -> None:
@@ -191,10 +207,19 @@ class InferenceQueue:
 
         if job_id not in self._q:
             raise IndexError
+        logging.info("Deleting %s", job_id)
         del self._q[job_id]
         self._pending_queue = rem_job_id(self._pending_queue)
         self._execution_queue = rem_job_id(self._execution_queue)
         self._completion_queue = rem_job_id(self._completion_queue)
+
+    def reset_all_queues(self) -> None:
+        self._pending_queue = []
+        self._execution_queue = []
+        self._completion_queue = []
+        self._q = {}
+        self._ts_index = None
+        self._q_ptr = None
 
     def all_job_ids(self) -> list:
         """Return all job IDs still in the queue"""
@@ -237,7 +262,10 @@ class InferenceQueue:
         job_id = self._ts_index[ptr][1]
         return self._q[job_id]
     
-    def kill_queue(self) -> None:
+    def kill_watchdog(self) -> None:
+        """
+        Kills the watchdog thread
+        """
         logging.warning("Kill signal received")
         self._kill_watchdog.set()
 
@@ -246,13 +274,15 @@ class InferenceQueue:
         """
         For now, only clear stale pending jobs
         """
-        def prune(ts_list: list) -> list:
-            return [ts for ts in ts_list if ts[0] > cutoff]
-
         now = time.time()
         cutoff = now + self.seconds_until_stale
-        logging.info("Cutoff time is %s", cutoff)
-        self._pending_queue = prune(self._pending_queue)
+        job_ids_for_removal = [ts[1] for ts in self._pending_queue if ts[0] < cutoff]
+        if len(job_ids_for_removal) == 0:
+            return []
+        logging.warning("Removing expired pending jobs: %s", ",".join([str(i) for i in job_ids_for_removal]))
+        for id_to_remove in job_ids_for_removal:
+            del self._q[id_to_remove]
+        self._pending_queue = [ts for ts in self._pending_queue if ts[1] not in job_ids_for_removal]
 
     def execute_new_job(self) -> None:
         """
@@ -260,6 +290,9 @@ class InferenceQueue:
         2) Move it to execution
         3) Kick off its execution
         """
+        if self._kill_watchdog.is_set():
+            logging.error("Kill watchdog flag is set, aborting execution")
+            return
         # 1
         logging.info("Executing new job")
         if len(self._pending_queue) == 0:
@@ -293,6 +326,14 @@ class InferenceQueue:
         ]
         self._completion_queue.append(job)
 
+    def destroy_job(self, job_id: int) -> None:
+        """
+        Move a job out of the execution queue, but not into the complete queue
+        """
+        self._execution_queue = [
+            job for job in self._execution_queue if job[1] is not job_id
+        ]
+
     def queue_watchdog(self, kill_watchdog: threading.Event) -> None:
         """
         Watchdog for the inference queue.  Looks for new jobs to execute, cleans old jobs, etc.
@@ -302,8 +343,8 @@ class InferenceQueue:
         logging.info("Thread Name: %s", threading.current_thread().name)
         while True:
             if kill_watchdog.is_set():
-                break
-            time.sleep(0.5)
+                return
+            time.sleep(0.1)
             # self.clear_stale()
             if (
                 len(self._pending_queue)
@@ -321,3 +362,11 @@ class InferenceQueue:
                 and len(self._execution_queue) <= self.thread_count
             ):
                 self.execute_new_job()
+
+    def is_watchdog_alive(self) -> bool:
+        """
+        Check if the watchdog thread is alive
+        """
+        if self._watchdog_thread is None:
+            return False
+        return self._watchdog_thread.is_alive()

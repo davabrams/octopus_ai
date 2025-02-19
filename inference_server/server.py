@@ -15,7 +15,7 @@ jobs = InferenceQueue()
 @app.route('/shutdown', methods=['GET'])
 def shutdown():
     """Server shutdown.  Does not kill the process."""
-    jobs.kill_queue()
+    jobs.kill_watchdog()
     return 'Server shutting down...', 201
 
 @app.route('/list_jobs', methods=['GET'])
@@ -53,7 +53,6 @@ def collect_and_clear():
     res = jobs.collect_and_clear()
     logging.warning("%s jobs collected and cleared", len(res))
     return res, 201
-
 
 @app.route('/jobs/<int:job_id>', methods=['GET'])
 def get_item(job_id):
