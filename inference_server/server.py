@@ -16,11 +16,7 @@ jobs = InferenceQueue()
 def shutdown():
     """Server shutdown.  Does not kill the process."""
     jobs.kill_queue()
-    func = request.environ.get('werkzeug.server.shutdown')
-    if func is None:
-        raise RuntimeError('Shutdown request received')
-    func()
-    return 'Server shutting down...'
+    return 'Server shutting down...', 201
 
 @app.route('/list_jobs', methods=['GET'])
 def get_items():
@@ -74,7 +70,7 @@ def get_item(job_id):
     if job.status == "Failure":
         jobs.delete(job_id)
         return res, 500
-    return res
+    return res, 201
 
 if __name__ == '__main__':
     app.run(host='localhost', port=8080, debug=True)

@@ -154,14 +154,18 @@ class InferenceQueue:
     _execution_queue = []
     _completion_queue = []
     _ts_index = None
-    _keep_alive: bool = True
+    _kill_watchdog: threading.Event
+
+    _watchdog_thread = None
 
     def __init__(self) -> None:
         # Start the queue watchdog
         logging.info("Starting Watchdog Thread")
+        self._kill_watchdog = threading.Event()
         t1 = threading.Thread(
-            target=self.queue_watchdog, name="InferenceQueue Watchdog"
+            target=self.queue_watchdog, args=(self._kill_watchdog,), name="InferenceQueue Watchdog"
         )
+        t1.daemon = True
         t1.start()
         logging.info("Spawned watchdog thread %s", t1.getName())
 
@@ -235,7 +239,7 @@ class InferenceQueue:
     
     def kill_queue(self) -> None:
         logging.warning("Kill signal received")
-        self._keep_alive = False
+        self._kill_watchdog.set()
 
     # Internal commands for watchdog and executions
     def clear_stale(self) -> None:
@@ -289,15 +293,16 @@ class InferenceQueue:
         ]
         self._completion_queue.append(job)
 
-    def queue_watchdog(self) -> None:
+    def queue_watchdog(self, kill_watchdog: threading.Event) -> None:
         """
         Watchdog for the inference queue.  Looks for new jobs to execute, cleans old jobs, etc.
         """
         logging.info("Watchdog is starting on thread %s", threading.current_thread)
         logging.info("Thread ID: %s", threading.get_ident())
         logging.info("Thread Name: %s", threading.current_thread().name)
-
-        while self._keep_alive:
+        while True:
+            if kill_watchdog.is_set():
+                break
             time.sleep(0.5)
             # self.clear_stale()
             if (
