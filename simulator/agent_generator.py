@@ -1,6 +1,6 @@
 """Agent Generator"""
 import numpy as np
-from simutil import MovementMode, AgentType, Agent
+from simulator.simutil import MovementMode, AgentType, Agent
 
 
 class AgentGenerator:

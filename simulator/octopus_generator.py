@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from typing import List
 from multiprocessing.pool import ThreadPool
 import numpy as np
-from surface_generator import RandomSurface
-from simutil import (
+from simulator.surface_generator import RandomSurface
+from simulator.simutil import (
     MovementMode,
     Agent,
     Color,
