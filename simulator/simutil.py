@@ -1,6 +1,7 @@
 """ Utilities and objects specifically for octopus simulator """
 from dataclasses import dataclass
 from enum import Enum
+import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
 np.set_printoptions(precision=4)
@@ -116,3 +117,19 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False):
         if debug_mode:
             ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)
         ax.plot(agent.x, agent.y, marker='o', color=color)
+
+
+def convert_adjacents_to_ragged_tensor(adjacents: list):
+    """
+    Converts a list of adjacent suckers to a ragged tensor for model ingestion
+    """
+    c_array = []
+    dist_array = []
+    for adj in adjacents:
+        s = adj[0]
+        c = s.c.r
+        dist = adj[1]
+        c_array.append(c)
+        dist_array.append(dist)
+    ragged = tf.ragged.constant([c_array, dist_array])
+    return ragged

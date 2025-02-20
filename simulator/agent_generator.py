@@ -1,6 +1,6 @@
 """Agent Generator"""
 import numpy as np
-from simulator.simutil import MovementMode, AgentType, Agent
+from simutil import MovementMode, AgentType, Agent
 
 
 class AgentGenerator:
@@ -10,14 +10,14 @@ class AgentGenerator:
     """
     agents: list[Agent] = []
 
-    def __init__(self, GameParameters: dict) -> None:
-        np.random.seed(seed = GameParameters['rand_seed'])
-        self._x_len = GameParameters['x_len']
-        self._y_len = GameParameters['y_len']
-        self.max_velocity = GameParameters['agent_max_velocity']
-        self.max_theta = GameParameters['agent_max_theta']
-        self.movement_mode = GameParameters['agent_movement_mode']
-        self.range_radius = GameParameters['agent_range_radius']
+    def __init__(self, params: dict) -> None:
+        np.random.seed(seed = params['rand_seed'])
+        self._x_len = params['x_len']
+        self._y_len = params['y_len']
+        self.max_velocity = params['agent_max_velocity']
+        self.max_theta = params['agent_max_theta']
+        self.movement_mode = params['agent_movement_mode']
+        self.range_radius = params['agent_range_radius']
 
     def generate(self, num_agents: int = 1, fixed_agent_type: AgentType = None):
         """Generates (a/some) new agent(s) with a random type if unspecified"""

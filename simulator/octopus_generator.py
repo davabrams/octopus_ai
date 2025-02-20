@@ -3,9 +3,15 @@ from dataclasses import dataclass, field
 from typing import List
 from multiprocessing.pool import ThreadPool
 import numpy as np
-from simulator.random_surface import RandomSurface
-from simulator.simutil import MovementMode, Agent, Color, MLMode, CenterPoint
-from util import convert_adjacents_to_ragged_tensor
+from surface_generator import RandomSurface
+from simutil import (
+    MovementMode,
+    Agent,
+    Color,
+    MLMode,
+    CenterPoint,
+    convert_adjacents_to_ragged_tensor
+)
 
 @dataclass
 class Sucker:
@@ -19,12 +25,12 @@ class Sucker:
     c: Color = field(default_factory=Color)
     prev: "Sucker" = field(default_factory="Sucker")
 
-    def __init__(self, x: float, y: float, c: Color = Color(), GameParameters = None):
+    def __init__(self, x: float, y: float, c: Color = Color(), params = None):
         self.x = x
         self.y = y
         self.c = c
-        if GameParameters is not None:
-            self.max_hue_change = GameParameters['octo_max_hue_change']
+        if params is not None:
+            self.max_hue_change = params['octo_max_hue_change']
         else:
             self.max_hue_change = float(0.25)
 
@@ -32,6 +38,9 @@ class Sucker:
         return "S:{" + str(self.x) + ", " + str(self.y) + "}"
 
     def force_color(self, c: Color):
+        """
+        Forces the sucker's color
+        """
         assert isinstance(c, Color)
         self.c = c
 
@@ -104,20 +113,20 @@ class Limb:
     """
     suckers = []
 
-    def __init__(self, x_octo: float, y_octo: float, init_angle: float, GameParameters: dict):
-        self.max_sucker_distance = GameParameters['octo_max_sucker_distance']
-        self.min_sucker_distance = GameParameters['octo_min_sucker_distance']
+    def __init__(self, x_octo: float, y_octo: float, init_angle: float, params: dict):
+        self.max_sucker_distance = params['octo_max_sucker_distance']
+        self.min_sucker_distance = params['octo_min_sucker_distance']
         self.sucker_distance = self.min_sucker_distance
-        self.rows = GameParameters['limb_rows']
-        self.cols = GameParameters['limb_cols']
+        self.rows = params['limb_rows']
+        self.cols = params['limb_cols']
         self.center_line = [CenterPoint() for _ in range(self.rows)]
-        self.x_len = GameParameters['x_len']
-        self.y_len = GameParameters['y_len']
-        self.max_hue_change = GameParameters['octo_max_hue_change']
-        self.movement_mode = GameParameters['limb_movement_mode']
-        self.max_arm_theta = GameParameters['octo_max_arm_theta']
-        self.agent_range_radius = GameParameters['agent_range_radius']
-        self.threading = GameParameters['octo_threading']
+        self.x_len = params['x_len']
+        self.y_len = params['y_len']
+        self.max_hue_change = params['octo_max_hue_change']
+        self.movement_mode = params['limb_movement_mode']
+        self.max_arm_theta = params['octo_max_arm_theta']
+        self.agent_range_radius = params['agent_range_radius']
+        self.threading = params['octo_threading']
 
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
@@ -257,21 +266,21 @@ class Octopus:
     set_color(RandomSurface, MLMode, model): passes its set_color parameters
                     to its child Limb object's set_color() function
     """
-    def __init__(self, GameParameters: dict):
-        self.x = GameParameters['x_len'] / 2.0
-        self.y = GameParameters['y_len'] / 2.0
-        self.max_body_velocity = GameParameters['octo_max_body_velocity']
-        self.movement_mode = GameParameters['octo_movement_mode']
+    def __init__(self, params: dict):
+        self.x = params['x_len'] / 2.0
+        self.y = params['y_len'] / 2.0
+        self.max_body_velocity = params['octo_max_body_velocity']
+        self.movement_mode = params['octo_movement_mode']
         self.model = None
-        self.threading = GameParameters['octo_threading']
+        self.threading = params['octo_threading']
 
-        num_arms = GameParameters['octo_num_arms']
+        num_arms = params['octo_num_arms']
         self.limbs = [
             Limb(
                 self.x,
                 self.y,
                 float(ix/num_arms * 2 * np.pi),
-                GameParameters
+                params
                 )
             for ix in range(num_arms)
         ]

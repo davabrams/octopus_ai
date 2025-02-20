@@ -1,5 +1,6 @@
 """ Utilities for Octopus ML modeling """
-import os, shutil
+import os
+import shutil
 import numpy as np
 import tensorflow as tf
 
@@ -23,13 +24,10 @@ def erase_all_logs():
         for f in onlyfiles:
             try:
                 os.remove(log_dir + "/" + f)
-            except:
-                print(f"Could not remove log file: {f}")
+            except Exception as e:
+                print(f"Could not remove log file: {f}\n Found error {e}")
             else:
                 print(f"Removed log file: {f}")
-
-
-
     log_dir = "./models/logs/sucker/fit"
     if not os.path.exists(log_dir):
         print("Log folder not found, nothing erased from." + log_dir)
@@ -55,22 +53,6 @@ def octo_norm(_x: np.array, reverse=False):
         return np.divide(np.add(_x, 1), 2)
     else:
         return np.subtract(np.multiply(_x, 2), 1)
-
-def convert_adjacents_to_ragged_tensor(adjacents: list):
-    """
-    Converts a list of adjacent suckers to a ragged tensor for model ingestion
-    """
-    c_array = []
-    dist_array = []
-    for adj in adjacents:
-        S = adj[0]
-        c = S.c.r
-        dist = adj[1]
-        c_array.append(c)
-        dist_array.append(dist)
-    ragged = tf.ragged.constant([c_array, dist_array])
-    return ragged
-
 
 def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
     """
@@ -129,7 +111,7 @@ def train_test_split_multiple_state_vectors(state_data, gt_data, test_size=0.2, 
     """
     if not isinstance(state_data, list) or not isinstance(gt_data, list):
         raise TypeError("State data and labels must be a list.")
-    
+
     for state_type in state_data:
         if not isinstance(state_type, list):
             raise TypeError("State data fields must be a list.")
@@ -142,7 +124,6 @@ def train_test_split_multiple_state_vectors(state_data, gt_data, test_size=0.2, 
     shuffle_indices = np.arange(num_samples)
     if random_state is not None:
         np.random.seed(random_state)
-        pass
     np.random.shuffle(shuffle_indices)
 
     split_point = int(num_samples * (1 - test_size))

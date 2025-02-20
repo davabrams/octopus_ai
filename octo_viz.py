@@ -3,9 +3,9 @@ import time
 import matplotlib.pyplot as plt
 from OctoConfig import GameParameters
 from simulator.agent_generator import AgentGenerator
-from simulator import Octopus, Color
-from simulator.random_surface import RandomSurface
-from simulator.simutil import setup_display, display_refresh, MLMode
+from simulator.octopus_generator import Octopus
+from simulator.surface_generator import RandomSurface
+from simulator.simutil import setup_display, display_refresh, MLMode, Color
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 num_agents = GameParameters['agent_number_of_agents']

@@ -4,8 +4,8 @@ import getpass
 import socket
 from tensorflow import keras
 from simulator.agent_generator import AgentGenerator
-from simulator.Octopus import Octopus
-from simulator.random_surface import RandomSurface
+from simulator.octopus_generator import Octopus
+from simulator.surface_generator import RandomSurface
 from simulator.simutil import MLMode
 
 class OctoDatagen():
