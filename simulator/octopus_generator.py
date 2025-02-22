@@ -1,6 +1,7 @@
 """Octopus Class"""
 from dataclasses import dataclass, field
 from typing import List
+from tensorflow import keras
 from multiprocessing.pool import ThreadPool
 import numpy as np
 from simulator.surface_generator import RandomSurface
@@ -53,6 +54,7 @@ class Sucker:
         
         if inference_mode is not MLMode.NO_MODEL:
             assert model is not None, "model inference specified but no model was specified"
+            assert isinstance(model, keras.models.Sequential), f"Expected sequential keras model, got {type(model)}"
         c_val = self.get_surf_color_at_this_sucker(surf)
         c_ret = Color()
 

@@ -1,7 +1,10 @@
 """ Octopus visualizer """
 import time
 import matplotlib.pyplot as plt
+from tensorflow import keras
 from OctoConfig import GameParameters
+from training.models.model_loader import ModelLoader
+from training.losses import ConstraintLoss
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.surface_generator import RandomSurface
@@ -19,13 +22,12 @@ octo.set_color(surf)
 
 model = None
 
-if GameParameters['inference_mode'] is not MLMode.NO_MODEL:
+if INFERENCE_MODE is not MLMode.NO_MODEL:
     # Override `model` with the model from disk
-    from tensorflow import keras
-    from training.losses import ConstraintLoss
-    model_path = GameParameters["models"][INFERENCE_MODE]
+    model_path = GameParameters["inference_model"]
     custom_objects = {"ConstraintLoss": ConstraintLoss}
-    model = keras.models.load_model(model_path, custom_objects)
+    model = ModelLoader(model_path, custom_objects).get_model()
+    assert isinstance(model, keras.models.Sequential), f"Expected sequential keras model, got {type(model)}"
 
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

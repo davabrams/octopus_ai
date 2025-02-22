@@ -1,12 +1,13 @@
 """Octopus Data Generation Class"""
+import os
 import time as tm
 import getpass
 import socket
-from tensorflow import keras
+from training.models.model_loader import ModelLoader
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.surface_generator import RandomSurface
-from simulator.simutil import MLMode
+from simulator.simutil import MLMode, MovementMode, InferenceLocation
 
 class OctoDatagen():
     """ Entry point for octopus datagen """
@@ -15,12 +16,18 @@ class OctoDatagen():
         self.game_parameters = game_parameters
         self.data_write_mode = game_parameters['datagen_data_write_format']
         self.inference_mode = game_parameters['inference_mode']
-        self.model_path = self.game_parameters['models'][self.inference_mode]
+        print(__file__)
+        print(os.curdir)
+        self.model_path = os.curdir + self.game_parameters['models'][self.inference_mode]
+        print(self.model_path)
+        assert os.path.isfile(self.model_path), f"{self.model_path} not found"
         print(f"Instantiated OctDatagen with inference type {self.inference_mode} and model {self.model_path}")
 
     def run_color_datagen(self):
         params = self.game_parameters
-        model = keras.models.load_model(self.model_path) if self.model_path else None
+        model = None
+        if self.model_path:
+            model = ModelLoader(self.model_path).get_model()
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")
@@ -88,3 +95,54 @@ class OctoDatagen():
         print(f"{len(res)} datapoints written")
 
         return data
+
+if __name__ == "__main__":
+
+    default_params: dict = {
+    # General game parameters 🎛️
+    'num_iterations': 120, #set this to -1 for infinite loop
+    'x_len': 15,
+    'y_len': 15,
+    'rand_seed': 0,
+    'debug_mode': False, #enables things like agent attract/repel regions
+    'save_images': False,
+    'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
+    'inference_mode': MLMode.SUCKER,
+    'inference_location': InferenceLocation.LOCAL,
+    'datagen_data_write_format': MLMode.SUCKER,
+    'models': {
+        MLMode.NO_MODEL: None,
+        MLMode.SUCKER: 'training/models/sucker.keras',
+        MLMode.LIMB: 'training/models/limb.keras',
+    },
+
+    # Agent parameters 👾
+    'agent_number_of_agents': 5,
+    'agent_max_velocity': 0.2,
+    'agent_max_theta': 0.1,
+    'agent_movement_mode': MovementMode.RANDOM,
+    'agent_range_radius': 5,
+
+    # # Octopus parameters 🐙
+    # 'octo_max_body_velocity': 0.25,
+    # 'octo_max_arm_theta': 0.1, #used for random drift movement
+    # 'octo_max_limb_offset': 0.5, #used for attract/repel distance
+    # 'octo_num_arms': 8,
+    # 'octo_max_sucker_distance': 0.3,
+    # 'octo_min_sucker_distance': 0.1,
+    # 'octo_movement_mode': MovementMode.RANDOM,
+    # 'octo_threading': True,
+
+    # # Limb parameters 💪
+    # 'limb_rows': 16,
+    # 'limb_cols': 2,
+    # 'limb_movement_mode': MovementMode.RANDOM,
+
+    # Sucker parameters 🪠
+    'octo_max_hue_change': 0.25, #max val of rgb that can change at a time, 
+                                 # used as constraint threshold
+
+    }
+
+    datagen = OctoDatagen(default_params)
+    datagen.run_color_datagen()

@@ -1,13 +1,9 @@
 """
 Octopus game and ML parameters
 """
-from simulator.simutil import MLMode, MovementMode, InferenceLocation
+from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
-default_models = {
-        MLMode.NO_MODEL: None,
-        MLMode.SUCKER: 'training/models/sucker.keras',
-        MLMode.LIMB: 'training/models/limb.keras',
-    }
+
 
 default_datasets = {
         MLMode.NO_MODEL: None,
@@ -24,10 +20,10 @@ GameParameters: dict = {
     'debug_mode': False, #enables things like agent attract/repel regions
     'save_images': False,
     'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
-    'inference_mode': MLMode.SUCKER,
     'inference_location': InferenceLocation.LOCAL,
-    'datagen_data_write_format': MLMode.LIMB,
-    'models': default_models,
+    'inference_mode': MLMode.SUCKER,
+    'inference_model': MLMode.SUCKER,
+    'datagen_data_write_format': MLMode.SUCKER,
 
     # Agent parameters 👾
     'agent_number_of_agents': 5,
@@ -60,7 +56,7 @@ GameParameters: dict = {
 
 TrainingParameters = {
     # ML training & datagen parameters 🕸️
-    'ml_mode': MLMode.LIMB,
+    'ml_mode': MLMode.SUCKER,
 
     # Datagen
     'datasets': default_datasets,
@@ -73,7 +69,7 @@ TrainingParameters = {
     "generate_tensorboard": True,
 
     # Model save and restore
-    'models': default_models,
+    'training_model': MLMode.SUCKER,
     "save_model_to_disk": True,
     "restore_model_from_disk": False,
 

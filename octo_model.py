@@ -1,15 +1,16 @@
 """ Octopus model training """
+import os
 import pickle
 import time as tm
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
 from OctoConfig import GameParameters, TrainingParameters
 from util import erase_all_logs
 from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
 from training.losses import WeightedSumLoss
 from simulator.simutil import MLMode
+from training.models.model_loader import ModelLoader
 
 np.set_printoptions(precision=4)
 tf.config.run_functions_eagerly(False)
@@ -57,6 +58,7 @@ if RUN_DATAGEN:
     print(f"Datagen completed at time t={tm.time() - start}")
 
 elif RESTORE_DATA_FROM_DISK:
+    assert os.path.isfile(datagen_location), "Specified data file does not exist"
     with open(datagen_location, 'rb') as file:
         data = pickle.load(file)
     assert data, "No data found, can't run training."
@@ -88,7 +90,7 @@ if RUN_INFERENCE:
     ####### Load model
     if RESTORE_MODEL_FROM_DISK:
         custom_objects = {"WeightedSumLoss": WeightedSumLoss}
-        model = keras.models.load_model(model_location, custom_objects)
+        model = ModelLoader(model_location, custom_objects).get_model()
         model.compile()
         print(f"Model load completed at time t={tm.time() - start:.3f}")
 

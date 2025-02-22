@@ -1,21 +1,21 @@
 """
 Library for sucker model training
 """
+import os
+import datetime
 import pickle
 import numpy as np
-from octo_datagen import OctoDatagen
+import seaborn as sn
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow import keras
+from training.losses import WeightedSumLoss
+from training.trainutil import Trainer
 from util import (
     convert_pytype_to_tf_dataset,
     train_test_split,
 )
-from .trainutil import Trainer
-import seaborn as sn
-import matplotlib.pyplot as plt
-import os
-import datetime
-import tensorflow as tf
-from tensorflow import keras
-from training.losses import WeightedSumLoss
+from octo_datagen import OctoDatagen
 
 class SuckerTrainer(Trainer):
     def __init__(self, GameParameters):
