@@ -10,6 +10,5 @@ https://jonathan-hui.medium.com/rl-lqr-ilqr-linear-quadratic-regulator-a5de5104c
 import tensorflow as tf
 import numpy as np
 from simulator.simutil import State
+from costs import *
 
-
-pass
