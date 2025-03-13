@@ -2,7 +2,9 @@ py_library(
     name = "octo_util",
     srcs = ["util.py", "OctoConfig.py"],
 	visibility = ["//visibility:public"],
-    deps = ["//simulator:simutil"]
+    deps = [
+        "//simulator:simutil"
+        ]
 )
 
 py_binary(
@@ -10,7 +12,9 @@ py_binary(
     srcs = ["octo_datagen.py"],
 	visibility = ["//visibility:public"],
     deps = [
+        ":octo_util",
         "//training:model_loader",
+        "//training:data_loader",
         "//simulator:generators",
         ],
 )
@@ -20,9 +24,9 @@ py_binary(
     srcs = ["octo_model.py"],
 	visibility = ["//visibility:public"],
     deps = [
+        ":octo_util",
         "//simulator:generators",
         "//training:training",
-        ":octo_util"
         ]
 )
 

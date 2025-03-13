@@ -1,15 +1,10 @@
 """
 Octopus game and ML parameters
 """
+import os
 from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
-
-
-default_datasets = {
-        MLMode.NO_MODEL: None,
-        MLMode.SUCKER: 'training/datagen/sucker_data.pkl',
-        MLMode.LIMB: 'training/datagen/limb_data.pkl',
-    }
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 GameParameters: dict = {
     # General game parameters 🎛️
@@ -59,7 +54,6 @@ TrainingParameters = {
     'ml_mode': MLMode.SUCKER,
 
     # Datagen
-    'datasets': default_datasets,
     "save_data_to_disk": False,
     "restore_data_from_disk": True,
     'datagen_mode': False,

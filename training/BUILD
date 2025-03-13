@@ -18,6 +18,15 @@ py_library(
 )
 
 py_library(
+    name="data_loader",
+    srcs = ["datagen/data_loader.py"],
+    data = glob(["datagen/*"]),
+	visibility = [
+        "//visibility:public"
+        ],
+)
+
+py_library(
     name="training",
     srcs=[
         "sucker.py",
@@ -30,6 +39,7 @@ py_library(
         "//:octo_datagen",
         ":losses",
         ":trainutil",
-        ":model_loader"
+        ":model_loader",
+        ":data_loader",
         ]
 )

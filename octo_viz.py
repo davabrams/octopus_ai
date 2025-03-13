@@ -26,7 +26,7 @@ if INFERENCE_MODE is not MLMode.NO_MODEL:
     # Override `model` with the model from disk
     model_path = GameParameters["inference_model"]
     custom_objects = {"ConstraintLoss": ConstraintLoss}
-    model = ModelLoader(model_path, custom_objects).get_model()
+    model = ModelLoader(file_name_or_ml_mode=model_path, custom_objects=custom_objects).get_object()
     assert isinstance(model, keras.models.Sequential), f"Expected sequential keras model, got {type(model)}"
 
 
@@ -36,8 +36,11 @@ DEBUG_MODE = GameParameters['debug_mode']
 SAVE_IMAGES = GameParameters['save_images']
 
 fig, ax = setup_display()
+fig.show()
+
 font = {'family':'monospace','color':'green','size':20}
 y = fig.text(.1, .025, "", fontdict=font)
+fig.waitforbuttonpress()
 
 i: int = 0
 while i != NUM_ITERATIONS:
@@ -45,9 +48,12 @@ while i != NUM_ITERATIONS:
     i += 1
 
     display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE)
+    
 
     y.set_text(f"Visibility = {octo.visibility(surf):.4f}")
-    fig.canvas.draw()
+
+    # fig.canvas.draw()
+
     # if fig.waitforbuttonpress(timeout=-1):
     #     break
     if SAVE_IMAGES:

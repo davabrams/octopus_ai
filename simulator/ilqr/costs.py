@@ -124,25 +124,29 @@ class AllCosts(CostTemplate):
 
     def __init__(self,
                  origin_state: State,
+                 all_nodes: Optional[List[State]] = None,
                  neighbor_states: Optional[List[State]] = None,
                  attractor_states: Optional[List[State]] = None,
                  max_distance: float = 3.0,
-                 min_distance: float = 1.0,
+                 min_distance: float = 3.0,
                  **kwargs
                  ) -> None:
         super().__init__(**kwargs)
         self.origin = origin_state
+        self.all = all_nodes
         self.neighbors = neighbor_states
         self.attractors = attractor_states
 
         self.max_distance_m = tf.constant(max_distance, dtype=tf.float32)
         self.min_distance_m = tf.constant(min_distance, dtype=tf.float32)
-        
+
         self.costs = []
+        if self.all:
+            for node in self.all:
+                self.costs.append(ColocationRepeller(self.origin, node, min_distance, weight=0.2))
         if self.neighbors:
             for neighbor in self.neighbors:
-                self.costs.append(MaxDistanceRepeller(self.origin, neighbor, max_distance))
-                self.costs.append(ColocationRepeller(self.origin, neighbor, min_distance))
+                self.costs.append(MaxDistanceRepeller(self.origin, neighbor, max_distance, weight=1.0))
         if self.attractors:
             for attractor in self.attractors:
                 self.costs.append(PointAttractor(self.origin, attractor, weight=0.2))
@@ -153,31 +157,32 @@ class AllCosts(CostTemplate):
             self.res.cost = tf.add(self.res.cost, c.res.cost)
             self.res.grad = tf.add(self.res.grad, c.res.grad)
 
-if __name__ == "__main__":
-
+def cost_heatmap():
     neighbors = [State(0.0, 0.0)]
-    attractors = [State(1.5, 1.5)]
+    attrs = [State(1.5, 1.5)]
     mat_output = []
-    for i_ix, i in enumerate(np.arange(-3.5, 3.5, 0.1)):
+    for i in np.arange(-3.5, 3.5, 0.1):
         line = []
-        for j_ix, j in enumerate(np.arange(-3.5, 3.5, 0.1)):
+        for j in np.arange(-3.5, 3.5, 0.1):
             origin = State(i, j)
             costs = AllCosts(origin_state=origin,
                              neighbor_states=neighbors,
-                             attractor_states=attractors)
+                             attractor_states=attrs)
             costs.compute()
-            res = costs.get_result()
-            line.append(float(res.cost))
+            results = costs.get_result()
+            line.append(float(results.cost))
         mat_output.append(line)
     plt.matshow(mat_output)
     plt.show()
+
+def plot_graph():
 
     origin = State(0.0, 0)
     attractor = State(0, np.pi/2.0)
 
     plt.ion()
 
-    for ix, val in enumerate(np.arange(0, 30, 0.1)):
+    for val in np.arange(0, 30, 0.1):
         x_pos = 2 * np.sin(val)
         y_pos = 2 * np.cos(val / 3)
         attractor.x = x_pos
@@ -193,3 +198,8 @@ if __name__ == "__main__":
         plt.draw()
         plt.pause(0.1)
         plt.clf()
+
+
+if __name__ == "__main__":
+    cost_heatmap()
+    plot_graph()

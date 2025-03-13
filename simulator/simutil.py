@@ -31,23 +31,62 @@ class InferenceLocation(Enum):
     REMOTE = 0 #remote server inference
 
 @dataclass
-class Agent:
-    """Data class to store agent properties: state vector and agent type"""
-    x: float = 0
-    y: float = 0
-    vel: float = 0
-    t: float = 0
-    agent_type: AgentType = None
-    
-    def __repr__(self):
-        return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}, \n\tTheta = {self.t}>\n"
+class State:
+    """ Contains the limb spline nodes' kinematic info
+    Stores values as tensors, but things can be accessed as floats
+    """
+    #x and y position
+    pos: tf.Variable
+
+    #since time ticks descretely, this is just the previous iteration's delta_x & delta_y
+    vel: tf.Variable
+
+    def __init__(self, x: float = 0.0, y: float = 0.0) -> None:
+        self.pos = tf.Variable([
+            x,
+            y
+        ], dtype=tf.float32)
+        self.vel = tf.Variable([
+            0,
+            0
+        ], dtype=tf.float32)
+
+    @property
+    def x(self) -> float:
+        return float(self.pos[0])
+    @property
+    def y(self) -> float:
+        return float(self.pos[1])
+
+    @x.setter
+    def x(self, value: float) -> None:
+        self.pos[0].assign(value)
+    @y.setter
+    def y(self, value: float) -> None:
+        self.pos[1].assign(value)
+
+    def distance_to(self, other: "State") -> float:
+        delta = tf.subtract(other.pos, self.pos)
+        return np.sqrt(np.reduce_sum(np.square(delta)))
+
+    def move(self, delta_x: float, delta_y: float) -> None:
+        delta = tf.constant([delta_x, delta_y], dtype=tf.float32)
+        self.pos = tf.add(self.pos, delta)
+        self.vel = tf.divide(delta, 1.0) #1.0 represents the time increment
+
+    def apply_grad(self, grad: tf.Tensor) -> None:
+        self.vel = grad
+        self.pos = tf.add(self.pos, grad)
+
 
 @dataclass
-class State:
-    """ Contains the limb spline nodes' kinematic info"""
-    x: float = 0
-    y: float = 0
-    t: float = 0
+class Agent(State):
+    """Data class to store agent properties: state vector and agent type"""
+    vel: float = 0
+    agent_type: AgentType = None
+
+    def __repr__(self):
+        return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}\>\n"
 
 class CenterPoint(State):
     """ Contains the limb spline nodes' kinematic info"""
@@ -68,11 +107,11 @@ class Color:
 def setup_display():
     """Sets up the visualization figure"""
     fig = plt.figure()
-    fig.show()
     ax = fig.add_subplot(1,1,1)
     ax.set_yticks([])
     ax.set_xticks([])
     ax.set_title("Octopus Visualizer")
+    fig.show()
     return fig, ax
 
 def display_refresh(ax, octo, ag, surf, debug_mode = False):
@@ -95,6 +134,7 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False):
         sucker_edge_width = 1
     for limb in octo.limbs:
         for sucker in limb.suckers:
+            # TODO(davabrams) : we want this to use the update() method to save time
             ax.plot(sucker.x,
                     sucker.y,
                     marker = '.',

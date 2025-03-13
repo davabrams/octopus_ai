@@ -1,8 +1,13 @@
 """ Utilities for Octopus ML modeling """
 import os
 import shutil
+import logging
+from typing import Optional, Union, Any
+from abc import ABC
+import pathlib
 import numpy as np
 import tensorflow as tf
+from simulator.simutil import MLMode
 
 np.set_printoptions(precision=4)
 
@@ -152,3 +157,66 @@ def convert_pytype_to_tf_dataset(input_np_array, batch_size):
     output_tensor = tf.data.Dataset.from_tensor_slices((shaped_tensor, shaped_tensor))
     output_tensor = output_tensor.batch(batch_size=batch_size)
     return output_tensor
+
+class AlreadyLoadedError(BaseException):
+    """
+    Error to throw if a model load is attempted twice
+    """
+
+class DefaultLoader (ABC):
+    """
+    Handles loading (and storage) of keras models
+    """
+    path: Optional[str] = None
+    object: Optional[Any] = None
+    defaults: dict = {
+        MLMode.NO_MODEL: None,
+        MLMode.SUCKER: None,
+        MLMode.LIMB: None,
+        MLMode.FULL: None
+    }
+    LOCAL_DIR = pathlib.Path(__file__).parent.resolve()
+
+    def __init__(self, file_name_or_ml_mode: Optional[Union[str, MLMode]], **kwargs: dict):
+        if file_name_or_ml_mode is None:
+            return
+
+        if isinstance(file_name_or_ml_mode, MLMode):
+            file_name_or_ml_mode = self._convert_ml_mode_to_file_name(file_name_or_ml_mode)
+        self.path = file_name_or_ml_mode
+        if "/" not in self.path:
+            self.path = self._convert_filename_to_full_path(self.path)
+
+        self._confirm_file_exists()
+        self._load(**kwargs)
+
+    def _confirm_file_exists(self) -> None:
+        print(self.path)
+        if os.path.isfile(self.path):
+            return
+        raise FileNotFoundError(f"Not found: {self.path}")
+
+    def _convert_ml_mode_to_file_name(self, ml_mode: MLMode) -> str:
+        return self.defaults[ml_mode]
+
+    def _convert_filename_to_full_path(self, filename: str) -> str:
+        filename = os.path.join(self.LOCAL_DIR, filename)
+        return filename
+
+    def _load(self, **kwargs: dict) -> None:
+        """
+        Load the model into memort
+        """
+        raise NotImplementedError
+
+    def get_path(self) -> str:
+        """
+        Returns the name of the encapsulated model
+        """
+        return self.path
+
+    def get_object(self) -> Any:
+        """
+        Returns the model object
+        """
+        return self.object
