@@ -9,3 +9,6 @@ Octopus AI contains:
 - Tensorboard outputs for model training.
 - An ML inference server so that various ML models can be run on a separate server or distributed cluster, instead of locally.
 - Visualization tools for all this stuff.
+
+# why are you doing this
+I don't know, but I can't stop.
