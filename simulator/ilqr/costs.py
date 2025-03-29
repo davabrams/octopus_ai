@@ -1,9 +1,10 @@
 import tensorflow as tf
 from simulator.simutil import State
 from abc import ABC
+from copy import deepcopy
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 
 @dataclass
@@ -20,17 +21,23 @@ class CostTemplate(ABC):
             self.weight = kwargs.get("weight")
         else:
             self.weight = tf.constant(1.0, dtype=tf.float32)
+                
         self.res = CostResult()
 
     def compute(self) -> None:
         self.res.grad = self._grad() # 2-dimensional (x and y)
         self.res.cost = self._cost() # 0-dimensional (scalar)
+        if self.res.cost > 10:
+            print(f"Exploding cost {self.__class__} : cost={self.res.cost} grad={self.res.grad}")
 
     def get_result(self) -> CostResult:
         return self.res
     
     def _cost(self) -> tf.Variable:
-        raise NotImplementedError
+        # Returns the 0-dimensional cost
+        # this is the square of the distance (gradients) multiplied by weight
+        cost = tf.reduce_sum(tf.square(self.res.grad))
+        return cost
 
     def _grad(self) -> tf.Variable:
         raise NotImplementedError
@@ -45,12 +52,6 @@ class ColocationRepeller(CostTemplate):
         self.origin: State = origin_state
         self.destination: State = destination_state
         self.min_distance_m = tf.constant(min_dist, dtype=tf.float32)
-
-    def _cost(self) -> tf.constant:
-        # Returns the 0-dimensional cost
-        # this is the square of the distance (gradients) multiplied by weight
-        cost = tf.reduce_sum(tf.square(self.res.grad))
-        return cost
 
     def _grad(self) -> tf.constant:
         # return tf.subtract(self.origin.pos, self.destination.pos)
@@ -77,11 +78,6 @@ class MaxDistanceRepeller(CostTemplate):
         self.destination = destination_state
         self.max_distance_m = tf.constant(max_distance, dtype=tf.float32)
 
-    def _cost(self) -> tf.constant:
-        # Returns the 0-dimensional cost
-        cost = tf.reduce_sum(tf.square(self.res.grad))
-        return cost
-
     def _grad(self) -> tf.constant:
         delta = tf.subtract(self.destination.pos, self.origin.pos)
         dist = tf.norm(delta)
@@ -104,22 +100,27 @@ class PointAttractor(CostTemplate):
         self.origin = origin_state
         self.attraction_point = attraction_point
 
-    def _cost(self) -> tf.constant:
-        # Returns the 0-dimensional cost
-        cost = tf.reduce_sum(tf.square(self.res.grad))
-        return cost
-
     def _grad(self) -> tf.constant:
         delta = tf.subtract(self.attraction_point.pos, self.origin.pos)
         dist = tf.norm(delta)
         if dist < 0.1:
             return tf.constant([0.0, 0.0], dtype=tf.float32)
-        nominal_gradient = tf.math.log(dist + 1)
+        # nominal_gradient = tf.math.log(dist + 1)
+        nominal_gradient = tf.math.exp(tf.negative(x=dist))
         offset_components = tf.scalar_mul(nominal_gradient, tf.math.l2_normalize(delta))
         weighted_gradient = tf.scalar_mul(self.weight, offset_components)
         return weighted_gradient
+    
+class CollisionCost(CostTemplate):
+    # Given an obstacle, this is an astronomical cost (+10000) with a zero gradient
+    # step 1 would be to generate edges between neighboring states
+    # step 2 would be to identify intersections between node edges and object edges
+    # if there is an overlap, there is a collision, add the cost
+    pass
 
 class AllCosts(CostTemplate):
+    # Contains all the costs such that they can be executed once
+    # Also includes a line search to find the best alpha every iteration
     costs: List[CostTemplate]
 
     def __init__(self,
@@ -129,6 +130,7 @@ class AllCosts(CostTemplate):
                  attractor_states: Optional[List[State]] = None,
                  max_distance: float = 3.0,
                  min_distance: float = 3.0,
+                 alphas: list[float] = [1.0],
                  **kwargs
                  ) -> None:
         super().__init__(**kwargs)
@@ -136,6 +138,7 @@ class AllCosts(CostTemplate):
         self.all = all_nodes
         self.neighbors = neighbor_states
         self.attractors = attractor_states
+        self.alphas = alphas
 
         self.max_distance_m = tf.constant(max_distance, dtype=tf.float32)
         self.min_distance_m = tf.constant(min_distance, dtype=tf.float32)
@@ -156,6 +159,47 @@ class AllCosts(CostTemplate):
             c.compute()
             self.res.cost = tf.add(self.res.cost, c.res.cost)
             self.res.grad = tf.add(self.res.grad, c.res.grad)
+    
+    def line_search(self) -> Optional[Tuple[float]]:
+        # compute each cost's gradient once
+        # apply the gradient, once for each alpha value
+        # compute the cost over all alphas
+        # select the alpha associated with the smallest cost
+        # return the alpha
+        init_grad = tf.Variable(0.0)
+        for c in self.costs:
+            temp_grad = c._grad()
+            init_grad = tf.add(init_grad, temp_grad)
+
+        best_cost: tf.Tensor = tf.constant(np.inf)
+        best_grad: tf.Tensor
+        best_alpha: tf.Tensor
+        for alpha in self.alphas:
+            temp_origin = deepcopy(self.origin)
+            temp_grad = tf.scalar_mul(alpha, init_grad)
+            temp_origin.apply_grad(temp_grad)
+            temp_cost = AllCosts(
+                origin_state=temp_origin,
+                all_nodes=self.all,
+                neighbor_states=self.neighbors,
+                attractor_states=self.attractors,
+                max_distance=self.max_distance_m,
+                min_distance=self.min_distance_m
+                )
+            temp_cost.compute()
+            res = temp_cost.get_result()
+            cost = res.cost
+            # print(f"A:{alpha}: c: {cost}")
+            if cost < best_cost:
+                best_grad = temp_grad
+                best_alpha = alpha
+                best_cost = cost
+        
+        # print(f"selected {best_alpha}")
+
+        return best_alpha, best_cost, best_grad
+
+
 
 def cost_heatmap():
     neighbors = [State(0.0, 0.0)]

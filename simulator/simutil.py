@@ -35,18 +35,20 @@ class State:
     """ Contains the limb spline nodes' kinematic info
     Stores values as tensors, but things can be accessed as floats
     """
-    #x and y position
+    #x, y  position, and theta
     pos: tf.Variable
 
     #since time ticks descretely, this is just the previous iteration's delta_x & delta_y
     vel: tf.Variable
 
-    def __init__(self, x: float = 0.0, y: float = 0.0) -> None:
+    def __init__(self, x: float = 0.0, y: float = 0.0, t: float = 0.0) -> None:
         self.pos = tf.Variable([
             x,
-            y
+            y,
+            t
         ], dtype=tf.float32)
         self.vel = tf.Variable([
+            0,
             0,
             0
         ], dtype=tf.float32)
@@ -57,22 +59,36 @@ class State:
     @property
     def y(self) -> float:
         return float(self.pos[1])
-
+    @property
+    def t(self) -> float:
+        return float(self.pos[2])
+    
     @x.setter
     def x(self, value: float) -> None:
         self.pos[0].assign(value)
     @y.setter
     def y(self, value: float) -> None:
         self.pos[1].assign(value)
-
+    @t.setter
+    def t(self, value: float) -> None:
+        self.pos[2].assign(value)
+    
     def distance_to(self, other: "State") -> float:
         delta = tf.subtract(other.pos, self.pos)
         return np.sqrt(np.reduce_sum(np.square(delta)))
 
-    def move(self, delta_x: float, delta_y: float) -> None:
+    def move_cartesian(self, delta_x: float, delta_y: float) -> None:
         delta = tf.constant([delta_x, delta_y], dtype=tf.float32)
         self.pos = tf.add(self.pos, delta)
         self.vel = tf.divide(delta, 1.0) #1.0 represents the time increment
+
+        self.t = tf.atan2(delta_y, delta_x)
+
+    def move_polar(self, distance: float, radians: float = 0) -> None:
+        self.t += radians
+        dx = distance * tf.cos(self.t)
+        dy = distance * tf.sin(self.t)
+        self.move_cartesian(dx, dy)
 
     def apply_grad(self, grad: tf.Tensor) -> None:
         self.vel = grad
