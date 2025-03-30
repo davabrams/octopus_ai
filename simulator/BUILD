@@ -8,19 +8,22 @@ py_library(
 py_library(
     name = "agent_generator",
     srcs = ["agent_generator.py"],
+    visibility = ["//visibility:public"],
     deps = [":simutil"]
 )
 
 py_library(
     name = "octopus_generator",
     srcs = ["octopus_generator.py"],
+    visibility = ["//visibility:public"],
     deps = [":simutil"]
 )
 
 py_library(
     name = "surface_generator",
     srcs = ["surface_generator.py"],
-    deps = [":simutil"]
+    deps = [":simutil"],
+    visibility = ["//visibility:public"],
 )
 
 py_library(

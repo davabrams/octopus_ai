@@ -4,7 +4,11 @@ from enum import Enum
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import numpy as np
+from abc import ABC
 np.set_printoptions(precision=4)
+
+ #1.0 represents the sample time
+dt: float = 1.0
 
 class MovementMode(Enum):
     """Enum stores agent, octopus, and limb movement types"""
@@ -30,76 +34,134 @@ class InferenceLocation(Enum):
     LOCAL = 0 #local inference
     REMOTE = 0 #remote server inference
 
-@dataclass
-class State:
+class KinematicPrimitive(ABC):
+    # A TensorFlow tensor of shape (6,) representing [x, y, θ, vx, vy, ω]
+    _dims = tf.Variable(tf.zeros([6]))
+
+class State(KinematicPrimitive):
     """ Contains the limb spline nodes' kinematic info
     Stores values as tensors, but things can be accessed as floats
     """
-    #x, y  position, and theta
-    pos: tf.Variable
 
-    #since time ticks descretely, this is just the previous iteration's delta_x & delta_y
-    vel: tf.Variable
-
-    def __init__(self, x: float = 0.0, y: float = 0.0, t: float = 0.0) -> None:
-        self.pos = tf.Variable([
+    def __init__(self,
+                 x: float = 0.0,
+                 y: float = 0.0,
+                 t: float = 0.0,
+                 vx: float = 0.0,
+                 vy: float = 0.0,
+                 w: float = 0.0
+                 ) -> None:
+        self._dims = tf.Variable([
             x,
             y,
-            t
+            t,
+            vx,
+            vy,
+            w
         ], dtype=tf.float32)
-        self.vel = tf.Variable([
-            0,
-            0,
-            0
-        ], dtype=tf.float32)
+
+    @property
+    def pos(self) -> tf.Variable:
+        #x, y  position
+        return self._dims[0:2]
+    @property
+    def vel(self) -> tf.Variable:
+        #x, y  velocity
+        return self._dims[3:5]
 
     @property
     def x(self) -> float:
-        return float(self.pos[0])
+        return float(self._dims[0])
     @property
     def y(self) -> float:
-        return float(self.pos[1])
+        return float(self._dims[1])
     @property
     def t(self) -> float:
-        return float(self.pos[2])
-    
+        return float(self._dims[2])
+    @property
+    def vx(self) -> float:
+        return float(self._dims[3])
+    @property
+    def vy(self) -> float:
+        return float(self._dims[4])
+    @property
+    def w(self) -> float:
+        return float(self._dims[5])
+
+    @pos.setter
+    def pos(self, value: tf.Variable) -> None:
+        assert value.shape == (2,)
+        self._dims[0].assign(value[0])
+        self._dims[1].assign(value[1])
+
+    @vel.setter
+    def vel(self, value: tf.Variable) -> None:
+        assert value.shape == (2,)
+        self._dims[0].assign(value[3])
+        self._dims[1].assign(value[4])
+
     @x.setter
     def x(self, value: float) -> None:
-        self.pos[0].assign(value)
+        self._dims[0].assign(value)
     @y.setter
     def y(self, value: float) -> None:
-        self.pos[1].assign(value)
+        self._dims[1].assign(value)
     @t.setter
     def t(self, value: float) -> None:
-        self.pos[2].assign(value)
+        self._dims[2].assign(value)
+    @vx.setter
+    def vx(self, value: float) -> None:
+        self._dims[3].assign(value)
+    @vy.setter
+    def vy(self, value: float) -> None:
+        self._dims[4].assign(value)
+    @w.setter
+    def w(self, value: float) -> None:
+        self._dims[5].assign(value)
+
+    def update_kinematics(self) -> None:
+        # Update position and angle based on current velocities
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        self.t = (self.t + self.w * dt) % (2 * np.pi)
     
     def distance_to(self, other: "State") -> float:
         delta = tf.subtract(other.pos, self.pos)
-        return np.sqrt(np.reduce_sum(np.square(delta)))
+        return tf.sqrt(tf.reduce_sum(tf.square(delta)))
 
-    def move_cartesian(self, delta_x: float, delta_y: float) -> None:
-        delta = tf.constant([delta_x, delta_y], dtype=tf.float32)
-        self.pos = tf.add(self.pos, delta)
-        self.vel = tf.divide(delta, 1.0) #1.0 represents the time increment
+    # def move_cartesian(self, delta_x: float, delta_y: float) -> None:
+    #     # (1) move dx/dy points
+    #     # (2) change the angle of motion to match the angle of dx, dy
+    #     # (3) change the vx/vy to match dx/dy
+    #     delta_xy = tf.constant([delta_x, delta_y], dtype=tf.float32)
+    #     self.pos = tf.add(self.pos, delta_xy)
+    #     self.t = tf.atan2(delta_y, delta_x)
+    #     self.vel = tf.divide(delta_xy, dt)
 
-        self.t = tf.atan2(delta_y, delta_x)
-
-    def move_polar(self, distance: float, radians: float = 0) -> None:
-        self.t += radians
-        dx = distance * tf.cos(self.t)
-        dy = distance * tf.sin(self.t)
-        self.move_cartesian(dx, dy)
+    # def move_polar(self, distance: float, w: float = 0) -> None:
+    #     # (1) apply angular momentum change
+    #     # (2) move distance units at an angle of theta
+    #     # (3) update the velocity to match this new motion
+    #     self.t += w / dt
+    #     dx = distance * tf.cos(self.t)
+    #     dy = distance * tf.sin(self.t)
+    #     self.x += dx
+    #     self.y += dy
+    #     self.vx = dx / dt
+    #     self.vy = dy / dt
 
     def apply_grad(self, grad: tf.Tensor) -> None:
         self.vel = grad
         self.pos = tf.add(self.pos, grad)
 
 
-@dataclass
+
 class Agent(State):
-    """Data class to store agent properties: state vector and agent type"""
-    vel: float = 0
     agent_type: AgentType = None
+    """Data class to store agent properties: state vector and agent type"""
+    def __init__(self, x=0.0, y=0.0, t=0.0, vel_x=0.0, vel_y=0.0, vel_t=0.0, agent_type=None):
+        super().__init__(x, y, t, vel_x, vel_y, vel_t)
+        self.agent_type = agent_type
 
     def __repr__(self):
         return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}\>\n"
