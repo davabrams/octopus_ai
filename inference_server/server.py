@@ -1,10 +1,11 @@
 """
-Octopus model inference server.  
+Octopus model inference server.
 Originally done in C++ but tensorflow in C++ was too much of a pain.
 """
 import logging
 from flask import Flask, request, jsonify
 from model_inference import InferenceJob, InferenceQueue
+
 app = Flask(__name__)
 
 logging.basicConfig(level=logging.INFO)
@@ -12,11 +13,13 @@ logging.info('The log level for this message is INFO.')
 
 jobs = InferenceQueue()
 
+
 @app.route('/shutdown', methods=['GET'])
 def shutdown():
     """Server shutdown.  Does not kill the process."""
     jobs.kill_watchdog()
     return 'Server shutting down...', 201
+
 
 @app.route('/list_jobs', methods=['GET'])
 def get_items():
@@ -30,10 +33,12 @@ def get_items():
     logging.info("job_status_queue: %s", res)
     return res, 201
 
+
 @app.route('/show_queues', methods=['GET'])
 def show_queues():
     """Expose all three job queues"""
     return jobs.all_queues(), 201
+
 
 @app.route('/jobs', methods=['POST'])
 def add_item():
@@ -46,6 +51,7 @@ def add_item():
     jobs.add(InferenceJob(new_item))
     return f"Added Job {new_item['job_id']}", 201
 
+
 @app.route('/collect_and_clear', methods=['POST'])
 def collect_and_clear():
     """Collect completed tasks from completed queue and clear them"""
@@ -53,6 +59,7 @@ def collect_and_clear():
     res = jobs.collect_and_clear()
     logging.warning("%s jobs collected and cleared", len(res))
     return res, 201
+
 
 @app.route('/jobs/<int:job_id>', methods=['GET'])
 def get_item(job_id):
@@ -71,6 +78,7 @@ def get_item(job_id):
         jobs.delete(job_id)
         return res, 500
     return res, 200
+
 
 if __name__ == '__main__':
     app.run(host='localhost', port=8080, debug=True)

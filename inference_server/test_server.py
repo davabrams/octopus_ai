@@ -18,6 +18,7 @@ from model_inference import InferenceJob, InferenceQueue
 
 TIMEOUT = 0.1
 
+
 def decode_response(r):
     encoding = r.encoding
     if encoding == "utf-8":
@@ -25,6 +26,7 @@ def decode_response(r):
     else:
         print(encoding)
         return r.json()
+
 
 # Python client to interact with the REST server
 def list_jobs():
@@ -35,26 +37,33 @@ def list_jobs():
         return None
     return response.json()
 
+
 def job_by_id(item_id):
-    response = requests.get(f'http://localhost:8080/jobs/{item_id}', timeout=TIMEOUT)
+    response = requests.get(
+        f'http://localhost:8080/jobs/{item_id}', timeout=TIMEOUT)
     if response.status_code == 200:
         return response.json()
     else:
         return {"error": "Item not found"}
 
+
 def add_job(item):
-    response = requests.post('http://localhost:8080/jobs', json=item, timeout=TIMEOUT)
+    response = requests.post(
+        'http://localhost:8080/jobs', json=item, timeout=TIMEOUT)
     code = response.status_code
     if code >= 400:
         return None
     return decode_response(response)
 
+
 def show_queues():
-    response = requests.get('http://localhost:8080/show_queues', timeout=TIMEOUT)
+    response = requests.get(
+        'http://localhost:8080/show_queues', timeout=TIMEOUT)
     code = response.status_code
     if code >= 400:
         return None
     return response.json()
+
 
 def shutdown():
     print("Shutting down server")
@@ -64,12 +73,15 @@ def shutdown():
         return f"Error {code}"
     print(response.text)
 
+
 def collect_and_clear():
-    response = requests.post('http://localhost:8080/collect_and_clear', timeout=TIMEOUT)
+    response = requests.post(
+        'http://localhost:8080/collect_and_clear', timeout=TIMEOUT)
     code = response.status_code
     if code >= 400:
         return None
     print(response.text)
+
 
 def list_threads_and_processes() -> None:
     """
@@ -80,10 +92,15 @@ def list_threads_and_processes() -> None:
     for ix, proc in enumerate(mp.active_children()):
         print(f"Process {ix}: {proc.name}")
 
+
 class TestClientServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        t1 = threading.Thread(target=lambda: app.run(host='localhost',port=8080, debug=True, use_reloader=False), name="REST Server")
+        t1 = threading.Thread(
+            target=lambda: app.run(
+                host='localhost', port=8080, debug=True,
+                use_reloader=False),
+            name="REST Server")
         t1.daemon = True
         t1.start()
 
@@ -104,19 +121,25 @@ class TestClientServer(unittest.TestCase):
         self.assertEqual(len(res), 3)
         add_job({"job_id": 5, "data": {"c.r": 0.22, "c_val.r": 1.0}})
         item = job_by_id(3)
-        self.assertDictEqual(item, {"job_id": "3","result": "None","status": "Pending"})
+        self.assertDictEqual(item, {
+            "job_id": "3", "result": "None", "status": "Pending"})
         res = list_jobs()
         self.assertEqual(len(res), 3)
 
-        #let the jobs complete, then clear them
+        # let the jobs complete, then clear them
         time.sleep(.5)
         item = job_by_id(3)
-        self.assertDictEqual(item, {"job_id": "3","result": "0.74155515","status": "Complete"})
+        self.assertDictEqual(item, {
+            "job_id": "3", "result": "0.74155515",
+            "status": "Complete"})
         collect_and_clear()
         res = list_jobs()
         self.assertListEqual(res, [])
         queues = show_queues()
-        self.assertDictEqual(queues, {'completion_queue': [], 'execution_queue': [], 'pending_queue': []})
+        self.assertDictEqual(queues, {
+            'completion_queue': [], 'execution_queue': [],
+            'pending_queue': []})
+
 
 class TestInferenceServer(unittest.TestCase):
     """
@@ -151,9 +174,9 @@ class TestInferenceServer(unittest.TestCase):
         self.assertDictEqual(
             queues,
             {
-            "pending_queue": [],
-            "execution_queue": [],
-            "completion_queue": []
+                "pending_queue": [],
+                "execution_queue": [],
+                "completion_queue": []
             }
         )
 

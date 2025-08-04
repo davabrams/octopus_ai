@@ -23,7 +23,8 @@ class Node:
     state: State
     neighbors: List
     is_tip: bool
-    def __init__(self, state: State, neighbors: List = [], is_tip = False) -> None:
+    def __init__(self, state: State, neighbors: List = [],
+                 is_tip=False) -> None:
         self.state = state
         self.neighbors = neighbors
         self.is_tip = is_tip
@@ -34,29 +35,29 @@ class Node:
 def generate_node_mesh() -> List[Node]:
     # Generate a node mesh, a graph of States
     return [
-        Node(state=State(0,0), neighbors=[1, 2]),
-        Node(state=State(1,0), neighbors=[3, 4]),
-        Node(State(0,1)),
-        Node(State(1,1)),
-        Node(state=State(2,0), neighbors=[5, 6]),
-        Node(State(3,0)),
-        Node(State(3,1))
+        Node(state=State(0, 0), neighbors=[1, 2]),
+        Node(state=State(1, 0), neighbors=[3, 4]),
+        Node(State(0, 1)),
+        Node(State(1, 1)),
+        Node(state=State(2, 0), neighbors=[5, 6]),
+        Node(State(3, 0)),
+        Node(State(3, 1))
     ]
     # 2 3   6
     # | |  /
     # 0-1-4-5
 
 def generate_node_octopus() -> List[Node]:
-
     n_limbs = 4
     n_suckers = 4
 
-    def rad_to_xy(radial_index: int, distance: float) -> Tuple[float, float]:
-        x = distance*math.cos(radial_index * 2 * np.pi/n_limbs)
-        y = distance*math.sin(radial_index * 2 * np.pi/n_limbs)
+    def rad_to_xy(radial_index: int,
+                  distance: float) -> Tuple[float, float]:
+        x = distance * math.cos(radial_index * 2 * np.pi / n_limbs)
+        y = distance * math.sin(radial_index * 2 * np.pi / n_limbs)
         return x, y
     
-    res = [Node(state=State(0,0))]
+    res = [Node(state=State(0, 0))]
     ix = 0
 
     for i in range(n_limbs):
@@ -87,7 +88,8 @@ node_array = generate_node_octopus()
 for ix, n in enumerate(node_array):
     print(f"{ix}: {n.neighbors}")
 G = nx.Graph()
-node_pairs = [[(ix, n) for n in node.neighbors] for ix, node in enumerate(node_array)]
+node_pairs = [[(ix, n) for n in node.neighbors]
+              for ix, node in enumerate(node_array)]
 node_pairs = [item for sublist in node_pairs for item in sublist]
 print(node_pairs)
 G.add_edges_from(node_pairs)
@@ -107,8 +109,8 @@ for val in np.arange(0, 30.0, 0.1):
     plt.connect('motion_notify_event', mouse_move)
 
     attractors = [
-            State(1 * np.sin(val), 1 * np.cos(val))
-            ]
+        State(1 * np.sin(val), 1 * np.cos(val))
+    ]
     if x and y:
         attractors += [State(x, y)]
 
@@ -120,8 +122,8 @@ for val in np.arange(0, 30.0, 0.1):
                 all_nodes=[n.state for n in node_array if n is not node],
                 attractor_states=attractor_array if node.is_tip else None,
                 neighbor_states=[node_array[n].state for n in node.neighbors],
-                max_distance = 0.3,
-                min_distance = 0.1,
+                max_distance=0.3,
+                min_distance=0.1,
                 alphas=[0.2, 0.4, 0.6, 0.8, 1.0])
                 for node in node_array
             ]
@@ -158,6 +160,6 @@ for val in np.arange(0, 30.0, 0.1):
     pos = {ix: n.loc_as_tuple() for ix, n in enumerate(node_array)}
     nx.draw_networkx(G, pos=pos, node_size=10, with_labels=False)
     for attractor in attractors:
-        plt.scatter(x = attractor.pos[0], y = attractor.pos[1], c="Red")
+        plt.scatter(x=attractor.pos[0], y=attractor.pos[1], c="Red")
 
     plt.draw()

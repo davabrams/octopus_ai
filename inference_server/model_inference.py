@@ -1,20 +1,21 @@
 """
 Run model inference
 """
-import sys
-import logging
-import time
 import datetime
+import logging
+import sys
 import threading
-from typing import Any
-from enum import StrEnum
+import time
 from abc import ABC
-from tensorflow import keras
+from enum import StrEnum
+from typing import Any
+
 import numpy as np
+from tensorflow import keras
 
 sys.path.insert(1, '..')
-from training.losses import ConstraintLoss
-from OctoConfig import default_models, MLMode
+from OctoConfig import default_models, MLMode  # noqa: E402
+from training.losses import ConstraintLoss  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logging.info("The log level for this message is INFO.")
@@ -124,11 +125,9 @@ class InferenceJob:
         ExecuteSuckerInference(parent=self, data=self.data)
 
         self.inference_end_timestamp = time.time()
-        assert(self.status in (JobStatus.COMPLETE , JobStatus.FAILED))
-
-
+        assert (self.status in (JobStatus.COMPLETE, JobStatus.FAILED))
         logging.info(
-            "%s started at %s compelted at %s (thread %s), resolution: %s",
+            "%s started at %s completed at %s (thread %s), resolution: %s",
             threading.current_thread().name,
             self.inference_start_timestamp,
             self.inference_end_timestamp,
@@ -157,9 +156,10 @@ class InferenceQueue:
     seconds_until_stale = 30.0
 
     _q_ptr = None
-    _q = {}  # job_id : job .  these don't move, things just point to them.
+    _q = {}  # job_id : job. These don't move, things just point to them.
 
-    # (timestamp, job_id), kept in ascending order.  should be a tree or something.
+    # (timestamp, job_id), kept in ascending order. Should be a tree or
+    # something.
     _pending_queue = []
     _execution_queue = []
     _completion_queue = []
@@ -174,11 +174,14 @@ class InferenceQueue:
         self._kill_watchdog = threading.Event()
         self._kill_watchdog.clear()
         if self.is_watchdog_alive():
-            logging.error("A watchdog is already alive on %s", self._watchdog_thread.native_id)
+            logging.error(
+                "A watchdog is already alive on %s",
+                self._watchdog_thread.native_id
+            )
             return
         t1 = threading.Thread(
-            target=self.queue_watchdog, args=(self._kill_watchdog,), name="InferenceQueue Watchdog",
-            
+            target=self.queue_watchdog, args=(self._kill_watchdog,),
+            name="InferenceQueue Watchdog",
         )
         t1.daemon = True
         t1.start()
@@ -234,7 +237,7 @@ class InferenceQueue:
         }
 
     def collect_and_clear(self) -> list:
-        """Gather all compelted jobs, return them, and erase them"""
+        """Gather all completed jobs, return them, and erase them"""
         res = []
         for q_elem in self._completion_queue:
             job_id = q_elem[1]
@@ -249,7 +252,8 @@ class InferenceQueue:
         # Iterates in chronological order
         self._q_ptr = 0
         self._ts_index = (
-            self._pending_queue + self._execution_queue + self._completion_queue
+            self._pending_queue + self._execution_queue +
+            self._completion_queue
         )
         return self
 
@@ -261,7 +265,7 @@ class InferenceQueue:
         self._q_ptr += 1
         job_id = self._ts_index[ptr][1]
         return self._q[job_id]
-    
+
     def kill_watchdog(self) -> None:
         """
         Kills the watchdog thread
@@ -275,14 +279,22 @@ class InferenceQueue:
         For now, only clear stale pending jobs
         """
         now = time.time()
-        cutoff = now + self.seconds_until_stale
-        job_ids_for_removal = [ts[1] for ts in self._pending_queue if ts[0] < cutoff]
+        cutoff = now - self.seconds_until_stale
+        job_ids_for_removal = [
+            ts[1] for ts in self._pending_queue if ts[0] < cutoff
+        ]
         if len(job_ids_for_removal) == 0:
             return []
-        logging.warning("Removing expired pending jobs: %s", ",".join([str(i) for i in job_ids_for_removal]))
+        logging.warning(
+            "Removing expired pending jobs: %s",
+            ",".join([str(i) for i in job_ids_for_removal])
+        )
         for id_to_remove in job_ids_for_removal:
             del self._q[id_to_remove]
-        self._pending_queue = [ts for ts in self._pending_queue if ts[1] not in job_ids_for_removal]
+        self._pending_queue = [
+            ts for ts in self._pending_queue
+            if ts[1] not in job_ids_for_removal
+        ]
 
     def execute_new_job(self) -> None:
         """
@@ -307,7 +319,8 @@ class InferenceQueue:
         # 3
         logging.info("Kicking off thread")
         t1 = threading.Thread(
-            target=self._q[job_id].execute(self), name=f"Executor for {job_id}"
+            target=self._q[job_id].execute(self),
+            name=f"Executor for {job_id}"
         )
         self._q[job_id].execution_binding = t1
         t1.start()
@@ -316,7 +329,8 @@ class InferenceQueue:
         """
         Move a job from execution queue to complete queue
         """
-        job_singlet = [job for job in self._execution_queue if job[1] == job_id]
+        job_singlet = [job for job in self._execution_queue
+                       if job[1] == job_id]
         if len(job_singlet) != 1:
             logging.warning("How did this even happen?")
             return
@@ -336,9 +350,13 @@ class InferenceQueue:
 
     def queue_watchdog(self, kill_watchdog: threading.Event) -> None:
         """
-        Watchdog for the inference queue.  Looks for new jobs to execute, cleans old jobs, etc.
+        Watchdog for the inference queue.
+
+        Looks for new jobs to execute, cleans old jobs, etc.
         """
-        logging.info("Watchdog is starting on thread %s", threading.current_thread)
+        logging.info(
+            "Watchdog is starting on thread %s", threading.current_thread
+        )
         logging.info("Thread ID: %s", threading.get_ident())
         logging.info("Thread Name: %s", threading.current_thread().name)
         while True:
@@ -346,21 +364,19 @@ class InferenceQueue:
                 return
             time.sleep(0.1)
             # self.clear_stale()
-            if (
-                len(self._pending_queue)
-                or len(self._execution_queue)
-                or len(self._completion_queue)
-            ):
+            pending = len(self._pending_queue)
+            executing = len(self._execution_queue)
+            completed = len(self._completion_queue)
+            if pending or executing or completed:
                 logging.info(
                     "%s %s %s",
                     len(self._pending_queue),
                     len(self._execution_queue),
                     len(self._completion_queue),
                 )
-            while (
-                len(self._pending_queue) > 0
-                and len(self._execution_queue) <= self.thread_count
-            ):
+            while len(self._pending_queue) > 0:
+                if len(self._execution_queue) > self.thread_count:
+                    break
                 self.execute_new_job()
 
     def is_watchdog_alive(self) -> bool:

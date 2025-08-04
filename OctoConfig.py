@@ -8,13 +8,14 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 GameParameters: dict = {
     # General game parameters 🎛️
-    'num_iterations': 120, #set this to -1 for infinite loop
+    'num_iterations': 120,  # set this to -1 for infinite loop
     'x_len': 15,
     'y_len': 15,
     'rand_seed': 0,
-    'debug_mode': False, #enables things like agent attract/repel regions
+    'debug_mode': False,  # enables things like agent attract/repel regions
     'save_images': False,
-    'adjacency_radius': 1.0, #determines what distance is considered 'adjacent',
+    'adjacency_radius': 1.0,  # determines what distance is considered
+    # 'adjacent'
     'inference_location': InferenceLocation.LOCAL,
     'inference_mode': MLMode.SUCKER,
     'inference_model': MLMode.SUCKER,
@@ -29,8 +30,8 @@ GameParameters: dict = {
 
     # Octopus parameters 🐙
     'octo_max_body_velocity': 0.25,
-    'octo_max_arm_theta': 0.1, #used for random drift movement
-    'octo_max_limb_offset': 0.5, #used for attract/repel distance
+    'octo_max_arm_theta': 0.1,  # used for random drift movement
+    'octo_max_limb_offset': 0.5,  # used for attract/repel distance
     'octo_num_arms': 8,
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,
@@ -43,10 +44,10 @@ GameParameters: dict = {
     'limb_movement_mode': MovementMode.RANDOM,
 
     # Sucker parameters 🪠
-    'octo_max_hue_change': 0.25, #max val of rgb that can change at a time, 
-                                 # used as constraint threshold
+    'octo_max_hue_change': 0.25,  # max val of rgb that can change at a time,
+                                  # used as constraint threshold
 
-    }
+}
 
 
 TrainingParameters = {
@@ -76,6 +77,6 @@ TrainingParameters = {
     # Training hyperparams
     'test_size': 0.2,
     'epochs': 10,
-    'batch_size': 32, #32 is tf default
+    'batch_size': 32,  # 32 is tf default
     'constraint_loss_weight': 0.95,
 }

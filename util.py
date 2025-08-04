@@ -1,7 +1,6 @@
 """ Utilities for Octopus ML modeling """
 import os
 import shutil
-import logging
 from typing import Optional, Union, Any
 from abc import ABC
 import pathlib
@@ -10,6 +9,7 @@ import tensorflow as tf
 from simulator.simutil import MLMode
 
 np.set_printoptions(precision=4)
+
 
 def erase_all_logs():
     """
@@ -21,9 +21,9 @@ def erase_all_logs():
         print("Log folder not found, nothing erased from." + log_dir)
     else:
         onlyfiles = [f for f in os.listdir(log_dir) if
-                    os.path.isfile(os.path.join(log_dir, f)) and
-                    len(f) >= len(log_prefix) and
-                    f.startswith(log_prefix)]
+                     os.path.isfile(os.path.join(log_dir, f)) and
+                     len(f) >= len(log_prefix) and
+                     f.startswith(log_prefix)]
         if len(onlyfiles) == 0:
             print("No log files found in log folder, nothing erased.")
         for f in onlyfiles:
@@ -38,16 +38,18 @@ def erase_all_logs():
         print("Log folder not found, nothing erased from." + log_dir)
     else:
         onlyfolders = [f for f in os.listdir(log_dir) if
-                        os.path.isdir(os.path.join(log_dir, f))]
+                       os.path.isdir(os.path.join(log_dir, f))]
         if len(onlyfolders) == 0:
-            print("No log folders found in sucker training log folder, nothing erased.")
+            print("No log folders found in sucker training log "
+                  "folder, nothing erased.")
         for f in onlyfolders:
             try:
-                shutil.rmtree(log_dir + "/" + f) # Be careful changing this line!
-            except:
+                shutil.rmtree(log_dir + "/" + f)  # Be careful changing!
+            except Exception:
                 print(f"Could not remove log folder: {f}")
             else:
                 print(f"Removed log folder: {f}")
+
 
 def octo_norm(_x: np.array, reverse=False):
     """
@@ -58,6 +60,7 @@ def octo_norm(_x: np.array, reverse=False):
         return np.divide(np.add(_x, 1), 2)
     else:
         return np.subtract(np.multiply(_x, 2), 1)
+
 
 def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
     """
@@ -70,10 +73,11 @@ def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
         random_state: Seed for random shuffling (optional).
 
     Returns:
-        train_data, train_labels, test_data, test_labels: 
+        train_data, train_labels, test_data, test_labels:
                 NumPy arrays of training and test data and labels.
     """
-    if not isinstance(state_data, np.ndarray) or not isinstance(gt_data, np.ndarray):
+    if (not isinstance(state_data, np.ndarray) or
+            not isinstance(gt_data, np.ndarray)):
         raise TypeError("Both data and labels must be NumPy arrays.")
 
     if test_size < 0 or test_size > 1:
@@ -100,9 +104,13 @@ def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
 
     return train_state_data, train_gt_data, test_state_data, test_gt_data
 
-def train_test_split_multiple_state_vectors(state_data, gt_data, test_size=0.2, random_state=None):
+
+def train_test_split_multiple_state_vectors(state_data, gt_data,
+                                            test_size=0.2,
+                                            random_state=None):
     """
-    Splits data and labels into training and test sets, but takes an array of state_data
+    Splits data and labels into training and test sets, but takes an array
+    of state_data
 
     Args:
         data: NumPy array of data points.
@@ -111,7 +119,7 @@ def train_test_split_multiple_state_vectors(state_data, gt_data, test_size=0.2, 
         random_state: Seed for random shuffling (optional).
 
     Returns:
-        [train_data], train_labels, [test_data], test_labels: 
+        [train_data], train_labels, [test_data], test_labels:
                 NumPy arrays of training and test data and labels.
     """
     if not isinstance(state_data, list) or not isinstance(gt_data, list):
@@ -153,17 +161,21 @@ def convert_pytype_to_tf_dataset(input_np_array, batch_size):
     """
     shaped_tensor = tf.convert_to_tensor(input_np_array, dtype='float32')
     while len(shaped_tensor.shape) < 2:
-        shaped_tensor = tf.expand_dims(shaped_tensor, axis=len(shaped_tensor.shape))
-    output_tensor = tf.data.Dataset.from_tensor_slices((shaped_tensor, shaped_tensor))
+        shaped_tensor = tf.expand_dims(
+            shaped_tensor, axis=len(shaped_tensor.shape))
+    output_tensor = tf.data.Dataset.from_tensor_slices(
+        (shaped_tensor, shaped_tensor))
     output_tensor = output_tensor.batch(batch_size=batch_size)
     return output_tensor
+
 
 class AlreadyLoadedError(BaseException):
     """
     Error to throw if a model load is attempted twice
     """
 
-class DefaultLoader (ABC):
+
+class DefaultLoader(ABC):
     """
     Handles loading (and storage) of keras models
     """
@@ -177,15 +189,18 @@ class DefaultLoader (ABC):
     }
     LOCAL_DIR = pathlib.Path(__file__).parent.resolve()
 
-    def __init__(self, file_name_or_ml_mode: Optional[Union[str, MLMode]], **kwargs: dict):
+    def __init__(self, file_name_or_ml_mode: Optional[Union[str, MLMode]],
+                 **kwargs: dict):
         if file_name_or_ml_mode is None:
             return
 
         if isinstance(file_name_or_ml_mode, MLMode):
-            file_name_or_ml_mode = self._convert_ml_mode_to_file_name(file_name_or_ml_mode)
+            file_name_or_ml_mode = self._convert_ml_mode_to_file_name(
+                file_name_or_ml_mode)
         self.path = file_name_or_ml_mode
         if "/" not in self.path:
-            self.path = self._convert_filename_to_full_path(self.path)
+            self.path = self._convert_filename_to_full_path(
+                self.path)
 
         self._confirm_file_exists()
         self._load(**kwargs)

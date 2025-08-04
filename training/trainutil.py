@@ -1,14 +1,7 @@
 """
 Trainer utilities
 """
-import tensorflow as tf
-from tensorflow.python.util.tf_export import keras_export  # pylint: disable=no-name-in-module
-from keras.engine import base_layer
-from keras import activations
-from keras import backend
-from keras import constraints
-from keras import initializers
-from keras import regularizers
+
 
 class Trainer:
     """
@@ -47,4 +40,3 @@ class Trainer:
         Should implement the eval functionality
         """
         raise RuntimeError("eval function not implemented")
-

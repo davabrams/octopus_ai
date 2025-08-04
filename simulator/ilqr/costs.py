@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 
+
 @dataclass
 class CostResult:
     cost = tf.Variable(initial_value=0., shape=(()), dtype=np.float32)
     grad = tf.Variable(initial_value=[0., 0.], shape=(2,), dtype=np.float32)
+
 
 class CostTemplate(ABC):
     res: CostResult
@@ -21,14 +23,15 @@ class CostTemplate(ABC):
             self.weight = kwargs.get("weight")
         else:
             self.weight = tf.constant(1.0, dtype=tf.float32)
-                
+
         self.res = CostResult()
 
     def compute(self) -> None:
-        self.res.grad = self._grad() # 2-dimensional (x and y)
-        self.res.cost = self._cost() # 0-dimensional (scalar)
+        self.res.grad = self._grad()  # 2-dimensional (x and y)
+        self.res.cost = self._cost()  # 0-dimensional (scalar)
         if self.res.cost > 10:
-            print(f"Exploding cost {self.__class__} : cost={self.res.cost} grad={self.res.grad}")
+            print(f"Exploding cost {self.__class__} : "
+                  f"cost={self.res.cost} grad={self.res.grad}")
 
     def get_result(self) -> CostResult:
         return self.res
@@ -42,12 +45,14 @@ class CostTemplate(ABC):
     def _grad(self) -> tf.Variable:
         raise NotImplementedError
 
+
 class ColocationRepeller(CostTemplate):
     """Keeps suckers from occupying the same exact space
     """
     min_distance_m: tf.constant
 
-    def __init__(self, origin_state: State, destination_state: State, min_dist = 1.0, **kwargs) -> None:
+    def __init__(self, origin_state: State, destination_state: State,
+                 min_dist=1.0, **kwargs) -> None:
         super().__init__(**kwargs)
         self.origin: State = origin_state
         self.destination: State = destination_state
@@ -59,10 +64,13 @@ class ColocationRepeller(CostTemplate):
         dist = tf.norm(delta)
         if dist > self.min_distance_m:
             return tf.constant([0.0, 0.0], dtype=tf.float32)
-        offset_components = tf.scalar_mul(self.min_distance_m, tf.math.l2_normalize(delta))
+        offset_components = tf.scalar_mul(
+            self.min_distance_m, tf.math.l2_normalize(delta)
+        )
         offset = tf.subtract(delta, offset_components)
         weighted_gradient = tf.scalar_mul(self.weight, offset)
         return weighted_gradient
+
 
 class MaxDistanceRepeller(CostTemplate):
     """Keeps adjacent suckers on a limb from being too far away
@@ -83,10 +91,13 @@ class MaxDistanceRepeller(CostTemplate):
         dist = tf.norm(delta)
         if dist < self.max_distance_m:
             return tf.constant([0.0, 0.0], dtype=tf.float32)
-        offset_components = tf.scalar_mul(self.max_distance_m, tf.math.l2_normalize(delta))
+        offset_components = tf.scalar_mul(
+            self.max_distance_m, tf.math.l2_normalize(delta)
+        )
         offset = tf.subtract(delta, offset_components)
         weighted_gradient = tf.scalar_mul(self.weight, offset)
         return weighted_gradient
+
 
 class PointAttractor(CostTemplate):
     """Simple parabolic attractor
@@ -107,16 +118,22 @@ class PointAttractor(CostTemplate):
             return tf.constant([0.0, 0.0], dtype=tf.float32)
         # nominal_gradient = tf.math.log(dist + 1)
         nominal_gradient = tf.math.exp(tf.negative(x=dist))
-        offset_components = tf.scalar_mul(nominal_gradient, tf.math.l2_normalize(delta))
+        offset_components = tf.scalar_mul(
+            nominal_gradient, tf.math.l2_normalize(delta)
+        )
         weighted_gradient = tf.scalar_mul(self.weight, offset_components)
         return weighted_gradient
     
+
 class CollisionCost(CostTemplate):
-    # Given an obstacle, this is an astronomical cost (+10000) with a zero gradient
+    # Given an obstacle, this is an astronomical cost (+10000) with a zero
+    # gradient
     # step 1 would be to generate edges between neighboring states
-    # step 2 would be to identify intersections between node edges and object edges
+    # step 2 would be to identify intersections between node edges and
+    # object edges
     # if there is an overlap, there is a collision, add the cost
     pass
+
 
 class AllCosts(CostTemplate):
     # Contains all the costs such that they can be executed once
@@ -146,13 +163,19 @@ class AllCosts(CostTemplate):
         self.costs = []
         if self.all:
             for node in self.all:
-                self.costs.append(ColocationRepeller(self.origin, node, min_distance, weight=0.2))
+                self.costs.append(ColocationRepeller(
+                    self.origin, node, min_distance, weight=0.2
+                ))
         if self.neighbors:
             for neighbor in self.neighbors:
-                self.costs.append(MaxDistanceRepeller(self.origin, neighbor, max_distance, weight=1.0))
+                self.costs.append(MaxDistanceRepeller(
+                    self.origin, neighbor, max_distance, weight=1.0
+                ))
         if self.attractors:
             for attractor in self.attractors:
-                self.costs.append(PointAttractor(self.origin, attractor, weight=0.2))
+                self.costs.append(PointAttractor(
+                    self.origin, attractor, weight=0.2
+                ))
 
     def compute(self) -> None:
         for c in self.costs:
@@ -219,8 +242,8 @@ def cost_heatmap():
     plt.matshow(mat_output)
     plt.show()
 
-def plot_graph():
 
+def plot_graph():
     origin = State(0.0, 0)
     attractor = State(0, np.pi/2.0)
 
@@ -232,13 +255,15 @@ def plot_graph():
         attractor.x = x_pos
         attractor.y = y_pos
         attractors = [attractor]
-        costs = AllCosts(origin_state=origin, attractor_states=attractors)
+        costs = AllCosts(
+            origin_state=origin, attractor_states=attractors
+        )
         costs.compute()
         res = costs.get_result()
         origin.apply_grad(res.grad)
         plt.axis([-3, 3, -3, 3])
-        plt.scatter(x = origin.pos[0], y = origin.pos[1])
-        plt.scatter(x = attractor.pos[0], y = attractor.pos[1])
+        plt.scatter(x=origin.pos[0], y=origin.pos[1])
+        plt.scatter(x=attractor.pos[0], y=attractor.pos[1])
         plt.draw()
         plt.pause(0.1)
         plt.clf()
