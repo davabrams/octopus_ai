@@ -6,6 +6,13 @@ from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+default_models = {
+    MLMode.SUCKER: os.path.join(ROOT_DIR, 'training/models/sucker.keras'),
+    MLMode.LIMB: os.path.join(ROOT_DIR, 'training/models/limb.keras'),
+    MLMode.FULL: None,  # Placeholder for future full model
+    MLMode.NO_MODEL: None
+}
+
 GameParameters: dict = {
     # General game parameters 🎛️
     'num_iterations': 120,  # set this to -1 for infinite loop

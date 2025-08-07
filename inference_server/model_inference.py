@@ -15,14 +15,14 @@ from tensorflow import keras
 
 sys.path.insert(1, '..')
 from OctoConfig import default_models, MLMode  # noqa: E402
-from training.losses import ConstraintLoss  # noqa: E402
+from training.losses import ConstraintLoss
 
 logging.basicConfig(level=logging.INFO)
 logging.info("The log level for this message is INFO.")
 
 model_path = default_models[MLMode.SUCKER]
 custom_objects = {"ConstraintLoss": ConstraintLoss}
-sucker_model = keras.models.load_model('../' + model_path, custom_objects)
+sucker_model = keras.models.load_model(model_path, custom_objects)
 
 
 class JobStatus(StrEnum):

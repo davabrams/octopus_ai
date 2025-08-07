@@ -97,8 +97,8 @@ class State(KinematicPrimitive):
     @vel.setter
     def vel(self, value: tf.Variable) -> None:
         assert value.shape == (2,)
-        self._dims[0].assign(value[3])
-        self._dims[1].assign(value[4])
+        self._dims[3].assign(value[0])
+        self._dims[4].assign(value[1])
 
     @x.setter
     def x(self, value: float) -> None:
@@ -159,8 +159,8 @@ class State(KinematicPrimitive):
 class Agent(State):
     agent_type: AgentType = None
     """Data class to store agent properties: state vector and agent type"""
-    def __init__(self, x=0.0, y=0.0, t=0.0, vel_x=0.0, vel_y=0.0, vel_t=0.0, agent_type=None):
-        super().__init__(x, y, t, vel_x, vel_y, vel_t)
+    def __init__(self, x=0.0, y=0.0, t=0.0, vx=0.0, vy=0.0, vel_t=0.0, agent_type=None):
+        super().__init__(x, y, t, vx, vy, vel_t)
         self.agent_type = agent_type
 
     def __repr__(self):

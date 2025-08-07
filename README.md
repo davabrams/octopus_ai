@@ -14,9 +14,29 @@ Octopus AI contains:
 I don't know, but I can't stop.
 
 # what to do
+
+## Testing 🧪
+Run the comprehensive test suite with a single command:
+```bash
+# Easiest method - using the test runner
+python run_tests.py
+
+# Alternative methods
+make test      # If you have make
+./test.sh      # Shell script
+
+# With options
+python run_tests.py --verbose    # Detailed output
+python run_tests.py --coverage   # Coverage report
+```
+
+See `tests/README.md` for detailed testing documentation.
+
+## Configuration
 `OctoConfig.py`
 Configuration settings
 
+## Running
 `bazel run octo_viz`
 octopus ai scenario synthesizer and visualizer
 

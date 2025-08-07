@@ -34,11 +34,11 @@ class AgentGenerator:
             x, y, t = (np.random.uniform(0, self._x_len - 1),
                        np.random.uniform(0, self._y_len - 1),
                        np.random.uniform(0, 2 * np.pi))
-            vel_x, vel_y, vel_t = (np.random.uniform(0, self.max_velocity),
+            vx, vy, vel_t = (np.random.uniform(0, self.max_velocity),
                                    np.random.uniform(0, self.max_velocity),
                                    np.random.uniform(0, self.max_velocity))
 
-            new_agent = Agent(x, y, t, vel_x, vel_y, vel_t, agent_type)
+            new_agent = Agent(x, y, t, vx, vy, vel_t, agent_type)
             self.agents.append(new_agent)
 
     def increment_all(self, octo=None):

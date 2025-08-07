@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from simulator.surface_generator import RandomSurface
 from simulator.agent_generator import AgentGenerator
-from simulator.simutil import MovementMode, AgentType, Agent, State
+from simulator.simutil import MovementMode, AgentType, State
 
 
 class TestSurfaceGenerator(unittest.TestCase):
@@ -36,8 +36,8 @@ class TestAgentGenerator(unittest.TestCase):
             "agent_max_theta": max_theta,
             "agent_movement_mode": MovementMode.RANDOM,
             "agent_range_radius": 1,
-            "rand_seed"
-: 0        }
+            "rand_seed": 0
+        }
         agent_gen = AgentGenerator(params)
         agent_gen.generate(1, fixed_agent_type=AgentType.PREY)
         self.assertEqual(len(agent_gen.agents), 1)
