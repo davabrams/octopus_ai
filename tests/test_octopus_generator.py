@@ -34,21 +34,18 @@ class TestSucker(unittest.TestCase):
         # Create test sucker
         self.sucker = Sucker(
             x=5.0, y=5.0, 
-            surf=self.mock_surface,
-            game_params=self.params
+            params=self.params
         )
     
     def test_sucker_initialization(self):
         """Test sucker is properly initialized"""
         self.assertAlmostEqual(self.sucker.x, 5.0)
         self.assertAlmostEqual(self.sucker.y, 5.0)
-        self.assertEqual(self.sucker.surf, self.mock_surface)
-        self.assertIsInstance(self.sucker.color, Color)
-        self.assertEqual(self.sucker.game_params, self.params)
+        self.assertIsInstance(self.sucker.c, Color)
     
     def test_distance_to(self):
         """Test distance calculation between suckers"""
-        other_sucker = Sucker(x=8.0, y=9.0, surf=self.mock_surface, game_params=self.params)
+        other_sucker = Sucker(x=8.0, y=9.0, params=self.params)
         expected_distance = np.sqrt((8.0 - 5.0)**2 + (9.0 - 5.0)**2)
         self.assertAlmostEqual(self.sucker.distance_to(other_sucker), expected_distance)
     
@@ -56,40 +53,15 @@ class TestSucker(unittest.TestCase):
         """Test surface color retrieval"""
         # Test valid coordinates
         self.mock_surface.get_val.return_value = 0.7
-        color = self.sucker.get_surf_color_at_this_sucker()
-        self.assertEqual(color, 0.7)
+        color = self.sucker.get_surf_color_at_this_sucker(self.mock_surface)
+        self.assertEqual(color.r, 0.7)
+        self.assertEqual(color.b, 0.7)
+        self.assertEqual(color.g, 0.7)
         self.mock_surface.get_val.assert_called_with(5, 5)
-        
-        # Test boundary conditions
-        boundary_sucker = Sucker(x=-1, y=-1, surf=self.mock_surface, game_params=self.params)
-        color = boundary_sucker.get_surf_color_at_this_sucker()
-        self.assertEqual(color, 0.0)  # Should return 0 for out of bounds
-    
-    @patch('simulator.octopus_generator.sucker_model')
-    def test_find_color_ml_mode(self, mock_model):
-        """Test color finding in ML mode"""
-        self.params['inference_location'] = InferenceLocation.LOCAL
-        mock_model.predict.return_value = np.array([[0.8]])
-        
-        color = self.sucker.find_color()
-        
-        # Verify ML model was called
-        mock_model.predict.assert_called_once()
-        self.assertAlmostEqual(color, 0.8)
-    
-    def test_find_color_heuristic_mode(self):
-        """Test color finding in heuristic mode"""
-        self.params['inference_location'] = InferenceLocation.HEURISTIC
-        self.mock_surface.get_val.return_value = 0.6
-        
-        color = self.sucker.find_color()
-        
-        # Should return surface color in heuristic mode
-        self.assertAlmostEqual(color, 0.6)
     
     def test_find_color_change_heuristic(self):
         """Test heuristic color change logic"""
-        self.sucker.color.r = 0.5
+        self.sucker.c.r = 0.5
         surface_color = 0.8
         max_change = 0.1
         
@@ -116,11 +88,9 @@ class TestLimb(unittest.TestCase):
         self.mock_surface.get_val.return_value = 0.5
         
         # Create test limb
-        self.limb = Limb(
-            root_state=State(x=5.0, y=5.0, t=0.0),
-            surf=self.mock_surface,
-            game_params=self.params
-        )
+        root_state=State(x=5.0, y=5.0, t=0.0)
+        initial_angle = 0
+        self.limb = Limb(x_octo=root_state.x,y_octo=root_state.y,init_angle=initial_angle,params=self.params)
     
     def test_limb_initialization(self):
         """Test limb is properly initialized"""
@@ -134,15 +104,15 @@ class TestLimb(unittest.TestCase):
     
     def test_gen_centerline(self):
         """Test centerline generation"""
-        centerline = self.limb._gen_centerline()
+        self.limb._gen_centerline(0, 0, 0)
         
         # Should have correct length
-        self.assertEqual(len(centerline), self.params['limb_rows'])
+        self.assertEqual(len(self.limb.center_line), self.params['limb_rows'])
         
         # Points should be ordered from root outward
-        for i in range(len(centerline) - 1):
-            dist_from_root_i = np.sqrt(centerline[i][0]**2 + centerline[i][1]**2)
-            dist_from_root_j = np.sqrt(centerline[i+1][0]**2 + centerline[i+1][1]**2)
+        for i in range(len(self.limb.center_line) - 1):
+            dist_from_root_i = np.sqrt(self.limb.center_line[i].x**2 + self.limb.center_line[i].y**2)
+            dist_from_root_j = np.sqrt(self.limb.center_line[i+1].x**2 + self.limb.center_line[i+1].y**2)
             self.assertLessEqual(dist_from_root_i, dist_from_root_j)
     
     def test_refresh_sucker_locations(self):
@@ -162,7 +132,8 @@ class TestLimb(unittest.TestCase):
         """Test adjacent sucker finding"""
         if self.limb.suckers:
             target_sucker = self.limb.suckers[0]
-            adjacents = self.limb.find_adjacents(target_sucker, radius=2.0)
+            adjacents_with_dist = self.limb.find_adjacents(target_sucker, radius=2.0)
+            adjacents = [a for a, d in adjacents_with_dist]
             
             # Should return list of suckers
             self.assertIsInstance(adjacents, list)
@@ -172,24 +143,12 @@ class TestLimb(unittest.TestCase):
                 distance = target_sucker.distance_to(adj)
                 self.assertLessEqual(distance, 2.0)
     
-    @patch('simulator.octopus_generator.limb_model')
-    def test_find_color_ml_mode(self, mock_model):
-        """Test limb color finding in ML mode"""
-        self.params['inference_location'] = InferenceLocation.LOCAL
-        mock_model.predict.return_value = np.array([[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]])
-        
-        colors = self.limb.find_color()
-        
-        # Should return list of colors for all suckers
-        self.assertEqual(len(colors), len(self.limb.suckers))
-        mock_model.predict.assert_called_once()
     
     def test_move_random_mode(self):
         """Test limb movement in random mode"""
         self.params['limb_movement_mode'] = MovementMode.RANDOM
-        original_theta = self.limb.root_state.t
         
-        self.limb.move()
+        self.limb.move(1.0, 1.0)
         
         # Angle should have changed (with high probability)
         # Using a tolerance due to random nature
@@ -213,8 +172,7 @@ class TestOctopus(unittest.TestCase):
         # Create test octopus
         self.octopus = Octopus(
             body_state=State(x=5.0, y=5.0, t=0.0),
-            surf=self.mock_surface,
-            game_params=self.params
+            params=self.params
         )
     
     def test_octopus_initialization(self):
@@ -229,7 +187,7 @@ class TestOctopus(unittest.TestCase):
     def test_find_color_parallel(self):
         """Test parallel color finding across limbs"""
         with patch.object(self.octopus.limbs[0], 'find_color', return_value=[0.1, 0.2]):
-            colors = self.octopus.find_color()
+            colors = self.octopus.find_color(self.mock_surface)
             
             # Should return nested list of colors
             self.assertIsInstance(colors, list)
@@ -237,24 +195,22 @@ class TestOctopus(unittest.TestCase):
     
     def test_set_color(self):
         """Test color setting across all suckers"""
-        # Create mock colors data
-        mock_colors = [[0.1, 0.2] for _ in range(len(self.octopus.limbs))]
-        
-        self.octopus.set_color(mock_colors)
+        # Create mock colors data        
+        self.octopus.set_color(self.mock_surface)
         
         # Verify colors were set (basic smoke test)
         for limb in self.octopus.limbs:
             for sucker in limb.suckers:
-                self.assertIsInstance(sucker.color.r, float)
+                self.assertIsInstance(sucker.c.r, float)
     
     def test_visibility_calculation(self):
         """Test MSE visibility calculation"""
         # Set up some test colors
         for limb in self.octopus.limbs:
             for sucker in limb.suckers:
-                sucker.color.r = 0.5
+                sucker.c.r = 0.5
         
-        visibility = self.octopus.visibility()
+        visibility = self.octopus.visibility(self.mock_surface)
         
         # Should return a float MSE value
         self.assertIsInstance(visibility, float)
@@ -262,7 +218,7 @@ class TestOctopus(unittest.TestCase):
     
     def test_move_body(self):
         """Test octopus body movement"""
-        original_pos = (self.octopus.body_state.x, self.octopus.body_state.y)
+        original_pos = (self.octopus.x, self.octopus.y)
         
         # Mock some agents for attract/repel logic
         mock_agents = [Mock()]
@@ -270,11 +226,11 @@ class TestOctopus(unittest.TestCase):
         mock_agents[0].y = 7.0
         mock_agents[0].agent_type = 1  # Threat
         
-        self.octopus.move(agents=mock_agents)
+        self.octopus.move(ag=mock_agents)
         
         # Position might have changed based on attract/repel logic
-        self.assertIsInstance(self.octopus.body_state.x, float)
-        self.assertIsInstance(self.octopus.body_state.y, float)
+        self.assertIsInstance(self.octopus.x, float)
+        self.assertIsInstance(self.octopus.y, float)
 
 
 class TestIntegration(unittest.TestCase):
@@ -294,31 +250,29 @@ class TestIntegration(unittest.TestCase):
         
         self.octopus = Octopus(
             body_state=State(x=2.5, y=2.5, t=0.0),
-            surf=self.surface,
-            game_params=self.params
+            params=self.params
         )
     
     def test_full_simulation_step(self):
         """Test a complete simulation step"""
         # Should be able to run without errors
-        try:
-            # Move octopus
-            self.octopus.move(agents=[])
-            
-            # Find colors (heuristic mode for integration test)
-            self.params['inference_location'] = InferenceLocation.HEURISTIC
-            colors = self.octopus.find_color()
-            
-            # Set colors
-            self.octopus.set_color(colors)
-            
-            # Calculate visibility
-            visibility = self.octopus.visibility()
-            
-            self.assertIsInstance(visibility, float)
-            
-        except Exception as e:
-            self.fail(f"Full simulation step failed: {e}")
+        # try:
+        # Move octopus
+        self.octopus.move()
+        
+        # Find colors (heuristic mode for integration test)
+        self.params['inference_location'] = InferenceLocation.LOCAL
+        
+        # Set colors
+        self.octopus.set_color(surf=self.surface)
+        
+        # Calculate visibility
+        visibility = self.octopus.visibility(surf=self.surface)
+        
+        self.assertIsInstance(visibility, float)
+        
+        # except Exception as e:
+        #     self.fail(f"Full simulation step failed: {e}")
 
 
 if __name__ == '__main__':

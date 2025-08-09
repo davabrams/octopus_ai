@@ -37,7 +37,7 @@ class TestSimulationIntegration(unittest.TestCase):
             'limb_cols': 2,
             'agent_number_of_agents': 2,
             'num_iterations': 5,  # Short for testing
-            'inference_location': InferenceLocation.HEURISTIC  # Use heuristic to avoid ML dependencies
+            'inference_location': InferenceLocation.LOCAL  # Use heuristic to avoid ML dependencies
         })
     
     def test_complete_simulation_cycle(self):
@@ -53,7 +53,9 @@ class TestSimulationIntegration(unittest.TestCase):
                 y=self.game_params['y_len'] / 2,
                 t=0.0
             )
-            octopus = Octopus(octopus_state, surface, self.game_params)
+            octopus = Octopus(self.game_params)
+            octopus.x = octopus_state.x
+            octopus.y = octopus_state.y
             self.assertIsNotNone(octopus)
             self.assertEqual(len(octopus.limbs), self.game_params['octo_num_arms'])
             
@@ -68,10 +70,10 @@ class TestSimulationIntegration(unittest.TestCase):
                 agent_gen.increment_all()
                 
                 # Move octopus
-                octopus.move(agents=agent_gen.agents)
+                octopus.move(ag=agent_gen.agents)
                 
                 # Find colors (heuristic mode)
-                colors = octopus.find_color()
+                colors = octopus.find_color(surface)
                 self.assertIsInstance(colors, list)
                 self.assertEqual(len(colors), len(octopus.limbs))
                 
@@ -79,7 +81,7 @@ class TestSimulationIntegration(unittest.TestCase):
                 octopus.set_color(colors)
                 
                 # Calculate visibility
-                visibility = octopus.visibility()
+                visibility = octopus.visibility(surface)
                 self.assertIsInstance(visibility, float)
                 self.assertGreaterEqual(visibility, 0.0)
             
@@ -92,31 +94,34 @@ class TestSimulationIntegration(unittest.TestCase):
     def test_multi_agent_interaction(self):
         """Test interactions between multiple agents and octopus"""
         # Create surface and octopus
+        self.game_params.update({'agent_number_of_agents': 0})
         surface = RandomSurface(self.game_params)
-        octopus = Octopus(
-            State(x=4.0, y=4.0, t=0.0),
-            surface,
-            self.game_params
-        )
+        octopus = Octopus(self.game_params)
+
+        x_len = self.game_params['x_len']
+        y_len = self.game_params['y_len']
+        octopus.x = x_len / 2
+        octopus.y = y_len / 2
         
         # Create agents with different types
         agent_gen = AgentGenerator(self.game_params)
+        print(agent_gen)
         agent_gen.generate(1, fixed_agent_type=AgentType.PREY)
         agent_gen.generate(1, fixed_agent_type=AgentType.THREAT)
-        
+        print(agent_gen)
         self.assertEqual(len(agent_gen.agents), 2)
         
         # Record initial positions
-        initial_octopus_pos = (octopus.body_state.x, octopus.body_state.y)
+        initial_octopus_pos = (octopus.x, octopus.y)
         initial_agent_positions = [(agent.x, agent.y) for agent in agent_gen.agents]
         
         # Run simulation steps
         for _ in range(3):
             agent_gen.increment_all()
-            octopus.move(agents=agent_gen.agents)
+            octopus.move(ag=agent_gen.agents)
         
         # Verify movement occurred
-        final_octopus_pos = (octopus.body_state.x, octopus.body_state.y)
+        final_octopus_pos = (octopus.x, octopus.y)
         final_agent_positions = [(agent.x, agent.y) for agent in agent_gen.agents]
         
         # At least some positions should have changed
@@ -128,7 +133,7 @@ class TestSimulationIntegration(unittest.TestCase):
     
     def test_different_movement_modes(self):
         """Test simulation with different movement modes"""
-        movement_modes = [MovementMode.RANDOM, MovementMode.DRIFT]
+        movement_modes = [MovementMode.RANDOM, MovementMode.ATTRACT_REPEL]
         
         for mode in movement_modes:
             with self.subTest(movement_mode=mode):
@@ -139,7 +144,7 @@ class TestSimulationIntegration(unittest.TestCase):
                 
                 # Create components
                 surface = RandomSurface(params)
-                octopus = Octopus(State(x=4.0, y=4.0), surface, params)
+                octopus = Octopus(params)
                 agent_gen = AgentGenerator(params)
                 agent_gen.generate(1)
                 
@@ -147,8 +152,8 @@ class TestSimulationIntegration(unittest.TestCase):
                 try:
                     for _ in range(2):
                         agent_gen.increment_all()
-                        octopus.move(agents=agent_gen.agents)
-                        colors = octopus.find_color()
+                        octopus.move(ag=agent_gen.agents)
+                        colors = octopus.find_color(surface)
                         octopus.set_color(colors)
                     
                     # Should complete without errors
@@ -388,7 +393,7 @@ class TestDataGenerationIntegration(unittest.TestCase):
             'limb_rows': 2,
             'limb_cols': 2,
             'num_iterations': 3,
-            'inference_location': InferenceLocation.HEURISTIC
+            'inference_location': InferenceLocation.LOCAL
         })
     
     @patch('octo_datagen.Octopus')
@@ -424,13 +429,17 @@ class TestDataGenerationIntegration(unittest.TestCase):
         
         try:
             # Run data generation
-            X, y = datagen.run_color_datagen()
+            data = datagen.run_color_datagen()
             
             # Verify data was generated
-            self.assertIsInstance(X, list)
-            self.assertIsInstance(y, list)
-            self.assertGreater(len(X), 0)
-            self.assertGreater(len(y), 0)
+            self.assertIn('metadata', data)
+            self.assertIsInstance(data['metadata'], dict)
+            self.assertIn('game_parameters', data)
+            self.assertEqual(data['game_parameters'], self.game_params)
+            self.assertIn('state_data', data)
+            self.assertIsInstance(data['state_data'], list)
+            self.assertIn('gt_data', data)
+            self.assertIsInstance(data['gt_data'], list)
             
             # Verify data format
             for x_sample in X:
