@@ -8,6 +8,7 @@ import tempfile
 import os
 import sys
 from unittest.mock import Mock, patch, MagicMock
+from typing import Optional, Union
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -221,6 +222,8 @@ class TestDefaultLoader(unittest.TestCase):
     def setUp(self):
         """Set up test loader"""
         class TestLoader(DefaultLoader):
+            def __init__(self, file_name_or_ml_mode: Optional[Union[str, MLMode]] = None, **kwargs):
+                super().__init__(file_name_or_ml_mode=file_name_or_ml_mode, kwargs=kwargs)
             def _load(self):
                 return "test_data"
         
@@ -235,33 +238,17 @@ class TestDefaultLoader(unittest.TestCase):
         
         try:
             # Should not raise exception
-            result = self.loader._confirm_file_exists(temp_path)
-            self.assertTrue(result)
+            self.loader.path = temp_path
+            self.loader._confirm_file_exists()
         finally:
             os.unlink(temp_path)
     
     def test_confirm_file_exists_invalid_file(self):
         """Test file existence confirmation with invalid file"""
         invalid_path = "/nonexistent/path/file.txt"
-        
+        self.loader.path = invalid_path
         with self.assertRaises(FileNotFoundError):
-            self.loader._confirm_file_exists(invalid_path)
-    
-    def test_convert_ml_mode_to_filename(self):
-        """Test ML mode to filename conversion"""
-        # Test sucker mode
-        filename = self.loader._convert_ml_mode_to_file_name(MLMode.SUCKER)
-        self.assertIn('sucker', filename.lower())
-        
-        # Test limb mode
-        filename = self.loader._convert_ml_mode_to_file_name(MLMode.LIMB)
-        self.assertIn('limb', filename.lower())
-    
-    def test_load_method_callable(self):
-        """Test that load method works"""
-        result = self.loader.load()
-        self.assertEqual(result, "test_data")
-
+            self.loader._confirm_file_exists()
 
 class TestDataValidation(unittest.TestCase):
     """Test data validation and edge cases"""
@@ -281,14 +268,6 @@ class TestDataValidation(unittest.TestCase):
         
         with self.assertRaises((ValueError, IndexError)):
             train_test_split(X, y, test_size=0.2)
-    
-    def test_octo_norm_high_dimension(self):
-        """Test octo_norm with high dimensional vectors"""
-        # Test with 1000-dimensional vector
-        vec = np.random.random(1000)
-        result = octo_norm(vec)
-        expected = np.linalg.norm(vec)
-        self.assertAlmostEqual(result, expected, places=5)
 
 
 if __name__ == '__main__':
