@@ -1,0 +1,66 @@
+[project]
+name = "octopus-ai"
+version = "0.1.0"
+description = "Octopus simulation and ML camouflage training"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "tensorflow>=2.14,<3.0",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "flask>=3.0",
+    "websockets>=12.0",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["simulator*", "training*", "inference_server*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "N802",   # function name should be lowercase (too many existing violations)
+    "N803",   # argument name should be lowercase (e.g. GameParameters)
+    "N806",   # variable in function should be lowercase
+    "B008",   # do not perform function calls in argument defaults
+    "SIM108", # ternary operator — readability preference
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["simulator", "training", "inference_server"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-q"

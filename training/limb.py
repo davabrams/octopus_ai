@@ -276,12 +276,10 @@ class LimbTrainer(Trainer):
     def _model_constructor(self):
         # define two sets of inputs
         fixed_input = tf.keras.Input(
-            shape=(2), dtype=tf.float32, name="fixed_input", ragged=False
+            shape=(2,), dtype=tf.float32, name="fixed_input", ragged=False
         )
         ragged_input = tf.keras.Input(
-            type_spec=tf.RaggedTensorSpec(
-                shape=(1, None, 2), dtype=tf.float32, ragged_rank=1
-            )
+            shape=(None, 2), dtype=tf.float32, name="ragged_input", ragged=True
         )
 
         # the first branch operates on the fixed input

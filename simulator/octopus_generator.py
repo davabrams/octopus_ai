@@ -310,7 +310,7 @@ class Octopus:
             l.move(self.x, self.y)
 
     def _move_attract_repel(self, ag: Agent = None):
-        print("Attract/Repel movement mode not complete", ag.Type)
+        print("Attract/Repel movement mode not complete", ag.agent_type)
 
     def find_color(
             self,

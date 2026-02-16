@@ -39,7 +39,7 @@ class SuckerTrainer(Trainer):
 
         state_data = np.array([data['state_data']],
                               dtype='float32')  # sucker's current color
-        gt_data = np.array([data['gt_data']],
+        gt_data = np.array([[c.r for c in data['gt_data']]],
                            dtype='float32')  # sucker's ground truth
 
         train_state_data, train_gt_data, test_state_data, test_gt_data = \
@@ -107,7 +107,7 @@ class SuckerTrainer(Trainer):
             GameParameters['octo_max_hue_change'], dtype='float32')
 
         # Model constructor
-        inp = keras.layers.Input(shape=(None, 2), batch_size=batch_size)
+        inp = keras.layers.Input(shape=(2,), batch_size=batch_size)
         outp = keras.layers.Dense(units=1, activation="linear",
                                   name="prediction_layer")
 
@@ -143,8 +143,6 @@ class SuckerTrainer(Trainer):
             # Iterate over the batches of the dataset.
             for step, (x_batch_train, y_batch_train) in \
                     enumerate(train_dataset):
-                sucker_model.reset_states()
-
                 # Open a GradientTape to record the operations run
                 # during the forward pass, which enables auto-differentiation.
                 with tf.GradientTape() as tape:

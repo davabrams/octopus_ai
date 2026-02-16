@@ -24,8 +24,8 @@ GameParameters: dict = {
     'adjacency_radius': 1.0,  # determines what distance is considered
     # 'adjacent'
     'inference_location': InferenceLocation.LOCAL,
-    'inference_mode': MLMode.SUCKER,
-    'inference_model': MLMode.SUCKER,
+    'inference_mode': MLMode.NO_MODEL,
+    'inference_model': MLMode.NO_MODEL,
     'datagen_data_write_format': MLMode.SUCKER,
 
     # Agent parameters 👾
@@ -54,6 +54,11 @@ GameParameters: dict = {
     'octo_max_hue_change': 0.25,  # max val of rgb that can change at a time,
                                   # used as constraint threshold
 
+    # Training hyperparams (used by trainers via GameParameters)
+    'test_size': 0.2,
+    'epochs': 10,
+    'batch_size': 32,
+    'constraint_loss_weight': 0.95,
 }
 
 
@@ -63,8 +68,8 @@ TrainingParameters = {
 
     # Datagen
     "save_data_to_disk": False,
-    "restore_data_from_disk": True,
-    'datagen_mode': False,
+    "restore_data_from_disk": False,
+    'datagen_mode': True,
 
     # Tensorboard
     "erase_old_tensorboard_logs": True,
@@ -80,6 +85,9 @@ TrainingParameters = {
     # Test & Eval
     "run_inference": False,
     "run_eval": False,
+
+    # Model paths
+    'models': default_models,
 
     # Training hyperparams
     'test_size': 0.2,

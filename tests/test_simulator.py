@@ -39,6 +39,7 @@ class TestAgentGenerator(unittest.TestCase):
             "rand_seed": 0
         }
         agent_gen = AgentGenerator(params)
+        agent_gen.agents = []  # Clear class-level shared list
         agent_gen.generate(1, fixed_agent_type=AgentType.PREY)
         self.assertEqual(len(agent_gen.agents), 1)
         agent_gen.generate(1, fixed_agent_type=AgentType.THREAT)
