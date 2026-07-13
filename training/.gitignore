@@ -1,7 +1,5 @@
-/models
-/logs
-/datagen
-/__pycache__
+__pycache__/
 *.pkl
 *.pyc
+*.keras*
 .DS_Store
