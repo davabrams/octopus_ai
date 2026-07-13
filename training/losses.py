@@ -126,7 +126,10 @@ class WeightedSumLoss(tf.keras.losses.Loss):
         w_loss1 = tf.multiply(self.w1, loss1)
         w_loss2 = tf.multiply(self.w2, loss2)
 
-        step = self.step * y_true.shape[0]
+        # y_true.shape[0] can be None for symbolic tensors (e.g. inside
+        # model.fit); fall back to 1 so logging-step math never crashes
+        batch_dim = y_true.shape[0] if y_true.shape[0] is not None else 1
+        step = self.step * batch_dim
 
         if self.writer:
             with self.writer.as_default():

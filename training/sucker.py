@@ -11,23 +11,31 @@ import tensorflow as tf
 from tensorflow import keras
 from training.losses import WeightedSumLoss
 from training.trainutil import Trainer
-from util import (
+from training.data_utils import (
     convert_pytype_to_tf_dataset,
     train_test_split,
 )
 from octo_datagen import OctoDatagen
+from simulator.simutil import MLMode
+from OctoConfig import default_datasets
 
 
 class SuckerTrainer(Trainer):
-    def __init__(self, GameParameters):
+    def __init__(self, GameParameters, TrainingParameters=None):
         self.GameParameters = GameParameters
+        self.TrainingParameters = TrainingParameters
 
     def datagen(self, SAVE_DATA_TO_DISK):
         datagen = OctoDatagen(self.GameParameters)
         data = datagen.run_color_datagen()
         if SAVE_DATA_TO_DISK:
-            with open(self.GameParameters['sucker_datagen_location'],
-                      'wb') as file:
+            if self.TrainingParameters and 'datasets' in \
+                    self.TrainingParameters:
+                datagen_path = self.TrainingParameters[
+                    'datasets'][MLMode.SUCKER]
+            else:
+                datagen_path = default_datasets[MLMode.SUCKER]
+            with open(datagen_path, 'wb') as file:
                 pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
         return data
 

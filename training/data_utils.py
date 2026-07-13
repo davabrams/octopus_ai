@@ -32,10 +32,13 @@ def train_test_split(state_data, gt_data, test_size=0.2, random_state=None):
     num_samples = state_data.shape[1]
     shuffle_indices = np.arange(num_samples)
     if random_state is not None:
-        pass
+        np.random.seed(random_state)
     np.random.shuffle(shuffle_indices)
 
-    split_point = int(num_samples * test_size)
+    # train gets (1 - test_size) of the samples, test gets test_size.
+    # (This was previously inverted: train received only test_size of the
+    # data. Fixed to match train_test_split_multiple_state_vectors.)
+    split_point = int(num_samples * (1 - test_size))
     train_state_data = test_state_data = np.ndarray((0,))
     train_gt_data = test_gt_data = np.ndarray((0,))
     for _df in range(num_data_fields):

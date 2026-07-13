@@ -1,11 +1,9 @@
 """Octopus Data Generation Class"""
-import os
 import pickle
 import time as tm
 import getpass
 import socket
 from training.models.model_loader import ModelLoader
-from training.datagen.data_loader import DataLoader
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.surface_generator import RandomSurface
@@ -148,17 +146,8 @@ if __name__ == "__main__":
 
     datagen = OctoDatagen(default_params)
     synthetic_data = datagen.run_color_datagen()
-    f_location = DataLoader.defaults[MLMode.SUCKER]
-    print("Writing default parameters to", f_location)
-    try:
-        with open(f_location, 'x') as file:
-            print("Creating new file")
-            file.write()
-    except Exception as e:
-        print("Error", e)
-        print(os.getcwd())
-        print(f_location)
-
-    with open(f_location, 'wb+') as file:
-        print("Appending to file")
+    from OctoConfig import default_datasets
+    f_location = default_datasets[MLMode.SUCKER]
+    print("Writing generated data to", f_location)
+    with open(f_location, 'wb') as file:
         pickle.dump(synthetic_data, file, pickle.HIGHEST_PROTOCOL)

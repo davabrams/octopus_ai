@@ -24,9 +24,8 @@ class TestTrainTestSplit(unittest.TestCase):
     """Test train_test_split function.
 
     Note: train_test_split expects (state_data, gt_data) where both are
-    2D numpy arrays with shape (num_fields, num_samples). The split index
-    is computed as int(num_samples * test_size), meaning test_size determines
-    the *first* portion, and the remainder is the second portion.
+    2D numpy arrays with shape (num_fields, num_samples). Train receives
+    (1 - test_size) of the samples and test receives test_size.
     Return order: train_state, train_gt, test_state, test_gt
     """
 
@@ -40,11 +39,11 @@ class TestTrainTestSplit(unittest.TestCase):
             state_data, gt_data, test_size=0.2
         )
 
-        # test_size=0.2 -> split_point = 20, train=first 20, test=remaining 80
-        self.assertEqual(len(train_state), 20)
-        self.assertEqual(len(test_state), 80)
-        self.assertEqual(len(train_gt), 20)
-        self.assertEqual(len(test_gt), 80)
+        # test_size=0.2 -> train gets 80 samples, test gets 20
+        self.assertEqual(len(train_state), 80)
+        self.assertEqual(len(test_state), 20)
+        self.assertEqual(len(train_gt), 80)
+        self.assertEqual(len(test_gt), 20)
 
     def test_train_test_split_different_test_sizes(self):
         """Test different test sizes"""
@@ -55,8 +54,8 @@ class TestTrainTestSplit(unittest.TestCase):
         train_state, train_gt, test_state, test_gt = train_test_split(
             state_data, gt_data, test_size=0.3
         )
-        self.assertEqual(len(train_state), 30)
-        self.assertEqual(len(test_state), 70)
+        self.assertEqual(len(train_state), 70)
+        self.assertEqual(len(test_state), 30)
 
         # Test 50% split
         train_state, train_gt, test_state, test_gt = train_test_split(

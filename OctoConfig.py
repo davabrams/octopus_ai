@@ -13,6 +13,13 @@ default_models = {
     MLMode.NO_MODEL: None
 }
 
+default_datasets = {
+    MLMode.SUCKER: os.path.join(ROOT_DIR, 'training/datagen/sucker.pkl'),
+    MLMode.LIMB: os.path.join(ROOT_DIR, 'training/datagen/limb.pkl'),
+    MLMode.FULL: None,  # Placeholder for future full model
+    MLMode.NO_MODEL: None
+}
+
 GameParameters: dict = {
     # General game parameters 🎛️
     'num_iterations': 120,  # set this to -1 for infinite loop
@@ -88,6 +95,10 @@ TrainingParameters = {
 
     # Model paths
     'models': default_models,
+
+    # Generated-dataset (pickle) paths, used by save_data_to_disk /
+    # restore_data_from_disk
+    'datasets': default_datasets,
 
     # Training hyperparams
     'test_size': 0.2,

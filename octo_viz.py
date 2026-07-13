@@ -31,8 +31,8 @@ if INFERENCE_MODE is not MLMode.NO_MODEL:
     model = ModelLoader(
         file_name_or_ml_mode=model_path, custom_objects=custom_objects
     ).get_object()
-    assert isinstance(model, keras.models.Sequential), (
-        f"Expected sequential keras model, got {type(model)}"
+    assert isinstance(model, keras.Model), (
+        f"Expected keras model, got {type(model)}"
     )
 
 

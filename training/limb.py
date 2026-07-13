@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from tensorflow import keras
 from training.losses import WeightedSumLoss
 from octo_datagen import OctoDatagen
-from util import (
+from training.data_utils import (
     train_test_split_multiple_state_vectors,
 )
 from simulator.simutil import MLMode
@@ -249,9 +249,10 @@ class LimbTrainer(Trainer):
                     )
             t = time.time()
             t_elapsed = t - start_time
-            t_remaining = (t_elapsed / epoch) * epochs
-            t_eta = start_time + t_remaining
-            print(f"\nEpoch {epoch}/{epochs}")
+            epochs_done = epoch + 1
+            t_remaining = (t_elapsed / epochs_done) * (epochs - epochs_done)
+            t_eta = t + t_remaining
+            print(f"\nEpoch {epochs_done}/{epochs}")
             print(
                 f"Time Elapsed: {t_elapsed}, Time Remaining: {t_remaining}, "
                 f"ETA: {t_eta}\n\n"

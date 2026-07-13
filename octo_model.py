@@ -42,11 +42,11 @@ print(f"Octo Model started at {start}, setting t=0.0")
 if ERASE_OLD_TENSORBOARD_LOGS:
     erase_all_logs()
 
-datagen_location = TrainingParameters['models'][ML_MODE]
+datagen_location = TrainingParameters['datasets'][ML_MODE]
 model_location = TrainingParameters['models'][ML_MODE]
 
 if ML_MODE == MLMode.SUCKER:
-    trainer = SuckerTrainer(GameParameters)
+    trainer = SuckerTrainer(GameParameters, TrainingParameters)
 elif ML_MODE == MLMode.LIMB:
     trainer = LimbTrainer(GameParameters, TrainingParameters)
 else:
@@ -97,7 +97,9 @@ if RUN_INFERENCE:
     # Load model
     if RESTORE_MODEL_FROM_DISK:
         custom_objects = {"WeightedSumLoss": WeightedSumLoss}
-        model = ModelLoader(model_location, custom_objects).get_model()
+        model = ModelLoader(
+            model_location, custom_objects=custom_objects
+        ).get_object()
         model.compile()
         print(f"Model load completed at time t={tm.time() - start:.3f}")
 
