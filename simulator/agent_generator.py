@@ -8,9 +8,10 @@ class AgentGenerator:
     Generates an agent at a location.
     Default is a random agent type at a random location.
     """
-    agents: list[Agent] = []
-
     def __init__(self, params: dict) -> None:
+        # instance attribute (a class-level list would be shared
+        # across all AgentGenerator instances in the process)
+        self.agents: list[Agent] = []
         np.random.seed(seed=params['rand_seed'])
         self._x_len = params['x_len']
         self._y_len = params['y_len']

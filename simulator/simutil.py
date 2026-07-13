@@ -31,12 +31,14 @@ class MLMode(Enum):
 
 class InferenceLocation(Enum):
     """Configuration for local v remote inference"""
-    LOCAL = 0 #local inference
-    REMOTE = 0 #remote server inference
+    LOCAL = 0  # local inference
+    REMOTE = 1  # remote server inference
 
 class KinematicPrimitive(ABC):
     # A TensorFlow tensor of shape (6,) representing [x, y, θ, vx, vy, ω]
-    _dims = tf.Variable(tf.zeros([6]))
+    # (annotation only: instances create their own tf.Variable in __init__,
+    # and creating one at class definition time forces TF init on import)
+    _dims: tf.Variable
 
 class State(KinematicPrimitive):
     """ Contains the limb spline nodes' kinematic info
@@ -164,7 +166,7 @@ class Agent(State):
         self.agent_type = agent_type
 
     def __repr__(self):
-        return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}\>\n"
+        return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}>\n"
 
 class CenterPoint(State):
     """ Contains the limb spline nodes' kinematic info"""
@@ -230,7 +232,7 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False):
     for agent in ag.agents:
         agent_range_ms = np.pi * np.power(ag.range_radius, 2)
         color: str = 'violet'
-        if agent.Type == AgentType.PREY:
+        if agent.agent_type == AgentType.PREY:
             color = 'lightgreen'
         if debug_mode:
             ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)

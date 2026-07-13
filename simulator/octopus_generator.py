@@ -1,5 +1,4 @@
 """Octopus Class"""
-from dataclasses import dataclass, field
 from typing import List
 from tensorflow import keras
 from multiprocessing.pool import ThreadPool
@@ -14,22 +13,17 @@ from simulator.simutil import (
     convert_adjacents_to_ragged_tensor
 )
 
-@dataclass
 class Sucker:
     """
     Stores location and color of a sucker, and includes methods to change the sucker color.
     This object is instantiated by Limb objects.
     """
 
-    x: float
-    y: float
-    c: Color = field(default_factory=Color)
-    prev: "Sucker" = field(default_factory="Sucker")
-
     def __init__(self, x: float, y: float, c: Color = Color(), params = None):
         self.x = x
         self.y = y
         self.c = c
+        self.prev: "Sucker" = None
         if params is not None:
             self.max_hue_change = params['octo_max_hue_change']
         else:
@@ -54,7 +48,7 @@ class Sucker:
         
         if inference_mode is not MLMode.NO_MODEL:
             assert model is not None, "model inference specified but no model was specified"
-            assert isinstance(model, keras.models.Sequential), f"Expected sequential keras model, got {type(model)}"
+            assert isinstance(model, keras.Model), f"Expected keras model, got {type(model)}"
         c_val = self.get_surf_color_at_this_sucker(surf)
         c_ret = Color()
 
@@ -113,9 +107,9 @@ class Limb:
     Stores limb spline, and includes methods to change the limb spline.
     This class is instantiated by Octopus objects, and instantiates Sucker objects.
     """
-    suckers = []
 
     def __init__(self, x_octo: float, y_octo: float, init_angle: float, params: dict):
+        self.suckers: list[Sucker] = []
         self.max_sucker_distance = params['octo_max_sucker_distance']
         self.min_sucker_distance = params['octo_min_sucker_distance']
         self.sucker_distance = self.min_sucker_distance
@@ -341,7 +335,8 @@ class Octopus:
         and then its force_color method
         """
         color_matrix = self.find_color(surf, inference_mode, model)
-        map(lambda l, c_array: l.force_color[c_array], self.limbs, color_matrix)
+        for limb, c_array in zip(self.limbs, color_matrix):
+            limb.force_color(c_array)
 
     def visibility(self, surf: RandomSurface):
         """Computes octopus visibility as mean of square of octopus color error"""
