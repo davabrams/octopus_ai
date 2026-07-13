@@ -4,7 +4,7 @@ Originally done in C++ but tensorflow in C++ was too much of a pain.
 """
 import logging
 from flask import Flask, request, jsonify
-from model_inference import InferenceJob, InferenceQueue
+from model_inference import InferenceJob, InferenceQueue, JobStatus
 
 app = Flask(__name__)
 
@@ -71,10 +71,10 @@ def get_item(job_id):
         return f"Item not found.  Items: {res}", 404
     job = jobs.get(job_id)
     res = job.as_json()
-    if job.status == "Success":
+    if job.status == JobStatus.COMPLETE:
         jobs.delete(job_id)
         return res, 201
-    if job.status == "Failure":
+    if job.status == JobStatus.FAILED:
         jobs.delete(job_id)
         return res, 500
     return res, 200

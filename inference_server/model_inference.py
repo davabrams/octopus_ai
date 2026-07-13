@@ -155,20 +155,22 @@ class InferenceQueue:
     thread_count = 2
     seconds_until_stale = 30.0
 
-    _q_ptr = None
-    _q = {}  # job_id : job. These don't move, things just point to them.
-
-    # (timestamp, job_id), kept in ascending order. Should be a tree or
-    # something.
-    _pending_queue = []
-    _execution_queue = []
-    _completion_queue = []
-    _ts_index = None
     _kill_watchdog: threading.Event
 
-    _watchdog_thread = None
-
     def __init__(self) -> None:
+        # Per-instance state (class-level mutable containers would be
+        # shared across all InferenceQueue instances in the process)
+        self._q_ptr = None
+        self._q = {}  # job_id : job. These don't move, things point to them.
+
+        # (timestamp, job_id), kept in ascending order. Should be a tree or
+        # something.
+        self._pending_queue = []
+        self._execution_queue = []
+        self._completion_queue = []
+        self._ts_index = None
+        self._watchdog_thread = None
+
         # Start the queue watchdog
         logging.info("Starting Watchdog Thread")
         self._kill_watchdog = threading.Event()
@@ -295,6 +297,7 @@ class InferenceQueue:
             ts for ts in self._pending_queue
             if ts[1] not in job_ids_for_removal
         ]
+        return job_ids_for_removal
 
     def execute_new_job(self) -> None:
         """
@@ -319,7 +322,8 @@ class InferenceQueue:
         # 3
         logging.info("Kicking off thread")
         t1 = threading.Thread(
-            target=self._q[job_id].execute(self),
+            target=self._q[job_id].execute,
+            args=(self,),
             name=f"Executor for {job_id}"
         )
         self._q[job_id].execution_binding = t1
