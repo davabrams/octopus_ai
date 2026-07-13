@@ -72,10 +72,14 @@ clean:
 	@find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	@echo "✅ Cleaned test artifacts"
 
-# Quick lint check
+# Quick lint check (ruff is configured in pyproject.toml)
 lint:
-	@echo "Running flake8 linter..."
-	@flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || echo "⚠️  Install flake8 with: pip install flake8"
+	@echo "Running ruff linter..."
+	@ruff check .
+
+format:
+	@echo "Running ruff formatter..."
+	@ruff format .
 
 # Development helpers
 dev-setup: install-deps

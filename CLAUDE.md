@@ -2,138 +2,202 @@
 
 ## Project Overview
 
-Octopus AI is a simulation and machine learning project that models octopus behavior — locomotion, limb movement, and sucker-based camouflage (color change). It includes a physics simulator, ML training pipelines, an inference server, a WebSocket-based visualization server, and a React/HTML visualizer frontend.
+Octopus AI is a simulation and machine learning project that models octopus
+behavior — locomotion, limb movement, and sucker-based camouflage (color
+change). It includes a physics-ish simulator, ML training pipelines, a Flask
+inference server, a WebSocket visualization server, and HTML/React visualizer
+frontends.
+
+## Documentation Index
+
+| File | What it's for |
+|------|---------------|
+| `CLAUDE.md` (this file) | Orientation, conventions, commands |
+| `ARCHITECTURE.md` | Deep module-by-module reference, data flow, APIs |
+| `TRAINING.md` | Step-by-step training/inference workflows and env setup |
+| `tests/README.md` | Per-file test coverage description |
+| `README.md` | Public-facing intro |
 
 ## Tech Stack
 
-- **Language:** Python 3.10+
+- **Language:** Python 3.10+ (local venv is 3.12, ARM-native — see TRAINING.md)
 - **ML Framework:** TensorFlow / Keras
-- **Build System:** Bazel (with `MODULE.bazel` / Bzlmod)
-- **Testing:** pytest (primary), unittest, Bazel test
-- **Linting:** ruff (configured in `pyproject.toml`)
-- **Visualization:** matplotlib (local), WebSocket server + HTML/React frontend
-- **Key Libraries:** numpy, tensorflow, matplotlib, websockets, asyncio, flask, networkx, seaborn
-- **Dependency Management:** `pyproject.toml`
+- **Build System:** Bazel (Bzlmod / `MODULE.bazel`) — but Bazel does NOT
+  manage Python deps; it uses the ambient interpreter. pip/venv is primary.
+- **Testing:** pytest (primary, via `run_tests.py`), unittest, Bazel test
+- **Linting:** ruff (configured in `pyproject.toml`; `make lint` / `make
+  format` wrap it)
+- **Visualization:** matplotlib (local) and WebSocket server + HTML/React
+  frontends
+- **Key Libraries:** numpy, tensorflow, matplotlib, seaborn, websockets (≥13
+  single-arg handler API), flask, networkx
 
-## Project Structure
+## Project Structure (abridged — full map in ARCHITECTURE.md §2)
 
 ```
 octopus_ai/
-├── pyproject.toml             # Dependencies, ruff config, pytest config
-├── OctoConfig.py              # Typed config: GameConfig + TrainingConfig dataclasses
-├── octo_viz.py                # Scenario synthesizer and visualizer (main())
-├── octo_datagen.py            # Training data generator (main())
-├── octo_model.py              # Model trainer entry point (main())
-├── util.py                    # ML utilities (log cleanup, normalization, re-exports)
-├── websocket_server.py        # WebSocket server for browser visualization
-├── websocket-integration.py   # WebSocket integration helpers
-├── octopus-visualizer.html    # HTML visualizer frontend
-├── octopus-ai-visualizer.tsx  # React visualizer component
-├── simulator/
-│   ├── simutil.py             # Core types: State, Agent, Color, enums (MLMode, MovementMode, etc.)
-│   ├── octopus_generator.py   # Octopus model (head, limbs, suckers)
-│   ├── agent_generator.py     # Prey/threat agent generator
-│   ├── surface_generator.py   # Random background surface patterns
-│   └── ilqr/                  # iLQR control for limb movement
-├── training/
-│   ├── trainutil.py           # Trainer ABC (abstract base class)
-│   ├── sucker.py              # Sucker color-change ML model + training
-│   ├── limb.py                # Limb movement ML model + training
-│   ├── losses.py              # Custom loss functions
-│   ├── data_utils.py          # Train/test split, dataset conversion utilities
-│   ├── datagen/               # Data generation and DataLoader
-│   └── models/
-│       ├── base_loader.py     # DefaultLoader ABC for models and data
-│       └── model_loader.py    # Keras ModelLoader
-├── inference_server/
-│   ├── server.py              # Flask/HTTP inference server
-│   ├── model_inference.py     # Model loading (lazy) and inference logic
-│   └── test_server.py         # Server tests
-├── tests/                     # Test suite (pytest)
-│   ├── test_octopus_generator.py
-│   ├── test_kinematics.py
-│   ├── test_integration.py
-│   ├── test_simulator.py
-│   ├── test_trainers.py
-│   ├── test_training_losses.py
-│   ├── test_inference_server.py
-│   └── test_utilities.py
-├── BUILD                      # Root Bazel build file
-├── MODULE.bazel               # Bazel module definition
-└── Makefile                   # Make targets for testing, linting, formatting
+├── OctoConfig.py           # GameParameters + TrainingParameters — plain DICTS
+│                           #   + default_models / default_datasets path maps
+├── octo_viz.py             # matplotlib visualizer entry point
+├── octo_datagen.py         # OctoDatagen class + standalone pickle-writing main
+├── octo_model.py           # datagen → train → save → inference/eval pipeline
+├── util.py                 # erase_all_logs, octo_norm + re-exports from training.data_utils
+├── websocket_server.py     # browser-viz backend (ws://localhost:8765)
+├── octopus-visualizer.html # frontend for the websocket server
+├── simulator/              # simutil (State/Agent/Color/enums), octopus/agent/surface generators, ilqr/
+├── training/               # trainers (sucker, limb), losses, loaders, data_utils, saved .keras models
+├── inference_server/       # Flask REST server (localhost:8080), job queue + watchdog
+└── tests/                  # pytest suite (~2,400 lines; 136 tests)
 ```
 
-## Configuration
+## Configuration — IMPORTANT
 
-All simulation and training parameters are typed dataclasses in `OctoConfig.py`:
+`OctoConfig.py` contains two **plain dicts**: `GameParameters` and
+`TrainingParameters`. Access is **dict-style**: `params['x_len']`,
+`params['octo_num_arms']`.
 
-- `GameConfig` — grid size, octopus arm count/physics, agent behavior, inference mode
-- `TrainingConfig` — ML mode, epochs, batch size, loss weights, tensorboard, model save/restore
-- `GameParameters` / `TrainingParameters` — default instances for convenience
+There are NO `GameConfig`/`TrainingConfig` dataclasses — if you encounter
+references to them in old branches or history, that code predates the current
+config. Do not introduce attribute access on config.
 
-Access config fields with attribute syntax: `params.x_len`, `params.octo_num_arms`, etc.
+Path maps in `OctoConfig.py`:
+- `default_models` — `MLMode` → absolute `.keras` path
+  (`training/models/{sucker,limb}.keras`); also exposed as
+  `TrainingParameters['models']`.
+- `default_datasets` — `MLMode` → absolute `.pkl` path
+  (`training/datagen/{sucker,limb}.pkl`); also exposed as
+  `TrainingParameters['datasets']`. Used by `save_data_to_disk` /
+  `restore_data_from_disk`.
 
 ## Key Concepts
 
-- **State:** 6-DOF kinematic primitive `[x, y, θ, vx, vy, ω]` stored as TensorFlow tensors (`simulator/simutil.py`).
-- **Octopus model:** Head (CenterPoint) → 8 limbs → each limb has a grid of suckers (rows × cols) with color (RGB).
-- **ML modes** (`MLMode` enum): `NO_MODEL` (heuristic), `SUCKER` (color camouflage), `LIMB` (movement), `FULL` (combined).
-- **Inference:** Can run locally or on a remote inference server (`InferenceLocation` enum in config).
-- **Agents:** Prey and threats that the octopus reacts to (`AgentType` enum).
-- **Trainer:** Abstract base class in `training/trainutil.py`. Subclasses (`SuckerTrainer`, `LimbTrainer`) must implement `datagen`, `data_format`, `train`, `inference`.
+- **State:** 6-DOF kinematic primitive `[x, y, θ, vx, vy, ω]` stored as a
+  TensorFlow variable (`simulator/simutil.py`). Angles in radians, wrapped
+  to [0, 2π). `dt = 1.0`.
+- **Octopus model:** head at (x, y) → 8 `Limb`s → each limb has
+  `limb_rows × limb_cols` `Sucker`s (default 16×2 = 32; 256 total).
+- **Camouflage:** each sucker matches the binary surface color beneath it,
+  constrained to change ≤ `octo_max_hue_change` (0.25) per step. Grayscale
+  in practice — only `Color.r` is the signal; g/b mirror it.
+- **Setting colors:** `octo.set_color(surf, inference_mode, model)` computes
+  colors in parallel and applies them (fixed July 2026). The
+  equivalent explicit form, used where the caller wants the matrix too:
+
+  ```python
+  color_matrix = octo.find_color(surf, inference_mode, model)
+  for ix, l in enumerate(octo.limbs):
+      l.force_color(color_matrix[ix])
+  ```
+
+- **ML modes** (`MLMode` enum): `NO_MODEL` (clamped heuristic step),
+  `SUCKER` (MLP on (current color, surface color)), `LIMB` (dual-input
+  model that also sees adjacent suckers via ragged tensors), `FULL`
+  (placeholder, no implementation).
+- **Trainer pattern:** `training/trainutil.Trainer` base; `SuckerTrainer`
+  and `LimbTrainer` implement `datagen`, `data_format`, `train`,
+  `inference`. Orchestrated by `octo_model.py` reading `TrainingParameters`.
+  Both trainers accept `(GameParameters, TrainingParameters)`;
+  `SuckerTrainer`'s second arg is optional.
+- **Loss:** `WeightedSumLoss = 0.95·ConstraintLoss + 0.05·MAE`. The
+  constraint loss penalizes color changes beyond the 0.25 threshold and
+  ignores ground truth; MAE pulls toward the surface color. This is why
+  trained models "drift toward the target slowly."
+- **Loaders:** `ModelLoader` / `DataLoader` (subclasses of `DefaultLoader`
+  in `training/models/base_loader.py`) accept a path or an `MLMode` and
+  expose `get_object()`. Pass Keras custom objects as a keyword:
+  `ModelLoader(path, custom_objects={...})`.
+- **Data-splitting utilities** live canonically in
+  `training/data_utils.py` (train gets `1 - test_size` of samples);
+  `util.py` re-exports them for backwards compatibility.
 
 ## Build & Run
 
 ```bash
-# Visualizer
-bazel run octo_viz
+# Visualizer (matplotlib; needs a GUI session; press a key in the window to start)
+python octo_viz.py            # or: bazel run octo_viz
 
-# Data generation
-bazel run octo_datagen
+# Data generation (standalone; writes training/datagen/sucker.pkl)
+python octo_datagen.py        # or: bazel run octo_datagen
 
-# Model training
-bazel run octo_model
+# Training pipeline (behavior driven by TrainingParameters in OctoConfig.py)
+python octo_model.py          # or: bazel run octo_model
 
-# WebSocket visualization server
-bazel run websocket_server
+# Inference server (must run from inside inference_server/ — it does sys.path tricks)
+cd inference_server && python server.py    # localhost:8080; API in ARCHITECTURE.md §7
+
+# WebSocket visualization server (then open octopus-visualizer.html in a browser)
+python websocket_server.py    # ws://localhost:8765; no bazel target
 ```
+
+Always activate the venv first: `source .venv/bin/activate` (ARM-native
+Python 3.12; recreate per TRAINING.md if TensorFlow won't import).
 
 ## Testing
 
 ```bash
-# Run all tests (preferred)
-python run_tests.py
-
-# Alternatives
-make test
-./test.sh
-
-# Verbose / coverage
+python run_tests.py                 # all tests (preferred)
 python run_tests.py --verbose
 python run_tests.py --coverage
-
-# Individual test files
-make test-kinematics
-make test-training
-python run_tests.py --test test_octopus_generator.py
+python run_tests.py --test test_kinematics.py
+make test / make test-kinematics / make test-training / ...
+./test.sh
 ```
 
 ## Linting & Formatting
 
 ```bash
-make lint        # Check with ruff
-make format      # Auto-format with ruff
+make lint       # ruff check .
+make format     # ruff format .
 ```
 
-Ruff is configured in `pyproject.toml` with rules for pycodestyle, pyflakes, isort, pyupgrade, bugbear, and simplify.
+There is pre-existing lint debt in older modules and tests (whitespace,
+unused imports); clean opportunistically, don't let it block work.
 
 ## Code Conventions
 
-- TensorFlow tensors are used throughout the simulator for kinematic state (not just in training).
-- Color values are floats in [0, 1] range (RGB).
-- Coordinates use a grid system defined by `x_len` × `y_len` in config.
-- Angles are in radians, wrapped to [0, 2π).
-- The project uses Bazel for builds but pytest for most testing workflows.
-- Use proper exceptions (`ValueError`, `TypeError`) instead of `assert` for runtime validation.
-- Thread pools use `concurrent.futures.ThreadPoolExecutor` as context managers.
-- Entry point scripts (`octo_viz`, `octo_model`, `octo_datagen`) wrap logic in `main()` behind `if __name__ == "__main__"`.
+- TensorFlow tensors are used for kinematic state even in the simulator,
+  not just training.
+- Color values are floats in [0, 1]; ML normalization to [-1, 1] via
+  `util.octo_norm` where used.
+- Grid coordinates: `x_len × y_len` (default 15×15); `RandomSurface.grid`
+  is indexed `[y][x]`.
+- Sucker/limb inference is parallelized with `multiprocessing.pool.ThreadPool`
+  + `imap_unordered`, carrying an index through and re-sorting after.
+- Config access is dict-style throughout.
+- Mutable containers are initialized in `__init__`, never as class
+  attributes (class-level lists were shared across instances and bit us
+  in July 2026).
+- Prefer `ValueError`/`TypeError` over bare `assert` for runtime validation
+  (older code still asserts; migrate when touching it).
+- Entry scripts are mostly top-to-bottom module code (not `main()`-wrapped);
+  `websocket_server.py` and `simulator/ilqr/nodemesh.py` have proper
+  `main()` guards. Don't import `octo_model.py` from library code — it
+  executes the pipeline at import.
+
+## Gotchas for future Claude instances
+
+1. `restore_data_from_disk` unpickles from
+   `TrainingParameters['datasets']` — make sure a dataset was actually
+   generated (e.g. `python octo_datagen.py`) and postdates July 2026
+   (older pickles were generated with a bug that pinned sucker state at
+   0.5 because the color feedback loop never ran).
+2. Inference server payload is `{"job_id": N, "data": {"c.r": x, "c_val.r": y}}` —
+   not `"input"`.
+3. `AgentGenerator` seeds numpy's global RNG from `rand_seed` on every
+   construction — order of object creation affects random sequences.
+4. Only `MovementMode.RANDOM` works; `ATTRACT_REPEL` is stubbed everywhere
+   (octopus prints a stub message, limbs raise `NotImplementedError`,
+   agents pass through unchanged). The `TODO(davabrams)` in `Limb.move`
+   sketches the intended spline approach; `simulator/ilqr/` is the
+   prototype for it.
+5. `InferenceLocation.REMOTE` exists but nothing routes inference to the
+   server yet — wiring it up means giving `Sucker.find_color` (or a layer
+   above it) an HTTP client path.
+6. `InferenceQueue.clear_stale()` is deliberately not called by the
+   watchdog: pending jobs are picked up within ~0.1 s, and auto-deleting
+   queued jobs after 30 s could surprise clients. Re-enable deliberately
+   if queue growth becomes a problem.
+7. `MLMode.FULL` is a placeholder with no model, dataset, or trainer.
+8. `training/models/` contains a stray backup file literally named
+   `sucker.keras has pretty good results` — it's a Dec 2023 model, not
+   docs. Safe to delete or rename.
