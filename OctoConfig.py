@@ -1,7 +1,35 @@
 """
-Octopus game and ML parameters
+Octopus game and ML parameters.
+
+The typed schema in config_schema.py is the source of truth. This module
+builds the concrete profiles and, for now, derives the legacy flat
+GameParameters / TrainingParameters dicts from the DEFAULT profile so the
+~38 existing `params['some_key']` call sites keep working untouched while
+they are migrated.
+
+Once every call site takes a Config object, LEGACY DERIVATION below (and
+this docstring) can go.
 """
 import os
+from dataclasses import replace
+
+from config_schema import (  # noqa: F401  (re-exported for convenience)
+    AgentConfig,
+    Config,
+    DatagenConfig,
+    InferenceConfig,
+    LimbConfig,
+    LumpedSpringConfig,
+    OctopusConfig,
+    OutputConfig,
+    PathsConfig,
+    RandomDriftConfig,
+    RunConfig,
+    SpringChainConfig,
+    SuckerConfig,
+    TrainingConfig,
+    WorldConfig,
+)
 from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,138 +48,189 @@ default_datasets = {
     MLMode.NO_MODEL: None
 }
 
-GameParameters: dict = {
-    # General game parameters 🎛️
-    'num_iterations': 120,  # set this to -1 for infinite loop
-    'x_len': 15,
-    'y_len': 15,
-    'surface_grayscale': True,  # random grayscale surface values in [0, 1);
-                                # False for the classic binary 0/1 grid
-    'rand_seed': 0,
-    'debug_mode': False,  # enables things like agent attract/repel regions
-    'log_forces': False,  # write per-frame body/limb/sucker forces to a
-                          # local SQLite db (logs/forces.db); off by default
-    'show_forces': False,  # draw force-vector arrows (body drift + per-arm
-                           # attraction/tension) on the visualizer
-    'save_images': False,
-    'adjacency_radius': 1.0,  # determines what distance is considered
-    # 'adjacent'
-    'inference_location': InferenceLocation.LOCAL,
-    'inference_mode': MLMode.SUCKER,
-    'inference_model': MLMode.SUCKER,
-    'datagen_data_write_format': MLMode.SUCKER,
-
-    # Agent parameters 👾
-    'agent_number_of_agents': 5,
-    'agent_max_velocity': 0.2,
-    'agent_max_theta': 0.1,
-    'agent_movement_mode': MovementMode.RANDOM,
-    'agent_range_radius': 5,
-    'agent_prey_capture_radius': 0.3,  # a PREY agent is captured (removed)
-                                  # when any sucker comes within this
-                                  # distance of it. Threats are never
-                                  # captured. 0 disables capture.
-    'agent_respawn_captured_prey': False,  # spawn a fresh prey elsewhere
-                                  # for each one captured, so the run
-                                  # doesn't just run out of food
-
-    # Octopus parameters 🐙
-    'octo_max_body_velocity': 0.25,
-    'octo_max_arm_theta': 0.1,  # used for random drift movement
-    'octo_max_arm_reach_theta': 0.3,  # per-joint bend cap when reaching
-                                  # toward prey / away from threats in
-                                  # LUMPED_SPRING mode (separate from the
-                                  # random-drift cap above)
-    'octo_max_limb_offset': 0.5,  # used for attract/repel distance
-    'octo_arm_stiffness': 0.5,  # spring stiffness for LUMPED_SPRING: arm
-                                  # rest length is short (wants to retract);
-                                  # prey attraction stretches it, and the
-                                  # stretch tension both reels the tip back
-                                  # and tugs the body toward the tip. Higher
-                                  # = stubbier arms that yank the body harder;
-                                  # lower = longer reach, gentler body pull.
-    'octo_arm_rest_fraction': 0.3,  # neutral arm length as a fraction from
-                                  # min (0.0, fully tucked) to max (1.0,
-                                  # fully extended). Sits above min so a
-                                  # threat can COMPRESS the arm below rest,
-                                  # producing outward tension that flees the
-                                  # threat; prey STRETCHES it above rest.
-    'octo_chain_spring_k': 1.0,  # SPRING_CHAIN: neighbor spring stiffness
-                                  # between adjacent suckers along the arm
-    'octo_chain_agent_k': 0.5,  # SPRING_CHAIN: prey spring-to-target
-                                  # stiffness (before the tip weighting);
-                                  # threats enter as a constant push force
-    'octo_chain_move_k': 2.0,  # SPRING_CHAIN: uniform per-sucker movement
-                                  # cost - anchor spring to the sucker's
-                                  # position at the START of the frame, so a
-                                  # sucker must "pay" to move (prevents
-                                  # teleporting). Higher = more sluggish arm.
-    'octo_num_arms': 8,
-    'octo_max_sucker_distance': 0.3,
-    'octo_min_sucker_distance': 0.1,
-    'octo_movement_mode': MovementMode.RANDOM,  # RANDOM, LUMPED_SPRING,
-                                                # or SPRING_CHAIN
-    'octo_threading': True,
-
-    # Limb parameters 💪
-    'limb_rows': 16,
-    'limb_cols': 2,
-    'limb_movement_mode': MovementMode.RANDOM,
-
-    # Sucker parameters 🪠
-    'octo_max_hue_change': 0.25,  # max val of rgb that can change at a time,
-                                  # used as constraint threshold
-    'sucker_delta_model': True,  # sucker net predicts a tanh-bounded
-                                  # color DELTA (constraint enforced by
-                                  # architecture); False = legacy direct
-                                  # prediction with WeightedSumLoss
-    'datagen_randomize_colors_interval': 2,  # re-randomize sucker colors
-                                  # every N datagen iterations so training
-                                  # data covers mismatched (color, surface)
-                                  # pairs; 0 disables
-
-    # Training hyperparams (used by trainers via GameParameters)
-    'test_size': 0.2,
-    'epochs': 50,
-    'batch_size': 32,
-    'constraint_loss_weight': 0.95,
-}
+DEFAULT_PATHS = PathsConfig(
+    model_paths=default_models,
+    dataset_paths=default_datasets,
+)
 
 
-TrainingParameters = {
-    # ML training & datagen parameters 🕸️
-    'ml_mode': MLMode.SUCKER,
+# =========================================================== PROFILES ===
+# Profiles are derived with dataclasses.replace(). This is what the config
+# reorg buys: "the settings I use to watch it run" is now a named thing you
+# select, not working state you edit and have to remember to revert before
+# committing.
 
-    # Datagen
-    "save_data_to_disk": True,
-    "restore_data_from_disk": False,
-    'datagen_mode': True,
+DEFAULT = Config(paths=DEFAULT_PATHS)
 
-    # Tensorboard
-    "erase_old_tensorboard_logs": True,
-    "generate_tensorboard": True,
+# Watching the simulation: draw the force arrows, keep the disk quiet.
+VIZ = replace(
+    DEFAULT,
+    output=replace(DEFAULT.output, show_forces=True),
+)
 
-    # Model save and restore
-    'training_model': MLMode.SUCKER,
-    "save_model_to_disk": True,
-    "restore_model_from_disk": False,
+# Everything on: force arrows, the SQLite force log, and PNG frames stitched
+# to an MP4. This is the state that used to live (and get committed) in the
+# flat dict by accident.
+DEBUG = replace(
+    DEFAULT,
+    output=replace(
+        DEFAULT.output,
+        debug_mode=True,
+        show_forces=True,
+        log_forces=True,
+        save_images=True,
+    ),
+)
 
-    "run_training": True,
+# Deterministic and side-effect free. Nothing written to disk, no dependence
+# on a trained model existing, and RANDOM movement (the only mode where
+# move() works without an agent). tests/conftest.py applies this.
+TEST = replace(
+    DEFAULT,
+    output=OutputConfig(),  # every flag already defaults off
+    inference=replace(
+        DEFAULT.inference,
+        mode=MLMode.NO_MODEL,
+        model=MLMode.NO_MODEL,
+    ),
+    agents=replace(DEFAULT.agents, movement_mode=MovementMode.RANDOM),
+    octopus=replace(
+        DEFAULT.octopus,
+        movement_mode=MovementMode.RANDOM,
+        limb=replace(DEFAULT.octopus.limb,
+                     movement_mode=MovementMode.RANDOM),
+    ),
+)
 
-    # Test & Eval
-    "run_inference": False,
-    "run_eval": False,
+# Generating training data: no rendering, no force logging.
+DATAGEN = replace(
+    DEFAULT,
+    output=OutputConfig(),
+    datagen=replace(DEFAULT.datagen, save_to_disk=True),
+)
 
-    # Model paths
-    'models': default_models,
+# Training a model: the simulator only matters insofar as datagen needs it.
+TRAINING = replace(
+    DEFAULT,
+    output=OutputConfig(),
+    training=replace(DEFAULT.training, run_training=True),
+)
 
-    # Generated-dataset (pickle) paths, used by save_data_to_disk /
-    # restore_data_from_disk
-    'datasets': default_datasets,
 
-    # Training hyperparams
-    'test_size': 0.2,
-    'epochs': 50,
-    'batch_size': 32,  # 32 is tf default
-    'constraint_loss_weight': 0.95,
-}
+# =================================================== LEGACY DERIVATION ===
+# Flat dicts derived from DEFAULT. Every key below is exactly what it was
+# before the reorg, so no call site changes in this commit. The mapping also
+# documents the old -> new correspondence for the migration.
+#
+# Note on agent_range_radius: it used to serve two distinct concepts - how
+# far an AGENT senses the octopus, and how far an ARM senses agents. The
+# schema splits them (agents.sensing_radius / octopus.sensing_radius), but a
+# single flat key cannot express the split, so the legacy view emits the
+# agent's value and both readers see it, exactly as before. The split only
+# becomes real once Limb reads octopus.sensing_radius directly.
+
+def to_game_parameters(cfg: Config) -> dict:
+    """Legacy flat GameParameters view of a Config."""
+    return {
+        # General game parameters
+        'num_iterations': cfg.run.num_iterations,
+        'x_len': cfg.world.x_len,
+        'y_len': cfg.world.y_len,
+        'surface_grayscale': cfg.world.surface_grayscale,
+        'rand_seed': cfg.run.rand_seed,
+        'debug_mode': cfg.output.debug_mode,
+        'log_forces': cfg.output.log_forces,
+        'show_forces': cfg.output.show_forces,
+        'save_images': cfg.output.save_images,
+        'adjacency_radius': cfg.octopus.sucker.adjacency_radius,
+        'inference_location': cfg.inference.location,
+        'inference_mode': cfg.inference.mode,
+        'inference_model': cfg.inference.model,
+        'datagen_data_write_format': cfg.datagen.write_format,
+
+        # Agent parameters
+        'agent_number_of_agents': cfg.agents.count,
+        'agent_max_velocity': cfg.agents.max_velocity,
+        'agent_max_theta': cfg.agents.max_theta,
+        'agent_movement_mode': cfg.agents.movement_mode,
+        'agent_range_radius': cfg.agents.sensing_radius,  # see note above
+        'agent_prey_capture_radius': cfg.agents.prey_capture_radius,
+        'agent_respawn_captured_prey': cfg.agents.respawn_captured_prey,
+
+        # Octopus parameters
+        'octo_max_body_velocity': cfg.octopus.max_body_velocity,
+        'octo_max_arm_theta': cfg.octopus.limb.random.max_arm_theta,
+        'octo_max_arm_reach_theta':
+            cfg.octopus.limb.lumped.max_arm_reach_theta,
+        'octo_max_limb_offset': cfg.octopus.limb.lumped.max_limb_offset,
+        'octo_arm_stiffness': cfg.octopus.limb.lumped.arm_stiffness,
+        'octo_arm_rest_fraction': cfg.octopus.limb.lumped.arm_rest_fraction,
+        'octo_chain_spring_k': cfg.octopus.limb.chain.spring_k,
+        'octo_chain_agent_k': cfg.octopus.limb.chain.agent_k,
+        'octo_chain_move_k': cfg.octopus.limb.chain.move_k,
+        'octo_num_arms': cfg.octopus.num_arms,
+        'octo_max_sucker_distance': cfg.octopus.limb.max_sucker_distance,
+        'octo_min_sucker_distance': cfg.octopus.limb.min_sucker_distance,
+        'octo_movement_mode': cfg.octopus.movement_mode,
+        'octo_threading': cfg.run.threading,
+
+        # Limb parameters
+        'limb_rows': cfg.octopus.limb.rows,
+        'limb_cols': cfg.octopus.limb.cols,
+        'limb_movement_mode': cfg.octopus.limb.movement_mode,
+
+        # Sucker parameters
+        'octo_max_hue_change': cfg.octopus.sucker.max_hue_change,
+        'sucker_delta_model': cfg.training.sucker_delta_model,
+        'datagen_randomize_colors_interval':
+            cfg.datagen.randomize_colors_interval,
+
+        # Training hyperparams. These used to be duplicated here AND in
+        # TrainingParameters with nothing syncing them; now both views read
+        # the single cfg.training.* source.
+        'test_size': cfg.training.test_size,
+        'epochs': cfg.training.epochs,
+        'batch_size': cfg.training.batch_size,
+        'constraint_loss_weight': cfg.training.constraint_loss_weight,
+    }
+
+
+def to_training_parameters(cfg: Config) -> dict:
+    """Legacy flat TrainingParameters view of a Config."""
+    return {
+        'ml_mode': cfg.training.ml_mode,
+
+        # Datagen
+        'save_data_to_disk': cfg.datagen.save_to_disk,
+        'restore_data_from_disk': cfg.datagen.restore_from_disk,
+        'datagen_mode': cfg.datagen.datagen_mode,
+
+        # Tensorboard
+        'erase_old_tensorboard_logs': cfg.training.erase_old_tensorboard_logs,
+        'generate_tensorboard': cfg.training.generate_tensorboard,
+
+        # Model save and restore
+        'training_model': cfg.training.training_model,
+        'save_model_to_disk': cfg.training.save_model_to_disk,
+        'restore_model_from_disk': cfg.training.restore_model_from_disk,
+
+        'run_training': cfg.training.run_training,
+
+        # Test & Eval
+        'run_inference': cfg.training.run_inference,
+        'run_eval': cfg.training.run_eval,
+
+        # Paths
+        'models': cfg.paths.model_paths,
+        'datasets': cfg.paths.dataset_paths,
+
+        # Training hyperparams (single source: cfg.training)
+        'test_size': cfg.training.test_size,
+        'epochs': cfg.training.epochs,
+        'batch_size': cfg.training.batch_size,
+        'constraint_loss_weight': cfg.training.constraint_loss_weight,
+    }
+
+
+GameParameters: dict = to_game_parameters(DEFAULT)
+TrainingParameters: dict = to_training_parameters(DEFAULT)
