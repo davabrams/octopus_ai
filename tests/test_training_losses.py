@@ -11,7 +11,13 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from training.losses import ConstraintLoss, WeightedSumLoss
+import keras
+from training.losses import (
+    ClampedTargetLoss,
+    ConstraintLoss,
+    DeltaColorLayer,
+    WeightedSumLoss,
+)
 
 
 class TestConstraintLoss(unittest.TestCase):
@@ -235,3 +241,61 @@ class TestLossIntegration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TestDeltaColorLayer(unittest.TestCase):
+    """The delta output layer must satisfy the constraint by construction."""
+
+    def _build_model(self, max_hue_change=0.25):
+        inp = keras.layers.Input(shape=(2,))
+        raw = keras.layers.Dense(1, activation="linear")(inp)
+        outp = DeltaColorLayer(max_hue_change=max_hue_change)([inp, raw])
+        return keras.Model(inputs=inp, outputs=outp)
+
+    def test_output_within_constraint_and_bounds(self):
+        model = self._build_model()
+        rng = np.random.default_rng(0)
+        x = rng.random((64, 2)).astype("float32")
+        pred = model.predict(x, verbose=0)[:, 0]
+        prev = x[:, 0]
+        self.assertTrue(np.all(np.abs(pred - prev) <= 0.25 + 1e-6))
+        self.assertTrue(np.all(pred >= 0.0))
+        self.assertTrue(np.all(pred <= 1.0))
+
+    def test_serialization_round_trip(self):
+        import tempfile
+        import os
+        model = self._build_model(max_hue_change=0.1)
+        x = np.array([[0.2, 0.9], [0.8, 0.1]], dtype="float32")
+        expected = model.predict(x, verbose=0)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "delta.keras")
+            model.save(path)
+            loaded = keras.models.load_model(
+                path, custom_objects={"DeltaColorLayer": DeltaColorLayer})
+        np.testing.assert_allclose(
+            loaded.predict(x, verbose=0), expected, atol=1e-6)
+
+
+class TestClampedTargetLoss(unittest.TestCase):
+    """The loss target must be the constraint-clamped surface color."""
+
+    def test_zero_loss_at_ideal_prediction(self):
+        loss = ClampedTargetLoss(threshold=0.25)
+        # prev=0.0, surf=1.0 -> ideal legal step is 0.25
+        y_true = tf.constant([[0.0, 1.0]], dtype="float32")
+        y_pred = tf.constant([[0.25]], dtype="float32")
+        self.assertAlmostEqual(float(loss(y_true, y_pred)), 0.0, places=6)
+
+    def test_matched_pair_targets_itself(self):
+        loss = ClampedTargetLoss(threshold=0.25)
+        y_true = tf.constant([[0.0, 0.0], [1.0, 1.0]], dtype="float32")
+        y_pred = tf.constant([[0.0], [1.0]], dtype="float32")
+        self.assertAlmostEqual(float(loss(y_true, y_pred)), 0.0, places=6)
+
+    def test_penalizes_distance_from_clamped_target(self):
+        loss = ClampedTargetLoss(threshold=0.25)
+        # prev=0.5, surf=0.6 -> target is 0.6 (within threshold)
+        y_true = tf.constant([[0.5, 0.6]], dtype="float32")
+        y_pred = tf.constant([[0.5]], dtype="float32")
+        self.assertAlmostEqual(float(loss(y_true, y_pred)), 0.01, places=6)
+

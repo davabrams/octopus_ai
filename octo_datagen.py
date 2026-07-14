@@ -3,11 +3,11 @@ import pickle
 import time as tm
 import getpass
 import socket
-from training.models.model_loader import ModelLoader
+import numpy as np
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.surface_generator import RandomSurface
-from simulator.simutil import MLMode, MovementMode, InferenceLocation
+from simulator.simutil import Color, MLMode, MovementMode, InferenceLocation
 
 
 class OctoDatagen():
@@ -21,6 +21,10 @@ class OctoDatagen():
         self.data_write_mode = game_parameters['datagen_data_write_format']
         self.inference_mode = game_parameters['inference_mode']
         self.model_path = self.game_parameters['inference_model']
+        # imported lazily to avoid a circular import: a module-level import
+        # of training.models.model_loader runs training/__init__, which
+        # imports the trainers, which import this module
+        from training.models.model_loader import ModelLoader
         self.model = ModelLoader(self.model_path).get_object()
         print(
             f"Instantiated OctDatagen with inference type "
@@ -47,8 +51,24 @@ class OctoDatagen():
         sucker_gt = []
         sucker_test = []
         run_iterations = 0
+        # Without periodic randomization, the color feedback loop converges
+        # to the surface within a few iterations and nearly every recorded
+        # sample has state == gt, so the model never sees the mismatched
+        # (previous color, surface color) pairs it must handle right after
+        # the octopus moves. Interval N re-randomizes all sucker colors
+        # every N iterations (0 disables).
+        randomize_interval = params.get('datagen_randomize_colors_interval', 0)
+
         while run_iterations != params['num_iterations']:
             print(f'Datagen Iteration {run_iterations}')
+
+            if randomize_interval > 0 and \
+                    run_iterations % randomize_interval == 0:
+                for limb in octo.limbs:
+                    for s in limb.suckers:
+                        v = float(np.random.rand())
+                        s.c = Color(v, v, v)
+
             run_iterations += 1
 
             ag.increment_all(octo)

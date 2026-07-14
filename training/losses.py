@@ -163,6 +163,82 @@ class WeightedSumLoss(tf.keras.losses.Loss):
         return cls(threshold=threshold)
 
 
+@keras.saving.register_keras_serializable(
+    package="Octo", name="DeltaColorLayer"
+)
+class DeltaColorLayer(keras.layers.Layer):
+    """Output layer that enforces the color-change constraint by
+    construction.
+
+    Takes [model_input, raw_head] where model_input is (batch, 2) rows of
+    [previous_color, surface_color] and raw_head is an unbounded (batch, 1)
+    dense output. Produces:
+
+        prediction = clip(prev + max_hue_change * tanh(raw), 0, 1)
+
+    so every prediction is within +/- max_hue_change of the previous color
+    and inside [0, 1] regardless of the network weights. With the
+    constraint guaranteed architecturally, training can use a plain
+    target-matching loss (see ClampedTargetLoss) instead of a weighted
+    constraint penalty.
+    """
+    def __init__(self, max_hue_change=0.25, **kwargs):
+        super().__init__(**kwargs)
+        self.max_hue_change = float(max_hue_change)
+
+    def call(self, inputs):
+        model_input, raw = inputs
+        prev = model_input[:, 0:1]
+        delta = self.max_hue_change * tf.tanh(raw)
+        return tf.clip_by_value(prev + delta, 0.0, 1.0)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"max_hue_change": self.max_hue_change})
+        return config
+
+
+@keras.saving.register_keras_serializable(
+    package="Octo", name="ClampedTargetLoss"
+)
+class ClampedTargetLoss(tf.keras.losses.Loss):
+    """MSE against the constraint-clamped target.
+
+    y_true is the sucker pipeline's (batch, 2) packing with columns
+    [previous_color, surface_color]. The target is the best *legal* color
+    for this step:
+
+        target = clip(prev + clip(surf - prev, +/- threshold), 0, 1)
+
+    i.e. exactly what the heuristic would produce. Because the target
+    never asks for a step the constraint forbids, this loss does not fight
+    a constraint penalty and the full gradient budget goes to target
+    matching. Intended for models whose output already satisfies the
+    constraint (e.g. DeltaColorLayer).
+
+    Note the explicit column indexing (y_true[:, 0]): WeightedSumLoss
+    indexes rows (y_true[0]), which matches the limb pipeline's
+    (fields, ...) format but scrambles the sucker pipeline's (batch, 2)
+    format.
+    """
+    def __init__(self, threshold=0.25, name="clamped_target_loss", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.threshold = float(threshold)
+
+    def call(self, y_true, y_pred):
+        prev = y_true[:, 0]
+        surf = y_true[:, 1]
+        step = tf.clip_by_value(surf - prev, -self.threshold, self.threshold)
+        target = tf.clip_by_value(prev + step, 0.0, 1.0)
+        pred = tf.squeeze(y_pred, axis=-1)
+        return tf.square(pred - target)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"threshold": self.threshold})
+        return config
+
+
 def plot_loss_functions(cl, mae, wsl, GameParameters, state_value,
                         target_value):
     """

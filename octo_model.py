@@ -9,7 +9,11 @@ import tensorflow as tf
 from OctoConfig import GameParameters, TrainingParameters
 from simulator.simutil import MLMode
 from training.limb import LimbTrainer
-from training.losses import WeightedSumLoss
+from training.losses import (
+    ClampedTargetLoss,
+    DeltaColorLayer,
+    WeightedSumLoss,
+)
 from training.models.model_loader import ModelLoader
 from training.sucker import SuckerTrainer
 from util import erase_all_logs
@@ -96,7 +100,11 @@ if RUN_TRAINING:
 if RUN_INFERENCE:
     # Load model
     if RESTORE_MODEL_FROM_DISK:
-        custom_objects = {"WeightedSumLoss": WeightedSumLoss}
+        custom_objects = {
+            "WeightedSumLoss": WeightedSumLoss,
+            "ClampedTargetLoss": ClampedTargetLoss,
+            "DeltaColorLayer": DeltaColorLayer,
+        }
         model = ModelLoader(
             model_location, custom_objects=custom_objects
         ).get_object()

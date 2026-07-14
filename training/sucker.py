@@ -9,7 +9,11 @@ import seaborn as sn
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow import keras
-from training.losses import WeightedSumLoss
+from training.losses import (
+    ClampedTargetLoss,
+    DeltaColorLayer,
+    WeightedSumLoss,
+)
 from training.trainutil import Trainer
 from training.data_utils import (
     convert_pytype_to_tf_dataset,
@@ -114,20 +118,46 @@ class SuckerTrainer(Trainer):
         max_hue_change = tf.constant(
             GameParameters['octo_max_hue_change'], dtype='float32')
 
-        # Model constructor
-        inp = keras.layers.Input(shape=(2,), batch_size=batch_size)
-        outp = keras.layers.Dense(units=1, activation="linear",
-                                  name="prediction_layer")
+        # Model constructor. Two architectures:
+        # - delta (default via GameParameters['sucker_delta_model']): the
+        #   network predicts an unbounded raw value that DeltaColorLayer
+        #   squashes into a legal color step around the previous color, so
+        #   the physical constraint holds by construction and training
+        #   uses ClampedTargetLoss (pure target matching).
+        # - legacy: direct color prediction trained with WeightedSumLoss
+        #   (soft constraint penalty + weak MAE pull).
+        use_delta = bool(GameParameters.get('sucker_delta_model', False))
+        if use_delta:
+            inp = keras.layers.Input(shape=(2,))
+            hidden = keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer1")(inp)
+            hidden = keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer2")(hidden)
+            hidden = keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer3")(hidden)
+            raw = keras.layers.Dense(
+                units=1, activation="linear", name="raw_delta")(hidden)
+            outp = DeltaColorLayer(
+                max_hue_change=float(
+                    GameParameters['octo_max_hue_change']),
+                name="prediction_layer")([inp, raw])
+            sucker_model = keras.Model(inputs=inp, outputs=outp)
+            delta_loss_fn = ClampedTargetLoss(
+                threshold=float(GameParameters['octo_max_hue_change']))
+        else:
+            inp = keras.layers.Input(shape=(2,), batch_size=batch_size)
+            outp = keras.layers.Dense(units=1, activation="linear",
+                                      name="prediction_layer")
 
-        sucker_model = keras.Sequential()
-        sucker_model.add(inp)
-        sucker_model.add(keras.layers.Dense(
-            units=5, activation="relu", name="hidden_layer1"))
-        sucker_model.add(keras.layers.Dense(
-            units=5, activation="relu", name="hidden_layer2"))
-        sucker_model.add(keras.layers.Dense(
-            units=5, activation="relu", name="hidden_layer3"))
-        sucker_model.add(outp)
+            sucker_model = keras.Sequential()
+            sucker_model.add(inp)
+            sucker_model.add(keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer1"))
+            sucker_model.add(keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer2"))
+            sucker_model.add(keras.layers.Dense(
+                units=5, activation="relu", name="hidden_layer3"))
+            sucker_model.add(outp)
 
         # Tensorboard configuration
         # tensorboard serve --logdir <log directory>
@@ -140,7 +170,7 @@ class SuckerTrainer(Trainer):
 
         # Custom training loop
         epochs = GameParameters["epochs"]
-        optimizer = keras.optimizers.SGD(learning_rate=1e-3)
+        optimizer = keras.optimizers.Adam(learning_rate=1e-3)
 
         total_steps = 0
         for epoch in range(epochs):
@@ -163,13 +193,16 @@ class SuckerTrainer(Trainer):
                     # https://en.wikipedia.org/wiki/Logit
                     logits = sucker_model(x_batch_train, training=True)
 
-                    # Recompile the loss function with the updated
-                    # step (for logging)
-                    loss_fn = WeightedSumLoss(
-                        threshold=max_hue_change,
-                        weight=constraint_loss_weight,
-                        step=total_steps,
-                        logwriter=summary_writer)
+                    if use_delta:
+                        loss_fn = delta_loss_fn
+                    else:
+                        # Recompile the loss function with the updated
+                        # step (for logging)
+                        loss_fn = WeightedSumLoss(
+                            threshold=max_hue_change,
+                            weight=constraint_loss_weight,
+                            step=total_steps,
+                            logwriter=summary_writer)
 
                     # Compute the loss value for this minibatch.
                     loss_value = loss_fn(y_batch_train, logits)

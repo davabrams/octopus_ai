@@ -25,14 +25,16 @@ GameParameters: dict = {
     'num_iterations': 120,  # set this to -1 for infinite loop
     'x_len': 15,
     'y_len': 15,
+    'surface_grayscale': True,  # random grayscale surface values in [0, 1);
+                                # False for the classic binary 0/1 grid
     'rand_seed': 0,
     'debug_mode': False,  # enables things like agent attract/repel regions
     'save_images': False,
     'adjacency_radius': 1.0,  # determines what distance is considered
     # 'adjacent'
     'inference_location': InferenceLocation.LOCAL,
-    'inference_mode': MLMode.NO_MODEL,
-    'inference_model': MLMode.NO_MODEL,
+    'inference_mode': MLMode.SUCKER,
+    'inference_model': MLMode.SUCKER,
     'datagen_data_write_format': MLMode.SUCKER,
 
     # Agent parameters 👾
@@ -60,10 +62,18 @@ GameParameters: dict = {
     # Sucker parameters 🪠
     'octo_max_hue_change': 0.25,  # max val of rgb that can change at a time,
                                   # used as constraint threshold
+    'sucker_delta_model': True,  # sucker net predicts a tanh-bounded
+                                  # color DELTA (constraint enforced by
+                                  # architecture); False = legacy direct
+                                  # prediction with WeightedSumLoss
+    'datagen_randomize_colors_interval': 2,  # re-randomize sucker colors
+                                  # every N datagen iterations so training
+                                  # data covers mismatched (color, surface)
+                                  # pairs; 0 disables
 
     # Training hyperparams (used by trainers via GameParameters)
     'test_size': 0.2,
-    'epochs': 10,
+    'epochs': 50,
     'batch_size': 32,
     'constraint_loss_weight': 0.95,
 }
@@ -74,7 +84,7 @@ TrainingParameters = {
     'ml_mode': MLMode.SUCKER,
 
     # Datagen
-    "save_data_to_disk": False,
+    "save_data_to_disk": True,
     "restore_data_from_disk": False,
     'datagen_mode': True,
 
@@ -102,7 +112,7 @@ TrainingParameters = {
 
     # Training hyperparams
     'test_size': 0.2,
-    'epochs': 10,
+    'epochs': 50,
     'batch_size': 32,  # 32 is tf default
     'constraint_loss_weight': 0.95,
 }
