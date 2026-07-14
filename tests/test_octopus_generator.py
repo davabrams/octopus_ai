@@ -17,7 +17,7 @@ from simulator.simutil import (
     Agent, AgentType, agent_influence_vector,
 )
 from simulator.surface_generator import RandomSurface
-from OctoConfig import GameParameters
+from helpers import make_config
 
 
 class TestSucker(unittest.TestCase):
@@ -25,10 +25,7 @@ class TestSucker(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.params = GameParameters.copy()
-        self.params['x_len'] = 10
-        self.params['y_len'] = 10
-        self.params['rand_seed'] = 42
+        self.params = make_config(x_len=10, y_len=10, rand_seed=42)
 
         # Create a mock surface
         self.mock_surface = Mock()
@@ -79,18 +76,18 @@ class TestLimb(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.params = GameParameters.copy()
-        self.params['limb_rows'] = 4
-        self.params['limb_cols'] = 2
-        self.params['x_len'] = 10
-        self.params['y_len'] = 10
+        # Built with RANDOM movement (the TEST profile baseline), which is
+        # what the limb tests below exercise.
+        self.params = make_config(limb_rows=4, limb_cols=2,
+                                  x_len=10, y_len=10)
 
         # Create test limb
         self.limb = Limb(x_octo=5.0, y_octo=5.0, init_angle=0, params=self.params)
 
     def test_limb_initialization(self):
         """Test limb is properly initialized"""
-        expected_suckers = self.params['limb_rows'] * self.params['limb_cols']
+        expected_suckers = (self.params.octopus.limb.rows *
+                            self.params.octopus.limb.cols)
         self.assertEqual(len(self.limb.suckers), expected_suckers)
 
         for sucker in self.limb.suckers:
@@ -100,7 +97,8 @@ class TestLimb(unittest.TestCase):
         """Test centerline generation"""
         self.limb._gen_centerline(0, 0, 0)
 
-        self.assertEqual(len(self.limb.center_line), self.params['limb_rows'])
+        self.assertEqual(len(self.limb.center_line),
+                         self.params.octopus.limb.rows)
 
         for i in range(len(self.limb.center_line) - 1):
             dist_from_root_i = np.sqrt(self.limb.center_line[i].x**2 + self.limb.center_line[i].y**2)
@@ -133,9 +131,15 @@ class TestLimb(unittest.TestCase):
                 self.assertLessEqual(distance, 2.0)
 
     def test_move_random_mode(self):
-        """Test limb movement in random mode"""
-        self.params['limb_movement_mode'] = MovementMode.RANDOM
+        """Test limb movement in random mode.
 
+        self.limb is already built with RANDOM in setUp. This used to
+        assign self.params['limb_movement_mode'] here, which did nothing at
+        all - the limb had been constructed from those params before the
+        assignment, so it could not have taken effect. The test passed
+        because RANDOM was already the default. A frozen Config makes that
+        kind of dead reassignment impossible to write.
+        """
         # move takes (x_octo, y_octo)
         self.limb.move(1.0, 1.0)
 
@@ -148,15 +152,15 @@ class TestOctopus(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.params = GameParameters.copy()
-        self.params['octo_num_arms'] = 4
-        self.params['x_len'] = 10
-        self.params['y_len'] = 10
+        self.params = make_config(
+            octo_num_arms=4, x_len=10, y_len=10,
+            # move() is called with no agent, valid only in RANDOM mode.
+            octo_movement_mode=MovementMode.RANDOM,
+            limb_movement_mode=MovementMode.RANDOM,
+        )
         # These tests call move() with no agent, which is only valid in
         # RANDOM mode. Pin it so the suite doesn't depend on whatever the
         # config default happens to be set to.
-        self.params['octo_movement_mode'] = MovementMode.RANDOM
-        self.params['limb_movement_mode'] = MovementMode.RANDOM
 
         # Create mock surface
         self.mock_surface = Mock()
@@ -167,7 +171,8 @@ class TestOctopus(unittest.TestCase):
 
     def test_octopus_initialization(self):
         """Test octopus is properly initialized"""
-        self.assertEqual(len(self.octopus.limbs), self.params['octo_num_arms'])
+        self.assertEqual(len(self.octopus.limbs),
+                         self.params.octopus.num_arms)
 
         for limb in self.octopus.limbs:
             self.assertIsInstance(limb, Limb)
@@ -215,16 +220,13 @@ class TestIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up integration test fixtures"""
-        self.params = GameParameters.copy()
-        self.params['x_len'] = 5
-        self.params['y_len'] = 5
-        self.params['octo_num_arms'] = 2
-        self.params['limb_rows'] = 2
-        self.params['limb_cols'] = 1
+        self.params = make_config(
+            x_len=5, y_len=5, octo_num_arms=2, limb_rows=2, limb_cols=1,
+            # move() is called with no agent, valid only in RANDOM mode.
+            octo_movement_mode=MovementMode.RANDOM,
+            limb_movement_mode=MovementMode.RANDOM,
+        )
         # move() is called with no agent -> RANDOM mode only (see above)
-        self.params['octo_movement_mode'] = MovementMode.RANDOM
-        self.params['limb_movement_mode'] = MovementMode.RANDOM
-
         self.surface = RandomSurface(self.params)
         self.octopus = Octopus(params=self.params)
 
@@ -242,17 +244,15 @@ class TestIntegration(unittest.TestCase):
 class TestAttractRepelLocomotion(unittest.TestCase):
     """LUMPED_SPRING movement: reaching, anchoring, bend/length limits."""
 
-    def _params(self):
-        p = GameParameters.copy()
-        p['x_len'] = 30
-        p['y_len'] = 30
-        p['limb_rows'] = 6
-        p['limb_cols'] = 2
-        p['octo_num_arms'] = 4
-        p['limb_movement_mode'] = MovementMode.LUMPED_SPRING
-        p['octo_movement_mode'] = MovementMode.LUMPED_SPRING
-        p['agent_movement_mode'] = MovementMode.LUMPED_SPRING
-        return p
+    def _params(self, **over):
+        base = dict(
+            x_len=30, y_len=30, limb_rows=6, limb_cols=2, octo_num_arms=4,
+            limb_movement_mode=MovementMode.LUMPED_SPRING,
+            octo_movement_mode=MovementMode.LUMPED_SPRING,
+            agent_movement_mode=MovementMode.LUMPED_SPRING,
+        )
+        base.update(over)
+        return make_config(**base)
 
     # ---- the shared influence primitive ----
     def test_influence_zero_when_no_agents_in_range(self):
@@ -421,7 +421,7 @@ class TestAttractRepelLocomotion(unittest.TestCase):
         p = self._params()
         limb = Limb(x_octo=15.0, y_octo=15.0, init_angle=0.0, params=p)
         prey = Agent(x=15.0, y=28.0, agent_type=AgentType.PREY)  # 90deg away
-        cap = p['octo_max_arm_reach_theta']
+        cap = p.octopus.limb.lumped.max_arm_reach_theta
         for _ in range(6):
             limb.move(15.0, 15.0, agents=[prey])
         cl = limb.center_line
