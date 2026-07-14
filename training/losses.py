@@ -239,14 +239,14 @@ class ClampedTargetLoss(tf.keras.losses.Loss):
         return config
 
 
-def plot_loss_functions(cl, mae, wsl, GameParameters, state_value,
+def plot_loss_functions(cl, mae, wsl, cfg, state_value,
                         target_value):
     """
     plots the loss and gradient for these three loss functions
     over an input sweep
     """
-    constraint_weight = GameParameters["constraint_loss_weight"]
-    threshold = GameParameters["octo_max_hue_change"]
+    constraint_weight = cfg.training.constraint_loss_weight
+    threshold = cfg.octopus.sucker.max_hue_change
 
     def get_values_to_plot(loss, y_pred, y_true):
         print(loss.name)
@@ -357,12 +357,12 @@ def plot_loss_functions(cl, mae, wsl, GameParameters, state_value,
 
 # Use this to generate the loss plots.
 if False:
-    from OctoConfig import GameParameters
+    from OctoConfig import DEFAULT
     previous_value = 0.0
     target_value = 0.0
     plot_loss_functions(ConstraintLoss,
                         keras.losses.MeanAbsoluteError,
                         WeightedSumLoss,
-                        GameParameters,
+                        DEFAULT,
                         previous_value,
                         target_value)
