@@ -173,18 +173,16 @@ class TestDataGenerationIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up data generation tests"""
-        # NOTE: flat dict, not a Config - the trainers still index their
-        # params as dicts. Flips to make_config in step 4.
-        self.game_params = make_flat()
-        self.game_params.update({
-            'x_len': 5,
-            'y_len': 5,
-            'octo_num_arms': 1,
-            'limb_rows': 2,
-            'limb_cols': 2,
-            'num_iterations': 3,
-            'inference_location': InferenceLocation.LOCAL,
-        })
+        self._base = dict(
+            x_len=5,
+            y_len=5,
+            octo_num_arms=1,
+            limb_rows=2,
+            limb_cols=2,
+            num_iterations=3,
+            inference_location=InferenceLocation.LOCAL,
+        )
+        self.game_params = make_config(**self._base)
 
     def test_datagen_integration(self):
         """Test data generation integration with real components"""
@@ -203,6 +201,23 @@ class TestDataGenerationIntegration(unittest.TestCase):
         self.assertIsInstance(data['gt_data'], list)
         self.assertGreater(len(data['state_data']), 0)
         self.assertGreater(len(data['gt_data']), 0)
+
+    def test_datagen_accepts_legacy_flat_dict(self):
+        """OctoDatagen still takes a flat dict.
+
+        The trainers hand it a Config now, but from_game_parameters is
+        deliberately tolerant and the wire protocol still speaks flat, so
+        this path has to keep working. The snapshot in the payload is
+        whatever the caller passed, not a normalized form.
+        """
+        from octo_datagen import OctoDatagen
+
+        flat = make_flat(**self._base)
+        datagen = OctoDatagen(flat)
+        data = datagen.run_color_datagen()
+
+        self.assertEqual(data['game_parameters'], flat)
+        self.assertGreater(len(data['state_data']), 0)
 
 
 class TestInferenceServerIntegration(unittest.TestCase):
@@ -279,9 +294,7 @@ class TestEndToEndWorkflow(unittest.TestCase):
         """Test workflow from simulation to training"""
         from simulator.simutil import Color
 
-        # NOTE: flat dict - SuckerTrainer still indexes params as a dict.
-        # Flips to make_config in step 4.
-        game_params = make_flat(
+        game_params = make_config(
             x_len=4, y_len=4, octo_num_arms=1,
             limb_rows=2, limb_cols=1, num_iterations=2,
             epochs=1, batch_size=2,

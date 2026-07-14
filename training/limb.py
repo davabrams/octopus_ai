@@ -16,22 +16,25 @@ from training.data_utils import (
     train_test_split_multiple_state_vectors,
 )
 from simulator.simutil import MLMode
+from OctoConfig import as_config
 from .trainutil import Trainer
 
 
 class LimbTrainer(Trainer):
     """
-    Limb-level trainer class
+    Limb-level trainer class.
+
+    Takes a single Config. The hyperparams it needs (epochs, batch_size,
+    constraint_loss_weight) live under cfg.training; the physical
+    constraint threshold it trains against is cfg.octopus.sucker.
     """
-    def __init__(self, GameParameters, TrainingParameters):
-        self.GameParameters = GameParameters
-        self.TrainingParameters = TrainingParameters
+    def __init__(self, cfg):
+        self.cfg = as_config(cfg)
 
     def datagen(self, SAVE_DATA_TO_DISK):
-        datagen = OctoDatagen(self.GameParameters)
+        datagen = OctoDatagen(self.cfg)
         data = datagen.run_color_datagen()
-        ml_mode = self.TrainingParameters['ml_mode']
-        datagen_path = self.TrainingParameters['datasets'][ml_mode]
+        datagen_path = self.cfg.training_dataset_path
         if SAVE_DATA_TO_DISK:
             with open(datagen_path, 'wb') as file:
                 pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
@@ -41,9 +44,11 @@ class LimbTrainer(Trainer):
         """
         Format Data for Train and Val
         """
-        datagen_data_format = data['game_parameters'][
-            'datagen_data_write_format'
-        ]
+        # The snapshot in a datagen payload is whatever was handed to
+        # OctoDatagen - a Config now, a flat dict in pickles written before
+        # the migration. as_config takes either.
+        datagen_data_format = as_config(
+            data['game_parameters']).datagen.write_format
         print("Found data format:", datagen_data_format)
         if datagen_data_format == MLMode.SUCKER:
             # sucker's current color
@@ -95,8 +100,7 @@ class LimbTrainer(Trainer):
 
     def train(self, train_dataset, GENERATE_TENSORBOARD=False):
         return self.train_limb_model(
-            GameParameters=self.GameParameters,
-            TrainingParameters=self.TrainingParameters,
+            cfg=self.cfg,
             train_dataset=train_dataset,
             GENERATE_TENSORBOARD=GENERATE_TENSORBOARD
         )
@@ -106,11 +110,7 @@ class LimbTrainer(Trainer):
         Runs a standard sweep inference on the input domain
         """
         assert sucker_model, "No model found, can't run inference"
-        assert self.GameParameters, "No parameters found, can't run inference"
-
-        # batch_size = GameParameters['batch_size']
-        # max_hue_change = GameParameters['octo_max_hue_change']
-        # constraint_loss_weight = GameParameters['constraint_loss_weight']
+        assert self.cfg is not None, "No config found, can't run inference"
 
         # Iterate over domain space
         range_vals = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -139,19 +139,19 @@ class LimbTrainer(Trainer):
         plt.yticks(locs, range_vals)
         plt.show()
 
-    def train_limb_model(self, GameParameters, TrainingParameters,
-                         train_dataset, GENERATE_TENSORBOARD=False):
+    def train_limb_model(self, cfg, train_dataset,
+                         GENERATE_TENSORBOARD=False):
         """
         Contains model construction, loss construction, and training loop.
         """
-        batch_size = TrainingParameters['batch_size']
+        batch_size = cfg.training.batch_size
 
         # Configure loss function settings
         constraint_loss_weight = tf.constant(
-            TrainingParameters['constraint_loss_weight'], dtype='float32'
+            cfg.training.constraint_loss_weight, dtype='float32'
         )
         max_hue_change = tf.constant(
-            GameParameters['octo_max_hue_change'], dtype='float32'
+            cfg.octopus.sucker.max_hue_change, dtype='float32'
         )
 
         # Model constructor
@@ -168,7 +168,7 @@ class LimbTrainer(Trainer):
             summary_writer = tf.summary.create_file_writer(logdir=log_dir)
 
         # Custom training loop
-        epochs = TrainingParameters["epochs"]
+        epochs = cfg.training.epochs
         optimizer = keras.optimizers.SGD(learning_rate=1e-3)
 
         """

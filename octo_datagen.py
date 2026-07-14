@@ -12,14 +12,17 @@ from simulator.simutil import Color, MLMode, MovementMode, InferenceLocation
 
 class OctoDatagen():
     """ Entry point for octopus datagen """
-    def __init__(self, game_parameters: dict):
-        assert game_parameters['num_iterations'] >= 0, (
+    def __init__(self, game_parameters):
+        """Takes a Config or a legacy flat params dict."""
+        from OctoConfig import as_config
+        cfg = as_config(game_parameters)
+        assert cfg.run.num_iterations >= 0, (
             "Error, number of iterations configured in game parameters "
             "are not compatible with data generation"
         )
-        from OctoConfig import as_config
+        # The snapshot stored in the generated payload is whatever the
+        # caller handed us, so a flat-dict caller gets a flat dict back.
         self.game_parameters = game_parameters
-        cfg = as_config(game_parameters)
         self.cfg = cfg
         self.data_write_mode = cfg.datagen.write_format
         self.inference_mode = cfg.inference.mode
@@ -36,16 +39,16 @@ class OctoDatagen():
         )
 
     def run_color_datagen(self):
-        params = self.game_parameters
+        cfg = self.cfg
 
         start = tm.time()
         print(f"Octo datagen started at {start}, setting t=0.0")
 
         # %% Configure game
-        surf = RandomSurface(params)
-        ag = AgentGenerator(params)
-        ag.generate(num_agents=params['agent_number_of_agents'])
-        octo = Octopus(params)
+        surf = RandomSurface(cfg)
+        ag = AgentGenerator(cfg)
+        ag.generate(num_agents=cfg.agents.count)
+        octo = Octopus(cfg)
 
         # Always start with no-model
         octo.set_color(surf, inference_mode=MLMode.NO_MODEL, model=self.model)
@@ -61,9 +64,9 @@ class OctoDatagen():
         # (previous color, surface color) pairs it must handle right after
         # the octopus moves. Interval N re-randomizes all sucker colors
         # every N iterations (0 disables).
-        randomize_interval = params.get('datagen_randomize_colors_interval', 0)
+        randomize_interval = cfg.datagen.randomize_colors_interval
 
-        while run_iterations != params['num_iterations']:
+        while run_iterations != cfg.run.num_iterations:
             print(f'Datagen Iteration {run_iterations}')
 
             if randomize_interval > 0 and \
@@ -85,7 +88,7 @@ class OctoDatagen():
                     if self.data_write_mode == MLMode.SUCKER:
                         state = s.c.r
                     elif self.data_write_mode == MLMode.LIMB:
-                        radius = params['adjacency_radius']
+                        radius = cfg.octopus.sucker.adjacency_radius
                         state = {}
                         state['color'] = s.c.r
                         state['adjacents'] = limb.find_adjacents(s, radius)
@@ -109,7 +112,7 @@ class OctoDatagen():
         }
         data = {
             'metadata': metadata,
-            'game_parameters': params,
+            'game_parameters': self.game_parameters,
             'state_data': sucker_state,
             'gt_data': sucker_gt,
         }

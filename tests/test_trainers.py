@@ -7,6 +7,7 @@ import tensorflow as tf
 import tempfile
 import os
 import pickle
+from dataclasses import replace
 from unittest.mock import Mock, patch, MagicMock
 import sys
 
@@ -17,7 +18,8 @@ from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
 from training.trainutil import Trainer
 from simulator.simutil import MLMode
-from OctoConfig import GameParameters, TrainingParameters
+from config_schema import PathsConfig
+from helpers import make_config
 
 
 class TestTrainer(unittest.TestCase):
@@ -47,17 +49,15 @@ class TestSuckerTrainer(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.game_params = GameParameters.copy()
-        self.game_params['epochs'] = 2
-        self.game_params['batch_size'] = 4
+        self.cfg = make_config(epochs=2, batch_size=4)
 
-        # SuckerTrainer takes GameParameters
-        self.sucker_trainer = SuckerTrainer(self.game_params)
+        # SuckerTrainer takes a single Config
+        self.sucker_trainer = SuckerTrainer(self.cfg)
 
     def test_sucker_trainer_initialization(self):
         """Test SuckerTrainer initialization"""
         self.assertIsInstance(self.sucker_trainer, Trainer)
-        self.assertEqual(self.sucker_trainer.GameParameters, self.game_params)
+        self.assertEqual(self.sucker_trainer.cfg, self.cfg)
 
     @patch('training.sucker.OctoDatagen')
     def test_datagen_basic(self, mock_datagen_class):
@@ -67,7 +67,7 @@ class TestSuckerTrainer(unittest.TestCase):
         mock_datagen.run_color_datagen.return_value = {
             'state_data': [0.5, 0.6, 0.7],
             'gt_data': [Color(0.6, 0.6, 0.6), Color(0.7, 0.7, 0.7), Color(0.8, 0.8, 0.8)],
-            'game_parameters': self.game_params,
+            'game_parameters': self.cfg,
             'metadata': {},
         }
         mock_datagen_class.return_value = mock_datagen
@@ -150,21 +150,15 @@ class TestLimbTrainer(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
-        self.game_params = GameParameters.copy()
-        self.game_params['epochs'] = 2
-        self.game_params['batch_size'] = 4
+        self.cfg = make_config(epochs=2, batch_size=4)
 
-        self.training_params = TrainingParameters.copy()
-        self.training_params['epochs'] = 2
-        self.training_params['batch_size'] = 4
-
-        # LimbTrainer takes (GameParameters, TrainingParameters)
-        self.limb_trainer = LimbTrainer(self.game_params, self.training_params)
+        # LimbTrainer takes a single Config
+        self.limb_trainer = LimbTrainer(self.cfg)
 
     def test_limb_trainer_initialization(self):
         """Test LimbTrainer initialization"""
         self.assertIsInstance(self.limb_trainer, Trainer)
-        self.assertEqual(self.limb_trainer.GameParameters, self.game_params)
+        self.assertEqual(self.limb_trainer.cfg, self.cfg)
 
     def test_model_constructor(self):
         """Test limb model architecture construction"""
@@ -182,16 +176,24 @@ class TestLimbTrainer(unittest.TestCase):
         mock_datagen.run_color_datagen.return_value = {
             'state_data': [0.5, 0.6],
             'gt_data': [Color(0.6, 0.6, 0.6), Color(0.7, 0.7, 0.7)],
-            'game_parameters': self.game_params,
+            'game_parameters': self.cfg,
             'metadata': {},
         }
         mock_datagen_class.return_value = mock_datagen
 
-        # LimbTrainer.datagen accesses TrainingParameters['datasets'][ml_mode]
-        self.training_params['ml_mode'] = MLMode.SUCKER
-        self.training_params['datasets'] = {MLMode.SUCKER: '/tmp/test.pkl'}
+        # LimbTrainer.datagen resolves cfg.training_dataset_path, i.e.
+        # paths.dataset_paths[cfg.training.ml_mode]. Paths are not part of
+        # the flat make_config surface, so replace() them in rather than
+        # leaning on the shipped default path.
+        cfg = replace(
+            self.cfg,
+            training=replace(self.cfg.training, ml_mode=MLMode.SUCKER),
+            paths=PathsConfig(dataset_paths={MLMode.SUCKER: '/tmp/test.pkl'}),
+        )
+        trainer = LimbTrainer(cfg)
+        self.assertEqual(trainer.cfg.training_dataset_path, '/tmp/test.pkl')
 
-        data = self.limb_trainer.datagen(SAVE_DATA_TO_DISK=False)
+        data = trainer.datagen(SAVE_DATA_TO_DISK=False)
 
         self.assertIsInstance(data, dict)
         self.assertIn('state_data', data)
@@ -213,9 +215,34 @@ class TestLimbTrainer(unittest.TestCase):
                 {'color': 0.5, 'adjacents': [(mock_sucker, 0.2), (mock_sucker, 0.4)]},
             ],
             'gt_data': [Color(v, v, v) for v in [0.15, 0.25, 0.35, 0.45, 0.55]],
-            'game_parameters': {
-                'datagen_data_write_format': MLMode.LIMB,
-            },
+            'game_parameters': make_config(
+                datagen_data_write_format=MLMode.LIMB),
+        }
+        train_dataset, test_dataset = self.limb_trainer.data_format(data)
+        self.assertIsNotNone(train_dataset)
+        self.assertIsNotNone(test_dataset)
+
+    def test_data_format_reads_legacy_flat_snapshot(self):
+        """A pickle written before the migration snapshots a flat dict.
+
+        data_format must still read its write format, hence the as_config
+        on data['game_parameters'] rather than a bare index.
+        """
+        from simulator.simutil import Color
+        mock_sucker = Mock()
+        mock_sucker.c.r = 0.5
+
+        data = {
+            'state_data': [
+                {'color': 0.1, 'adjacents': [(mock_sucker, 0.2)]},
+                {'color': 0.2, 'adjacents': [(mock_sucker, 0.4)]},
+                {'color': 0.3, 'adjacents': [(mock_sucker, 0.1)]},
+                {'color': 0.4, 'adjacents': [(mock_sucker, 0.3)]},
+                {'color': 0.5, 'adjacents': [(mock_sucker, 0.2)]},
+            ],
+            'gt_data': [Color(v, v, v) for v in [0.15, 0.25, 0.35, 0.45, 0.55]],
+            # a partial flat dict, exactly as from_game_parameters tolerates
+            'game_parameters': {'datagen_data_write_format': MLMode.LIMB},
         }
         train_dataset, test_dataset = self.limb_trainer.data_format(data)
         self.assertIsNotNone(train_dataset)
@@ -246,14 +273,12 @@ class TestTrainingIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up integration test fixtures"""
-        self.game_params = GameParameters.copy()
-        self.game_params['epochs'] = 1
-        self.game_params['batch_size'] = 2
+        self.cfg = make_config(epochs=1, batch_size=2)
 
     def test_sucker_training_pipeline(self):
         """Test complete sucker training pipeline"""
         from simulator.simutil import Color
-        trainer = SuckerTrainer(self.game_params)
+        trainer = SuckerTrainer(self.cfg)
 
         data = {
             'state_data': [float(i) / 10 for i in range(10)],
@@ -273,7 +298,7 @@ class TestTrainingIntegration(unittest.TestCase):
     def test_model_saving_loading(self):
         """Test model save/load functionality"""
         from simulator.simutil import Color
-        trainer = SuckerTrainer(self.game_params)
+        trainer = SuckerTrainer(self.cfg)
 
         # Need enough data so train split has >= batch_size samples
         # With test_size=0.2 and 20 points: train=4, test=16

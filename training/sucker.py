@@ -21,24 +21,28 @@ from training.data_utils import (
 )
 from octo_datagen import OctoDatagen
 from simulator.simutil import MLMode
-from OctoConfig import default_datasets
+from OctoConfig import as_config, default_datasets
 
 
 class SuckerTrainer(Trainer):
-    def __init__(self, GameParameters, TrainingParameters=None):
-        self.GameParameters = GameParameters
-        self.TrainingParameters = TrainingParameters
+    """Sucker-level trainer class.
+
+    Takes a single Config. The hyperparams it needs (epochs, batch_size,
+    constraint_loss_weight) live under cfg.training; the physical
+    constraint threshold it trains against is cfg.octopus.sucker.
+    """
+    def __init__(self, cfg):
+        self.cfg = as_config(cfg)
 
     def datagen(self, SAVE_DATA_TO_DISK):
-        datagen = OctoDatagen(self.GameParameters)
+        datagen = OctoDatagen(self.cfg)
         data = datagen.run_color_datagen()
         if SAVE_DATA_TO_DISK:
-            if self.TrainingParameters and 'datasets' in \
-                    self.TrainingParameters:
-                datagen_path = self.TrainingParameters[
-                    'datasets'][MLMode.SUCKER]
-            else:
-                datagen_path = default_datasets[MLMode.SUCKER]
+            # A Config built from a bare Config() has no paths table; fall
+            # back to the shipped default, as the TrainingParameters=None
+            # case used to.
+            datagen_path = (self.cfg.paths.dataset_paths.get(MLMode.SUCKER)
+                            or default_datasets[MLMode.SUCKER])
             with open(datagen_path, 'wb') as file:
                 pickle.dump(data, file, pickle.HIGHEST_PROTOCOL)
         return data
@@ -47,7 +51,7 @@ class SuckerTrainer(Trainer):
         """
         Format Data for Train and Val
         """
-        batch_size = self.GameParameters['batch_size']
+        batch_size = self.cfg.training.batch_size
 
         state_data = np.array([data['state_data']],
                               dtype='float32')  # sucker's current color
@@ -67,7 +71,7 @@ class SuckerTrainer(Trainer):
 
     def train(self, train_dataset, GENERATE_TENSORBOARD=False):
         return self.train_sucker_model(
-            GameParameters=self.GameParameters,
+            cfg=self.cfg,
             train_dataset=train_dataset,
             GENERATE_TENSORBOARD=GENERATE_TENSORBOARD)
 
@@ -76,10 +80,6 @@ class SuckerTrainer(Trainer):
         Runs a standard sweep inference on the input domain
         """
         assert sucker_model, "No model found, can't run inference"
-
-        # batch_size = GameParameters['batch_size']
-        # max_hue_change = GameParameters['octo_max_hue_change']
-        # constraint_loss_weight = GameParameters['constraint_loss_weight']
 
         # Iterate over domain space
         range_vals = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -106,27 +106,27 @@ class SuckerTrainer(Trainer):
         plt.yticks(locs, range_vals)
         plt.show()
 
-    def train_sucker_model(self, GameParameters, train_dataset,
+    def train_sucker_model(self, cfg, train_dataset,
                            GENERATE_TENSORBOARD=False):
         """
         Contains model construction, loss construction, and training loop.
         """
-        batch_size = GameParameters['batch_size']
+        batch_size = cfg.training.batch_size
 
         # Configure loss function settings
-        constraint_loss_weight = GameParameters['constraint_loss_weight']
-        max_hue_change = tf.constant(
-            GameParameters['octo_max_hue_change'], dtype='float32')
+        constraint_loss_weight = cfg.training.constraint_loss_weight
+        hue_change_limit = cfg.octopus.sucker.max_hue_change
+        max_hue_change = tf.constant(hue_change_limit, dtype='float32')
 
         # Model constructor. Two architectures:
-        # - delta (default via GameParameters['sucker_delta_model']): the
+        # - delta (default via cfg.training.sucker_delta_model): the
         #   network predicts an unbounded raw value that DeltaColorLayer
         #   squashes into a legal color step around the previous color, so
         #   the physical constraint holds by construction and training
         #   uses ClampedTargetLoss (pure target matching).
         # - legacy: direct color prediction trained with WeightedSumLoss
         #   (soft constraint penalty + weak MAE pull).
-        use_delta = bool(GameParameters.get('sucker_delta_model', False))
+        use_delta = bool(cfg.training.sucker_delta_model)
         if use_delta:
             inp = keras.layers.Input(shape=(2,))
             hidden = keras.layers.Dense(
@@ -138,12 +138,11 @@ class SuckerTrainer(Trainer):
             raw = keras.layers.Dense(
                 units=1, activation="linear", name="raw_delta")(hidden)
             outp = DeltaColorLayer(
-                max_hue_change=float(
-                    GameParameters['octo_max_hue_change']),
+                max_hue_change=float(hue_change_limit),
                 name="prediction_layer")([inp, raw])
             sucker_model = keras.Model(inputs=inp, outputs=outp)
             delta_loss_fn = ClampedTargetLoss(
-                threshold=float(GameParameters['octo_max_hue_change']))
+                threshold=float(hue_change_limit))
         else:
             inp = keras.layers.Input(shape=(2,), batch_size=batch_size)
             outp = keras.layers.Dense(units=1, activation="linear",
@@ -169,7 +168,7 @@ class SuckerTrainer(Trainer):
             summary_writer = tf.summary.create_file_writer(logdir=log_dir)
 
         # Custom training loop
-        epochs = GameParameters["epochs"]
+        epochs = cfg.training.epochs
         optimizer = keras.optimizers.Adam(learning_rate=1e-3)
 
         total_steps = 0

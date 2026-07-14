@@ -6,7 +6,7 @@ import time as tm
 import numpy as np
 import tensorflow as tf
 
-from OctoConfig import GameParameters, TrainingParameters
+from OctoConfig import GameParameters, TrainingParameters, as_config
 from simulator.simutil import MLMode
 from training.limb import LimbTrainer
 from training.losses import (
@@ -49,13 +49,18 @@ if ERASE_OLD_TENSORBOARD_LOGS:
 datagen_location = TrainingParameters['datasets'][ML_MODE]
 model_location = TrainingParameters['models'][ML_MODE]
 
+# The trainers take one Config. Both flat dicts are views of the same
+# DEFAULT profile, so converting either yields the same object; step 6
+# replaces this with the TRAINING profile directly.
+cfg = as_config(GameParameters)
+
 if ML_MODE == MLMode.SUCKER:
-    trainer = SuckerTrainer(GameParameters, TrainingParameters)
+    trainer = SuckerTrainer(cfg)
 elif ML_MODE == MLMode.LIMB:
-    trainer = LimbTrainer(GameParameters, TrainingParameters)
+    trainer = LimbTrainer(cfg)
 else:
     raise ValueError(
-        "No trainer available for selected ML Mode, check GameParameters"
+        "No trainer available for selected ML Mode, check the config"
     )
 
 # %% Data Gen
