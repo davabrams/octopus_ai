@@ -24,10 +24,26 @@ VIDEOS_DIR = os.path.join(ROOT_DIR, "logs", "videos")
 class FrameRecorder:
     """Saves per-frame PNGs to a run folder and stitches them to MP4."""
 
-    def __init__(self, fps: int = 5, run_stamp: str = None):
+    def __init__(self, fps: int = 5, run_stamp: str = None,
+                 base_dir: str = None):
+        """fps: playback rate of the stitched video.
+
+        run_stamp: folder/file name for this run; defaults to a timestamp.
+
+        base_dir: where frames/ and videos/ live. Defaults to the project's
+            logs/ directory. Tests MUST pass a tmp path here - otherwise
+            they write real videos into the repo, and a failure mid-test
+            leaves them behind.
+        """
         self.fps = fps
         self.run_stamp = run_stamp or time.strftime("%Y%m%d-%H%M%S")
-        self.frame_dir = os.path.join(FRAMES_DIR, self.run_stamp)
+        if base_dir is None:
+            self.frames_root = FRAMES_DIR
+            self.videos_root = VIDEOS_DIR
+        else:
+            self.frames_root = os.path.join(base_dir, "frames")
+            self.videos_root = os.path.join(base_dir, "videos")
+        self.frame_dir = os.path.join(self.frames_root, self.run_stamp)
         os.makedirs(self.frame_dir, exist_ok=True)
         self.frame_count = 0
 
@@ -59,9 +75,9 @@ class FrameRecorder:
             )
             return ""
 
-        os.makedirs(VIDEOS_DIR, exist_ok=True)
+        os.makedirs(self.videos_root, exist_ok=True)
         out_path = os.path.join(
-            VIDEOS_DIR, f"octo_run_{self.run_stamp}.mp4")
+            self.videos_root, f"octo_run_{self.run_stamp}.mp4")
         pattern = os.path.join(self.frame_dir, "frame_%05d.png")
 
         cmd = [

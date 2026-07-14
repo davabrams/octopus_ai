@@ -39,6 +39,12 @@ class TestSimulationIntegration(unittest.TestCase):
             'agent_number_of_agents': 2,
             'num_iterations': 5,
             'inference_location': InferenceLocation.LOCAL,
+            # These tests call move() with no agent, valid only in RANDOM
+            # mode; pin it rather than inherit the config default (which
+            # gets flipped to a spring mode during interactive testing).
+            'octo_movement_mode': MovementMode.RANDOM,
+            'limb_movement_mode': MovementMode.RANDOM,
+            'agent_movement_mode': MovementMode.RANDOM,
         })
 
     def test_complete_simulation_cycle(self):
@@ -93,18 +99,26 @@ class TestSimulationIntegration(unittest.TestCase):
         self.assertTrue(positions_changed)
 
     def test_different_movement_modes(self):
-        """Test simulation with different movement modes"""
-        # LUMPED_SPRING is not yet implemented (raises NotImplementedError
-        # in Limb._move_lumped_spring), so only test RANDOM for now
-        movement_modes = [MovementMode.RANDOM]
+        """Test simulation with every movement mode.
+
+        RANDOM ignores agents; the spring modes require an agent object, so
+        pass the generator through. All three must run a step and colour
+        without blowing up.
+        """
+        movement_modes = [
+            MovementMode.RANDOM,
+            MovementMode.LUMPED_SPRING,
+            MovementMode.SPRING_CHAIN,
+        ]
 
         for mode in movement_modes:
             with self.subTest(movement_mode=mode):
-                AgentGenerator.agents = []  # Clear shared list
                 params = self.game_params.copy()
                 params['octo_movement_mode'] = mode
-                params['agent_movement_mode'] = mode
                 params['limb_movement_mode'] = mode
+                # agents themselves stay RANDOM; the spring modes describe
+                # how the octopus moves, not the agents
+                params['agent_movement_mode'] = MovementMode.RANDOM
 
                 surface = RandomSurface(params)
                 octopus = Octopus(params)
@@ -113,7 +127,10 @@ class TestSimulationIntegration(unittest.TestCase):
 
                 for _ in range(2):
                     agent_gen.increment_all(octopus)
-                    octopus.move()
+                    if mode == MovementMode.RANDOM:
+                        octopus.move()
+                    else:
+                        octopus.move(agent_gen)
                     octopus.set_color(surface)
 
     def test_configuration_consistency(self):

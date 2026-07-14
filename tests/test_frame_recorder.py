@@ -4,6 +4,7 @@ Unit tests for the frame recorder / video stitcher.
 import os
 import shutil
 import sys
+import tempfile
 import unittest
 
 import matplotlib
@@ -17,15 +18,16 @@ from simulator.frame_recorder import FrameRecorder
 
 class TestFrameRecorder(unittest.TestCase):
     def setUp(self):
-        self.rec = FrameRecorder(fps=5, run_stamp="unittest_run")
+        # Write into a throwaway tmp dir, NOT the project's logs/: these
+        # tests produce real PNGs and a real MP4, and a failure mid-test
+        # would otherwise leave artifacts sitting in the repo.
+        self.tmp = tempfile.mkdtemp(prefix="octo_frames_test_")
+        self.rec = FrameRecorder(fps=5, run_stamp="unittest_run",
+                                 base_dir=self.tmp)
         self.fig, self.ax = plt.subplots(figsize=(3, 3))
 
     def tearDown(self):
-        shutil.rmtree(self.rec.frame_dir, ignore_errors=True)
-        from simulator.frame_recorder import VIDEOS_DIR
-        v = os.path.join(VIDEOS_DIR, "octo_run_unittest_run.mp4")
-        if os.path.exists(v):
-            os.remove(v)
+        shutil.rmtree(self.tmp, ignore_errors=True)
         plt.close(self.fig)
 
     def test_save_frame_creates_numbered_png(self):

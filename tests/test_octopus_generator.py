@@ -152,6 +152,11 @@ class TestOctopus(unittest.TestCase):
         self.params['octo_num_arms'] = 4
         self.params['x_len'] = 10
         self.params['y_len'] = 10
+        # These tests call move() with no agent, which is only valid in
+        # RANDOM mode. Pin it so the suite doesn't depend on whatever the
+        # config default happens to be set to.
+        self.params['octo_movement_mode'] = MovementMode.RANDOM
+        self.params['limb_movement_mode'] = MovementMode.RANDOM
 
         # Create mock surface
         self.mock_surface = Mock()
@@ -216,6 +221,9 @@ class TestIntegration(unittest.TestCase):
         self.params['octo_num_arms'] = 2
         self.params['limb_rows'] = 2
         self.params['limb_cols'] = 1
+        # move() is called with no agent -> RANDOM mode only (see above)
+        self.params['octo_movement_mode'] = MovementMode.RANDOM
+        self.params['limb_movement_mode'] = MovementMode.RANDOM
 
         self.surface = RandomSurface(self.params)
         self.octopus = Octopus(params=self.params)
