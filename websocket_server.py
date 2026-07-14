@@ -5,7 +5,10 @@ WebSocket server for Octopus AI visualization.
 Streams live simulation state as JSON to browser frontends
 (octopus-visualizer.html / octopus-ai-visualizer.tsx) at ~10 FPS on
 ws://localhost:8765, and accepts config-update and play/pause/reset
-control messages.
+control messages. The same port also serves the visualizer HTML page over
+plain HTTP, so opening http://localhost:8765/ in a browser loads the UI,
+which then upgrades to a WebSocket on the same port. No separate static
+file server is needed.
 
 Wire format (message type "simulation_state"):
 {
@@ -23,19 +26,27 @@ Wire format (message type "simulation_state"):
 """
 
 import asyncio
+import http
 import json
 import logging
+import pathlib
 import threading
 import time
 
 import websockets
+from websockets.datastructures import Headers
+from websockets.http11 import Response
 
 from OctoConfig import GameParameters
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode
 from simulator.surface_generator import RandomSurface
-from training.losses import ConstraintLoss
+from training.losses import (
+    ClampedTargetLoss,
+    ConstraintLoss,
+    DeltaColorLayer,
+)
 from training.models.model_loader import ModelLoader
 
 
@@ -84,7 +95,11 @@ class OctopusSimulationServer:
             try:
                 self.model = ModelLoader(
                     self.config['inference_model'],
-                    custom_objects={"ConstraintLoss": ConstraintLoss},
+                    custom_objects={
+                        "ConstraintLoss": ConstraintLoss,
+                        "ClampedTargetLoss": ClampedTargetLoss,
+                        "DeltaColorLayer": DeltaColorLayer,
+                    },
                 ).get_object()
             except Exception as e:
                 logging.warning(
@@ -314,6 +329,64 @@ class OctopusSimulationServer:
         else:
             logging.warning("Unknown message type: %s", message_type)
 
+    # Path (relative to this file) of the browser UI served over HTTP.
+    HTML_PAGE = "octopus-visualizer.html"
+
+    def _read_html_page(self):
+        """Return (body_bytes, content_type) for the visualizer page."""
+        page_path = pathlib.Path(__file__).parent / self.HTML_PAGE
+        try:
+            body = page_path.read_bytes()
+            return body, "text/html; charset=utf-8"
+        except FileNotFoundError:
+            msg = (
+                f"Visualizer page not found: {self.HTML_PAGE}. "
+                "Expected it next to websocket_server.py."
+            ).encode()
+            return msg, "text/plain; charset=utf-8"
+
+    def process_request(self, connection, request):
+        """Serve the UI over HTTP; let WebSocket upgrades pass through.
+
+        websockets calls this for every incoming request before the
+        handshake. Returning a Response short-circuits it (plain HTTP);
+        returning None lets the WebSocket upgrade proceed. We detect the
+        upgrade via the Connection/Upgrade headers so a normal browser
+        navigation to http://localhost:8765/ gets the page instead of the
+        "you need a WebSocket client" error.
+        """
+        headers = request.headers
+        connection_hdr = headers.get("Upgrade", "")
+        if connection_hdr.lower() == "websocket":
+            return None  # proceed with the WebSocket handshake
+
+        if request.path in ("/", "/index.html", "/" + self.HTML_PAGE):
+            body, content_type = self._read_html_page()
+            status = (
+                http.HTTPStatus.OK
+                if content_type.startswith("text/html")
+                else http.HTTPStatus.NOT_FOUND
+            )
+            resp_headers = Headers({
+                "Content-Type": content_type,
+                "Content-Length": str(len(body)),
+                "Cache-Control": "no-store",
+            })
+            return Response(status.value, status.phrase, resp_headers, body)
+
+        body = b"Not found. Open http://localhost:%d/ for the visualizer." \
+            % self.port
+        resp_headers = Headers({
+            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Length": str(len(body)),
+        })
+        return Response(
+            http.HTTPStatus.NOT_FOUND.value,
+            http.HTTPStatus.NOT_FOUND.phrase,
+            resp_headers,
+            body,
+        )
+
     async def start_server(self):
         """Start the WebSocket server."""
         print(f"Starting Octopus AI WebSocket server on port {self.port}")
@@ -321,9 +394,15 @@ class OctopusSimulationServer:
         asyncio.create_task(self.simulation_loop())
 
         async with websockets.serve(
-            self.handle_client, "localhost", self.port
+            self.handle_client,
+            "localhost",
+            self.port,
+            process_request=self.process_request,
         ):
-            print(f"Server running on ws://localhost:{self.port}")
+            print(
+                f"Open the visualizer at http://localhost:{self.port}/  "
+                f"(WebSocket on ws://localhost:{self.port})"
+            )
             await asyncio.Future()
 
 
