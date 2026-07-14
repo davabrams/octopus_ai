@@ -14,6 +14,7 @@ from simulator.simutil import (
     agent_influence_vector,
     convert_adjacents_to_ragged_tensor
 )
+from simulator.spring_chain import solve_chain, base_reaction
 
 class Sucker:
     """
@@ -127,6 +128,9 @@ class Limb:
         self.max_limb_offset = params['octo_max_limb_offset']
         self.arm_stiffness = params['octo_arm_stiffness']
         self.arm_rest_fraction = params['octo_arm_rest_fraction']
+        self.chain_spring_k = params['octo_chain_spring_k']
+        self.chain_agent_k = params['octo_chain_agent_k']
+        self.chain_move_k = params['octo_chain_move_k']
         self.agent_range_radius = params['agent_range_radius']
         self.threading = params['octo_threading']
 
@@ -200,6 +204,8 @@ class Limb:
         elif self.movement_mode == MovementMode.LUMPED_SPRING:
             self._move_lumped_spring(
                 x_octo, y_octo, agents, coordinated_influence)
+        elif self.movement_mode == MovementMode.SPRING_CHAIN:
+            self._move_spring_chain(x_octo, y_octo, agents)
         else:
             assert False, "Unknown movement mode"
 
@@ -368,6 +374,91 @@ class Limb:
         self.last_tension = self.tension_vector().copy()
         self.last_arm_length = float(new_len)
 
+    def _move_spring_chain(self, x_octo: float, y_octo: float,
+                           agents: list = None):
+        """Mass-spring chain solved by ONE direct linear solve per frame.
+
+        Each centerline node is a sucker mass; node 0 is the base, pinned to
+        the body. Free nodes 1..n feel: neighbor springs (chain_spring_k),
+        a prey spring-to-target (chain_agent_k, tip-weighted linear ramp),
+        a threat constant push, and a movement-cost anchor to their
+        start-of-frame position (chain_move_k, uniform). All forces are
+        linear, so equilibrium is K x = f (K symmetric positive-definite);
+        solve_chain does it in one shot. This becomes iterative only when
+        forces go nonlinear.
+
+        The base reaction (spring between base and node 1) is stored as the
+        arm's tension for the body to follow, mirroring LUMPED_SPRING so the
+        two modes share body dynamics.
+        """
+        # Pin the base to the body.
+        base = self.center_line[0]
+        base.x = x_octo
+        base.y = y_octo
+        base_xy = np.array([base.x, base.y], dtype=float)
+
+        free = self.center_line[1:]
+        n = len(free)
+        if n == 0:
+            return
+
+        # Start-of-frame positions (the movement-cost anchor targets).
+        prev_xy = np.array([[pt.x, pt.y] for pt in free], dtype=float)
+
+        # Per-node prey target (NaN where none) and threat push (0 where
+        # none), sensed at each node's own position within its range.
+        targets = np.full((n, 2), np.nan, dtype=float)
+        threat_force = np.zeros((n, 2), dtype=float)
+        if agents:
+            for i, pt in enumerate(free):
+                nearest_prey = None
+                nearest_d = None
+                for ag in agents:
+                    d = np.hypot(ag.x - pt.x, ag.y - pt.y)
+                    if d > self.agent_range_radius:
+                        continue
+                    if ag.agent_type == AgentType.PREY:
+                        # closest prey becomes this node's spring target
+                        if nearest_d is None or d < nearest_d:
+                            nearest_d = d
+                            nearest_prey = ag
+                    else:  # THREAT: constant push away, weighted by proximity
+                        if d > 1e-9:
+                            w = 1.0 - (d / self.agent_range_radius)
+                            ux = (pt.x - ag.x) / d
+                            uy = (pt.y - ag.y) / d
+                            threat_force[i, 0] += (self.chain_agent_k * w * ux)
+                            threat_force[i, 1] += (self.chain_agent_k * w * uy)
+                if nearest_prey is not None:
+                    targets[i] = (nearest_prey.x, nearest_prey.y)
+
+        new_xy = solve_chain(
+            base_xy, prev_xy, targets, threat_force,
+            self.chain_spring_k, self.chain_agent_k, self.chain_move_k)
+
+        # Clamp to the grid and write back; set a heading for each node so
+        # _refresh_sucker_locations orients the sucker pairs sensibly.
+        prev_px, prev_py = base.x, base.y
+        for i, pt in enumerate(free):
+            nx = min(max(float(new_xy[i, 0]), -0.5), self.x_len - 0.51)
+            ny = min(max(float(new_xy[i, 1]), -0.5), self.y_len - 0.51)
+            pt.x = nx
+            pt.y = ny
+            pt.t = float(np.arctan2(ny - prev_py, nx - prev_px))
+            prev_px, prev_py = nx, ny
+
+        # Base reaction -> the body's tension signal for this arm.
+        node1_xy = np.array([free[0].x, free[0].y], dtype=float)
+        tension = base_reaction(base_xy, node1_xy, self.chain_spring_k)
+
+        # Capture for logging / visualization (reuse the same attributes).
+        self.last_tension = np.asarray(tension, dtype=float).copy()
+        self.last_f_attract = np.zeros(2, dtype=float)
+        self.last_f_spring = np.zeros(2, dtype=float)
+        self.last_net = np.asarray(tension, dtype=float).copy()
+        self.last_arm_length = float(
+            np.hypot(free[-1].x - base.x, free[-1].y - base.y))
+
     def find_adjacents(self, s_target: Sucker, radius: float):
         """
         Finds all suckers within a specified radius
@@ -456,8 +547,10 @@ class Octopus:
             - Attracted to prey
             - Repelled by threats
         """
-        if self.movement_mode == MovementMode.LUMPED_SPRING and not ag:
-            assert False, "movement mode set to attract/repel but no agent object passed"
+        agent_modes = (MovementMode.LUMPED_SPRING, MovementMode.SPRING_CHAIN)
+        if self.movement_mode in agent_modes and not ag:
+            assert False, ("movement mode needs agents but no agent object "
+                           "was passed")
 
         agents = ag.agents if ag is not None else None
         coordinated_influence = None
@@ -465,35 +558,42 @@ class Octopus:
         if self.movement_mode == MovementMode.RANDOM:
             self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
             self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
-        elif self.movement_mode == MovementMode.LUMPED_SPRING:
-            coordinated_influence = self._move_lumped_spring(ag)
+        elif self.movement_mode in agent_modes:
+            # Both spring modes share body dynamics: drift by summed arm base
+            # tension. For LUMPED_SPRING the tension is computed live; for
+            # SPRING_CHAIN each arm stored its base reaction in last_tension
+            # on the previous frame. First frame (all-zero) just doesn't move.
+            coordinated_influence = self._drift_body_by_tension()
         else:
             assert False, "Unknown movement mode"
 
         for l in self.limbs:
             l.move(self.x, self.y, agents, coordinated_influence)
 
-    def _move_lumped_spring(self, ag=None):
-        """Drift the body by the summed spring tension of its arms.
+    def _drift_body_by_tension(self):
+        """Drift the body by the summed base tension of its arms.
 
-        Pure-tension coupling (no direct attraction term): the body only
-        moves because its arms are straining. Each arm contributes its
-        tension reaction (stiffness * stretch, directed toward that arm's
-        tip); relaxed arms contribute ~nothing, arms reaching hard toward
-        prey tug strongly. The body eases along the summed tension, capped
-        by max_body_velocity.
+        Shared by both spring modes (pure-tension coupling, no direct
+        attraction): the body only moves because its arms are straining.
 
-        Note the ordering in Octopus.move: arms are reflowed *after* this,
-        so the tension summed here reflects last step's arm strain. Over the
-        loop this is a stable one-step lag - the body chases the strain the
-        arms reported, they re-strain toward prey, and it converges.
+        - LUMPED_SPRING: each arm's live tension_vector() (signed stretch/
+          compression along base->tip).
+        - SPRING_CHAIN: each arm's stored base reaction from last frame
+          (last_tension), i.e. the base<->node1 spring. Same one-step lag as
+          LUMPED_SPRING - arms reflow after this call, body chases the
+          reported strain, converges over the loop.
 
-        Returns None: arms sense agents at their own tips (limb autonomy).
-        Full-octopus coordination can later pass a shared influence here.
+        Relaxed arms contribute ~nothing; arms reaching hard tug strongly.
+        The body eases along the summed tension, capped by max_body_velocity.
+        Returns None (arms sense agents at their own nodes; full-octopus
+        coordination can later pass a shared influence).
         """
         total = np.zeros(2, dtype=float)
         for limb in self.limbs:
-            total += limb.tension_vector()
+            if self.movement_mode == MovementMode.SPRING_CHAIN:
+                total += np.asarray(limb.last_tension, dtype=float)
+            else:
+                total += limb.tension_vector()
 
         drift = np.zeros(2, dtype=float)
         mag = float(np.hypot(total[0], total[1]))
@@ -503,10 +603,8 @@ class Octopus:
             self.x += drift[0]
             self.y += drift[1]
 
-        # Capture for logging / visualization.
         self.last_body_force = total.copy()
         self.last_body_drift = drift.copy()
-
         return None
 
     def find_color(

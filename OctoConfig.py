@@ -69,6 +69,16 @@ GameParameters: dict = {
                                   # threat can COMPRESS the arm below rest,
                                   # producing outward tension that flees the
                                   # threat; prey STRETCHES it above rest.
+    'octo_chain_spring_k': 1.0,  # SPRING_CHAIN: neighbor spring stiffness
+                                  # between adjacent suckers along the arm
+    'octo_chain_agent_k': 0.5,  # SPRING_CHAIN: prey spring-to-target
+                                  # stiffness (before the tip weighting);
+                                  # threats enter as a constant push force
+    'octo_chain_move_k': 2.0,  # SPRING_CHAIN: uniform per-sucker movement
+                                  # cost - anchor spring to the sucker's
+                                  # position at the START of the frame, so a
+                                  # sucker must "pay" to move (prevents
+                                  # teleporting). Higher = more sluggish arm.
     'octo_num_arms': 8,
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,

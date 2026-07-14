@@ -14,6 +14,7 @@ class MovementMode(Enum):
     """Enum stores agent, octopus, and limb movement types"""
     RANDOM: int = 0
     LUMPED_SPRING: int = 1
+    SPRING_CHAIN: int = 2
 
 
 class AgentType(Enum):
