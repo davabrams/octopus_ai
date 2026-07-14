@@ -194,8 +194,9 @@ def setup_display():
     fig.show()
     return fig, ax
 
-def display_refresh(ax, octo, ag, surf, debug_mode = False):
+def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False):
     """ Displays all of the octopus simulator components """
+    from matplotlib.lines import Line2D
 
     ax.clear()
 
@@ -237,6 +238,93 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False):
         if debug_mode:
             ax.plot(agent.x, agent.y, marker='o', color=color, ms=agent_range_ms, alpha=.5)
         ax.plot(agent.x, agent.y, marker='o', color=color)
+
+    # Force vectors (opt-in via show_forces). Arrows are scaled up for
+    # visibility since raw force magnitudes are small (< 1 grid unit).
+    if show_forces:
+        FORCE_SCALE = 3.0
+        # Per-arm tension (what the arm feeds the body): cyan.
+        for limb in octo.limbs:
+            base = limb.center_line[0]
+            ten = getattr(limb, 'last_tension', None)
+            if ten is not None and (abs(ten[0]) > 1e-6 or abs(ten[1]) > 1e-6):
+                ax.arrow(base.x, base.y,
+                         ten[0] * FORCE_SCALE, ten[1] * FORCE_SCALE,
+                         head_width=0.25, head_length=0.3, fc='cyan',
+                         ec='cyan', length_includes_head=True, alpha=0.9,
+                         zorder=5)
+            # Tip attraction/repel: orange (prey pull) at the arm tip.
+            tip = limb.center_line[-1]
+            fa = getattr(limb, 'last_f_attract', None)
+            if fa is not None and (abs(fa[0]) > 1e-6 or abs(fa[1]) > 1e-6):
+                ax.arrow(tip.x, tip.y,
+                         fa[0] * FORCE_SCALE, fa[1] * FORCE_SCALE,
+                         head_width=0.2, head_length=0.25, fc='orange',
+                         ec='orange', length_includes_head=True, alpha=0.8,
+                         zorder=5)
+        # Body drift (summed tension, capped): yellow, from the body center.
+        bf = getattr(octo, 'last_body_force', None)
+        if bf is not None and (abs(bf[0]) > 1e-6 or abs(bf[1]) > 1e-6):
+            ax.arrow(octo.x, octo.y,
+                     bf[0] * FORCE_SCALE, bf[1] * FORCE_SCALE,
+                     head_width=0.35, head_length=0.4, fc='yellow',
+                     ec='yellow', length_includes_head=True, zorder=6)
+
+    # Legend explaining the on-screen elements.
+    legend_handles = [
+        Line2D([0], [0], marker='o', color='w', label='Prey (arms reach toward)',
+               markerfacecolor='lightgreen', markersize=8),
+        Line2D([0], [0], marker='o', color='w', label='Threat (arms recoil, body flees)',
+               markerfacecolor='violet', markersize=8),
+        Line2D([0], [0], marker='.', color='w', label='Suckers (shaded to camouflage)',
+               markerfacecolor='gray', markeredgecolor=[0.5, 0.5, 0.5],
+               markersize=12),
+    ]
+    if show_forces:
+        legend_handles += [
+            Line2D([0], [0], color='yellow', lw=2, label='Body drift force'),
+            Line2D([0], [0], color='cyan', lw=2, label='Arm tension (to body)'),
+            Line2D([0], [0], color='orange', lw=2, label='Tip attraction/repel'),
+        ]
+    ax.legend(handles=legend_handles, loc='upper left',
+              fontsize='x-small', framealpha=0.8,
+              bbox_to_anchor=(0.0, 1.0))
+
+
+def agent_influence_vector(x: float,
+                           y: float,
+                           agents: list,
+                           radius: float):
+    """Sum of attract/repel influence from agents within `radius` of (x, y).
+
+    Returns an (dx, dy) numpy vector pointing toward nearby PREY and away
+    from nearby THREATs, with each agent weighted by how close it is
+    (linear falloff: weight 1 at distance 0, weight 0 at the radius edge).
+    Agents outside the radius contribute nothing. With no agents in range
+    the result is the zero vector, which callers treat as "relax to the
+    neutral pose".
+
+    This is the shared primitive behind octopus body drift and limb
+    reaching in MovementMode.ATTRACT_REPEL.
+    """
+    influence = np.zeros(2, dtype=float)
+    if not agents or radius <= 0:
+        return influence
+    for agent in agents:
+        dx = agent.x - x
+        dy = agent.y - y
+        dist = np.sqrt(dx * dx + dy * dy)
+        if dist > radius or dist < 1e-9:
+            continue
+        weight = 1.0 - (dist / radius)  # linear falloff in [0, 1]
+        ux, uy = dx / dist, dy / dist   # unit vector toward the agent
+        if agent.agent_type == AgentType.PREY:
+            influence[0] += weight * ux
+            influence[1] += weight * uy
+        else:  # THREAT
+            influence[0] -= weight * ux
+            influence[1] -= weight * uy
+    return influence
 
 
 def convert_adjacents_to_ragged_tensor(adjacents: list):
