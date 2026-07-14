@@ -1,50 +1,25 @@
 """Shared pytest configuration for the octopus_ai test suite.
 
-WHY THIS EXISTS
----------------
-Tests build their params with GameParameters.copy(), which means they
-inherit whatever happens to be in OctoConfig at the time. That config is a
-working file - it gets flipped to SPRING_CHAIN, save_images=True,
-log_forces=True and so on during interactive runs. Tests then silently
-depend on those values: the suite used to break whenever the movement mode
-default changed, and any test touching a code path that reads save_images /
-log_forces would start writing videos and SQLite databases into the repo.
+Puts the project root and this directory on sys.path so test modules can
+import both the package under test and `helpers`.
 
-The autouse fixture below pins the TEST profile for EVERY test and restores
-the original afterwards, so:
-  - no test can produce persistent artifacts (videos, frames, force DBs)
-  - the suite's result does not depend on the developer's working config
-  - a test that genuinely wants a mode/flag sets it in its own params copy,
-    which still takes precedence (tests override the baseline, not vice versa)
+There is deliberately NO config-isolation fixture here. There used to be:
+GameParameters was a working dict that got flipped to save_images=True and
+SPRING_CHAIN during interactive runs, and every test inherited it - the
+suite broke three separate times that way, and nothing structurally stopped
+a test writing videos into the repo.
 
-The baseline is OctoConfig.TEST - a real profile in the config schema, not a
-dict maintained here. Adding a side-effecting flag to the schema and
-defaulting it off automatically covers the suite; there is no second list to
-keep in sync.
+The config reorg removed the need rather than the symptom. GameParameters is
+now derived from the DEFAULT profile, whose defaults are side-effect free by
+construction, and experimenting means selecting a profile (CFG = DEBUG in
+octo_viz) instead of editing shared state. There is no longer a global to
+leak, so there is nothing to isolate.
 
-Tests that need a real artifact (e.g. test_frame_recorder) must write into
-tmp_path, never into the project's logs/ directory.
+Tests that produce real artifacts (e.g. test_frame_recorder) still write to
+tmp, never into the project's logs/ directory.
 """
-import pytest
+import os
+import sys
 
-from OctoConfig import TEST, GameParameters, to_game_parameters
-
-# The safe baseline every test starts from, derived from the TEST profile.
-SAFE_TEST_CONFIG = to_game_parameters(TEST)
-
-
-@pytest.fixture(autouse=True)
-def isolate_game_parameters():
-    """Pin the TEST profile for each test, then restore the real config.
-
-    Autouse + function scope means this wraps every test (including
-    unittest.TestCase ones, whose setUp runs inside it), so a
-    GameParameters.copy() in setUp already sees the safe values.
-    """
-    original = GameParameters.copy()
-    GameParameters.update(SAFE_TEST_CONFIG)
-    try:
-        yield
-    finally:
-        GameParameters.clear()
-        GameParameters.update(original)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))

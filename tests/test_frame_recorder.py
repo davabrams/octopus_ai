@@ -1,6 +1,7 @@
 """
 Unit tests for the frame recorder / video stitcher.
 """
+import inspect
 import os
 import shutil
 import sys
@@ -66,6 +67,32 @@ class TestFrameRecorder(unittest.TestCase):
         self.rec.stitch_video(keep_frames=False)
         self.assertFalse(os.path.isdir(frame_dir))
 
+
+
+class TestFrameRecorderWritesOutsideTheRepo(unittest.TestCase):
+    """Migrated from the retired test_config_isolation.py.
+
+    These tests produce a real MP4. FrameRecorder used to hardcode the
+    project's logs/ directory, so the test wrote artifacts into the repo and
+    a failure mid-test left them behind. base_dir is what lets them go to
+    tmp instead, so the parameter existing is worth guarding.
+    """
+
+    def test_frame_recorder_accepts_a_non_repo_base_dir(self):
+        sig = inspect.signature(FrameRecorder.__init__)
+        self.assertIn('base_dir', sig.parameters)
+
+    def test_base_dir_keeps_output_out_of_the_project(self):
+        tmp = tempfile.mkdtemp(prefix="octo_basedir_test_")
+        try:
+            rec = FrameRecorder(fps=5, run_stamp="probe", base_dir=tmp)
+            project_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), ".."))
+            self.assertFalse(
+                os.path.abspath(rec.frame_dir).startswith(project_root),
+                f"frames would be written inside the repo: {rec.frame_dir}")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 if __name__ == '__main__':
     unittest.main()
