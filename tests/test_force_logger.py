@@ -15,19 +15,18 @@ from simulator.octopus_generator import Octopus
 from simulator.agent_generator import AgentGenerator
 from simulator.simutil import MovementMode, Agent, AgentType
 from simulator.force_logger import ForceLogger
-from OctoConfig import GameParameters
+from helpers import make_config
 
 
 class TestForceLogger(unittest.TestCase):
     def setUp(self):
-        self.p = GameParameters.copy()
-        self.p.update({
-            'x_len': 20, 'y_len': 20, 'octo_num_arms': 4, 'limb_rows': 6,
-            'limb_cols': 2, 'rand_seed': 3,
-            'octo_movement_mode': MovementMode.LUMPED_SPRING,
-            'limb_movement_mode': MovementMode.LUMPED_SPRING,
-            'agent_movement_mode': MovementMode.LUMPED_SPRING,
-        })
+        self.p = make_config(
+            x_len=20, y_len=20, octo_num_arms=4, limb_rows=6,
+            limb_cols=2, rand_seed=3,
+            octo_movement_mode=MovementMode.LUMPED_SPRING,
+            limb_movement_mode=MovementMode.LUMPED_SPRING,
+            agent_movement_mode=MovementMode.LUMPED_SPRING,
+        )
         self.db = os.path.join(tempfile.gettempdir(),
                                "_force_logger_test.db")
         if os.path.exists(self.db):

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from simulator.octopus_generator import Octopus, Limb
 from simulator.simutil import MovementMode, Agent, AgentType
 from simulator.spring_chain import build_K, solve_chain, base_reaction
-from OctoConfig import GameParameters
+from helpers import make_config
 
 
 class TestSpringChainSolver(unittest.TestCase):
@@ -73,16 +73,16 @@ class TestSpringChainSolver(unittest.TestCase):
 class TestSpringChainLimb(unittest.TestCase):
     """The mode wired into Limb / Octopus."""
 
-    def _params(self):
-        p = GameParameters.copy()
-        p.update({
-            'x_len': 24, 'y_len': 24, 'limb_rows': 10, 'limb_cols': 2,
-            'octo_num_arms': 4, 'rand_seed': 3,
-            'octo_movement_mode': MovementMode.SPRING_CHAIN,
-            'limb_movement_mode': MovementMode.SPRING_CHAIN,
-            'agent_movement_mode': MovementMode.RANDOM,
-        })
-        return p
+    def _params(self, **over):
+        base = dict(
+            x_len=24, y_len=24, limb_rows=10, limb_cols=2,
+            octo_num_arms=4, rand_seed=3,
+            octo_movement_mode=MovementMode.SPRING_CHAIN,
+            limb_movement_mode=MovementMode.SPRING_CHAIN,
+            agent_movement_mode=MovementMode.RANDOM,
+        )
+        base.update(over)  # callers may replace any of the above
+        return make_config(**base)
 
     def test_base_stays_pinned_to_body(self):
         p = self._params()
@@ -113,8 +113,8 @@ class TestSpringChainLimb(unittest.TestCase):
             self.assertTrue(np.isfinite(pt.x) and np.isfinite(pt.y))
 
     def test_higher_move_k_less_movement_in_sim(self):
-        p_lo = self._params(); p_lo['octo_chain_move_k'] = 0.5
-        p_hi = self._params(); p_hi['octo_chain_move_k'] = 20.0
+        p_lo = self._params(octo_chain_move_k=0.5)
+        p_hi = self._params(octo_chain_move_k=20.0)
         prey = Agent(x=16.0, y=15.0, agent_type=AgentType.PREY)
 
         def total_move(params):

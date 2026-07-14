@@ -12,21 +12,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from simulator.octopus_generator import Octopus
 from simulator.agent_generator import AgentGenerator
 from simulator.simutil import MovementMode, Agent, AgentType
-from OctoConfig import GameParameters
+from helpers import make_config
 
 
 class TestPreyCapture(unittest.TestCase):
     def _params(self, **over):
-        p = GameParameters.copy()
-        p.update({
-            'x_len': 24, 'y_len': 24, 'octo_num_arms': 4,
-            'limb_rows': 8, 'limb_cols': 2, 'rand_seed': 3,
-            'octo_movement_mode': MovementMode.RANDOM,
-            'limb_movement_mode': MovementMode.RANDOM,
-            'agent_movement_mode': MovementMode.RANDOM,
-        })
-        p.update(over)
-        return p
+        base = dict(
+            x_len=24, y_len=24, octo_num_arms=4,
+            limb_rows=8, limb_cols=2, rand_seed=3,
+            octo_movement_mode=MovementMode.RANDOM,
+            limb_movement_mode=MovementMode.RANDOM,
+            agent_movement_mode=MovementMode.RANDOM,
+        )
+        base.update(over)  # callers may replace any of the above
+        return make_config(**base)
 
     def _octo_and_gen(self, **over):
         p = self._params(**over)

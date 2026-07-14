@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from simulator.octopus_generator import Octopus
 from simulator.agent_generator import AgentGenerator
 from simulator.simutil import MovementMode, Agent, AgentType
-from OctoConfig import GameParameters
+from helpers import make_config
 
 
 def nearest_sucker_dist(octo, agent):
@@ -22,14 +22,13 @@ def nearest_sucker_dist(octo, agent):
 
 class TestRandomAgentMovement(unittest.TestCase):
     def _params(self, **over):
-        p = GameParameters.copy()
-        p.update({
-            'x_len': 24, 'y_len': 24, 'octo_num_arms': 4,
-            'limb_rows': 6, 'limb_cols': 2, 'rand_seed': 1,
-            'agent_movement_mode': MovementMode.RANDOM,
-        })
-        p.update(over)
-        return p
+        base = dict(
+            x_len=24, y_len=24, octo_num_arms=4,
+            limb_rows=6, limb_cols=2, rand_seed=1,
+            agent_movement_mode=MovementMode.RANDOM,
+        )
+        base.update(over)  # callers may replace any of the above
+        return make_config(**base)
 
     def test_random_walk_is_not_direction_biased(self):
         """Velocities must be symmetric about zero.
@@ -62,22 +61,21 @@ class TestRandomAgentMovement(unittest.TestCase):
         for a in ag.agents:
             self.assertGreaterEqual(a.x, 0.0)
             self.assertGreaterEqual(a.y, 0.0)
-            self.assertLessEqual(a.x, p['x_len'] - 1.0)
-            self.assertLessEqual(a.y, p['y_len'] - 1.0)
+            self.assertLessEqual(a.x, p.world.x_len - 1.0)
+            self.assertLessEqual(a.y, p.world.y_len - 1.0)
 
 
 class TestReactiveAgentMovement(unittest.TestCase):
     def _params(self, **over):
-        p = GameParameters.copy()
-        p.update({
-            'x_len': 24, 'y_len': 24, 'octo_num_arms': 8,
-            'limb_rows': 16, 'limb_cols': 2, 'rand_seed': 3,
-            'octo_movement_mode': MovementMode.SPRING_CHAIN,
-            'limb_movement_mode': MovementMode.SPRING_CHAIN,
-            'agent_movement_mode': MovementMode.SPRING_CHAIN,
-        })
-        p.update(over)
-        return p
+        base = dict(
+            x_len=24, y_len=24, octo_num_arms=8,
+            limb_rows=16, limb_cols=2, rand_seed=3,
+            octo_movement_mode=MovementMode.SPRING_CHAIN,
+            limb_movement_mode=MovementMode.SPRING_CHAIN,
+            agent_movement_mode=MovementMode.SPRING_CHAIN,
+        )
+        base.update(over)  # callers may replace any of the above
+        return make_config(**base)
 
     def test_prey_flees_the_octopus(self):
         p = self._params()
@@ -150,8 +148,8 @@ class TestReactiveAgentMovement(unittest.TestCase):
         a = ag.agents[0]
         self.assertGreaterEqual(a.x, 0.0)
         self.assertGreaterEqual(a.y, 0.0)
-        self.assertLessEqual(a.x, p['x_len'] - 1.0)
-        self.assertLessEqual(a.y, p['y_len'] - 1.0)
+        self.assertLessEqual(a.x, p.world.x_len - 1.0)
+        self.assertLessEqual(a.y, p.world.y_len - 1.0)
 
     def test_octopus_can_still_catch_fleeing_prey(self):
         """The chase must remain winnable: body velocity (0.25) exceeds
