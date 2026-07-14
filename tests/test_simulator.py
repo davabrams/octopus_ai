@@ -7,12 +7,20 @@ from simulator.simutil import MovementMode, AgentType, State
 
 
 class TestSurfaceGenerator(unittest.TestCase):
-    def test_random_surface(self) -> None:
+    def test_random_surface_binary(self) -> None:
+        """Binary mode is now requested explicitly.
+
+        This used to omit surface_grayscale and rely on RandomSurface's
+        params.get(..., False) fallback meaning "binary" - an implicit
+        default that disagreed with the project default (grayscale). The
+        test asserts binary behaviour, so it should ask for it.
+        """
         def test_surf_with_size(max_dim: int) -> None:
             params = {
                 "x_len": max_dim,
                 "y_len": max_dim,
-                "rand_seed": 0
+                "rand_seed": 0,
+                "surface_grayscale": False,
             }
             surf = RandomSurface(params)
             self.assertIsInstance(surf.get_val(1,1), int)

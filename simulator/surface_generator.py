@@ -1,17 +1,22 @@
 # %% Patterned Surface Generator
 import numpy as np
 
+from OctoConfig import as_config
+
 class RandomSurface:
     """Generates a random surface of size (y_len, x_len).
 
-    Two modes, selected by params['surface_grayscale'] (default False):
-    - binary (default): cells are 0 (black) or 1 (white), int8
-    - grayscale: cells are uniform random floats in [0, 1), float32
+    Two modes, selected by world.surface_grayscale:
+    - grayscale (the default): cells are uniform random floats in [0, 1)
+    - binary: cells are 0 (black) or 1 (white), int8
+
+    Takes a Config or a legacy flat params dict.
     """
-    def __init__(self, params: dict) -> None:
-        x_len = params['x_len']
-        y_len = params['y_len']
-        rand_seed = params['rand_seed']
+    def __init__(self, params) -> None:
+        cfg = as_config(params)
+        x_len = cfg.world.x_len
+        y_len = cfg.world.y_len
+        rand_seed = cfg.run.rand_seed
         assert x_len > 0, "x must be >0"
         assert y_len > 0, "y must be >0"
 
@@ -19,7 +24,7 @@ class RandomSurface:
 
         self._x_len = x_len
         self._y_len = y_len
-        self.grayscale = bool(params.get('surface_grayscale', False))
+        self.grayscale = bool(cfg.world.surface_grayscale)
         if self.grayscale:
             self.grid = np.random.rand(
                 self._y_len, self._x_len).astype(np.float32)

@@ -232,5 +232,141 @@ def to_training_parameters(cfg: Config) -> dict:
     }
 
 
+def from_game_parameters(d: dict) -> Config:
+    """Build a Config from a legacy flat GameParameters dict.
+
+    The inverse of to_game_parameters, and deliberately TOLERANT: any key
+    the dict omits falls back to the DEFAULT profile. That is what lets
+    partially-specified dicts (e.g. the hand-built one in
+    tests/test_simulator.py) keep working - previously, adding a parameter
+    broke them with a KeyError.
+
+    Note agent_range_radius: one flat key, two concepts. It sets BOTH
+    agents.sensing_radius and octopus.sensing_radius, preserving the
+    pre-split behaviour exactly for anything still passing a dict.
+    """
+    g = d.get
+    D = DEFAULT
+    sensing = g('agent_range_radius', D.agents.sensing_radius)
+
+    return Config(
+        run=RunConfig(
+            num_iterations=g('num_iterations', D.run.num_iterations),
+            rand_seed=g('rand_seed', D.run.rand_seed),
+            threading=g('octo_threading', D.run.threading),
+        ),
+        world=WorldConfig(
+            x_len=g('x_len', D.world.x_len),
+            y_len=g('y_len', D.world.y_len),
+            surface_grayscale=g('surface_grayscale',
+                                D.world.surface_grayscale),
+        ),
+        agents=AgentConfig(
+            count=g('agent_number_of_agents', D.agents.count),
+            max_velocity=g('agent_max_velocity', D.agents.max_velocity),
+            max_theta=g('agent_max_theta', D.agents.max_theta),
+            movement_mode=g('agent_movement_mode', D.agents.movement_mode),
+            sensing_radius=sensing,
+            prey_capture_radius=g('agent_prey_capture_radius',
+                                  D.agents.prey_capture_radius),
+            respawn_captured_prey=g('agent_respawn_captured_prey',
+                                    D.agents.respawn_captured_prey),
+        ),
+        octopus=OctopusConfig(
+            num_arms=g('octo_num_arms', D.octopus.num_arms),
+            max_body_velocity=g('octo_max_body_velocity',
+                                D.octopus.max_body_velocity),
+            movement_mode=g('octo_movement_mode', D.octopus.movement_mode),
+            sensing_radius=sensing,  # see docstring
+            limb=LimbConfig(
+                rows=g('limb_rows', D.octopus.limb.rows),
+                cols=g('limb_cols', D.octopus.limb.cols),
+                min_sucker_distance=g('octo_min_sucker_distance',
+                                      D.octopus.limb.min_sucker_distance),
+                max_sucker_distance=g('octo_max_sucker_distance',
+                                      D.octopus.limb.max_sucker_distance),
+                movement_mode=g('limb_movement_mode',
+                                D.octopus.limb.movement_mode),
+                random=RandomDriftConfig(
+                    max_arm_theta=g('octo_max_arm_theta',
+                                    D.octopus.limb.random.max_arm_theta),
+                ),
+                lumped=LumpedSpringConfig(
+                    max_arm_reach_theta=g(
+                        'octo_max_arm_reach_theta',
+                        D.octopus.limb.lumped.max_arm_reach_theta),
+                    max_limb_offset=g(
+                        'octo_max_limb_offset',
+                        D.octopus.limb.lumped.max_limb_offset),
+                    arm_stiffness=g('octo_arm_stiffness',
+                                    D.octopus.limb.lumped.arm_stiffness),
+                    arm_rest_fraction=g(
+                        'octo_arm_rest_fraction',
+                        D.octopus.limb.lumped.arm_rest_fraction),
+                ),
+                chain=SpringChainConfig(
+                    spring_k=g('octo_chain_spring_k',
+                               D.octopus.limb.chain.spring_k),
+                    agent_k=g('octo_chain_agent_k',
+                              D.octopus.limb.chain.agent_k),
+                    move_k=g('octo_chain_move_k',
+                             D.octopus.limb.chain.move_k),
+                ),
+            ),
+            sucker=SuckerConfig(
+                max_hue_change=g('octo_max_hue_change',
+                                 D.octopus.sucker.max_hue_change),
+                adjacency_radius=g('adjacency_radius',
+                                   D.octopus.sucker.adjacency_radius),
+            ),
+        ),
+        inference=InferenceConfig(
+            location=g('inference_location', D.inference.location),
+            mode=g('inference_mode', D.inference.mode),
+            model=g('inference_model', D.inference.model),
+        ),
+        output=OutputConfig(
+            debug_mode=g('debug_mode', D.output.debug_mode),
+            show_forces=g('show_forces', D.output.show_forces),
+            log_forces=g('log_forces', D.output.log_forces),
+            save_images=g('save_images', D.output.save_images),
+            video_fps=g('video_fps', D.output.video_fps),
+        ),
+        datagen=DatagenConfig(
+            write_format=g('datagen_data_write_format',
+                           D.datagen.write_format),
+            randomize_colors_interval=g(
+                'datagen_randomize_colors_interval',
+                D.datagen.randomize_colors_interval),
+            save_to_disk=g('save_data_to_disk', D.datagen.save_to_disk),
+            restore_from_disk=g('restore_data_from_disk',
+                                D.datagen.restore_from_disk),
+            datagen_mode=g('datagen_mode', D.datagen.datagen_mode),
+        ),
+        training=replace(
+            D.training,
+            epochs=g('epochs', D.training.epochs),
+            batch_size=g('batch_size', D.training.batch_size),
+            test_size=g('test_size', D.training.test_size),
+            constraint_loss_weight=g('constraint_loss_weight',
+                                     D.training.constraint_loss_weight),
+            sucker_delta_model=g('sucker_delta_model',
+                                 D.training.sucker_delta_model),
+        ),
+        paths=DEFAULT_PATHS,
+    )
+
+
+def as_config(params) -> Config:
+    """Normalize a Config-or-legacy-dict into a Config.
+
+    Lets constructors take typed config internally while call sites (and
+    the whole test suite) keep passing flat dicts during the migration.
+    """
+    if isinstance(params, Config):
+        return params
+    return from_game_parameters(params)
+
+
 GameParameters: dict = to_game_parameters(DEFAULT)
 TrainingParameters: dict = to_training_parameters(DEFAULT)

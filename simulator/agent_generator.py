@@ -1,5 +1,7 @@
 """Agent Generator"""
 import numpy as np
+
+from OctoConfig import as_config
 from simulator.simutil import MovementMode, AgentType, Agent
 
 
@@ -8,19 +10,22 @@ class AgentGenerator:
     Generates an agent at a location.
     Default is a random agent type at a random location.
     """
-    def __init__(self, params: dict) -> None:
+    def __init__(self, params) -> None:
         # instance attribute (a class-level list would be shared
         # across all AgentGenerator instances in the process)
         self.agents: list[Agent] = []
-        np.random.seed(seed=params['rand_seed'])
-        self._x_len = params['x_len']
-        self._y_len = params['y_len']
-        self.max_velocity = params['agent_max_velocity']
-        self.max_theta = params['agent_max_theta']
-        self.movement_mode = params['agent_movement_mode']
-        self.range_radius = params['agent_range_radius']
-        self.prey_capture_radius = params['agent_prey_capture_radius']
-        self.respawn_captured_prey = params['agent_respawn_captured_prey']
+        cfg = as_config(params)
+        np.random.seed(seed=cfg.run.rand_seed)
+        self._x_len = cfg.world.x_len
+        self._y_len = cfg.world.y_len
+        self.max_velocity = cfg.agents.max_velocity
+        self.max_theta = cfg.agents.max_theta
+        self.movement_mode = cfg.agents.movement_mode
+        # How far an AGENT senses the octopus. The octopus's own sensing
+        # radius is octopus.sensing_radius - a separate knob now.
+        self.range_radius = cfg.agents.sensing_radius
+        self.prey_capture_radius = cfg.agents.prey_capture_radius
+        self.respawn_captured_prey = cfg.agents.respawn_captured_prey
         # running tally of prey captured over this generator's lifetime
         self.prey_captured = 0
 

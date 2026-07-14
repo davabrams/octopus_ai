@@ -15,6 +15,7 @@ from simulator.simutil import (
     convert_adjacents_to_ragged_tensor
 )
 from simulator.spring_chain import solve_chain, base_reaction
+from OctoConfig import as_config
 
 class Sucker:
     """
@@ -28,7 +29,8 @@ class Sucker:
         self.c = c
         self.prev: "Sucker" = None
         if params is not None:
-            self.max_hue_change = params['octo_max_hue_change']
+            self.max_hue_change = as_config(params).octopus.sucker.\
+                max_hue_change
         else:
             self.max_hue_change = float(0.25)
 
@@ -111,32 +113,41 @@ class Limb:
     This class is instantiated by Octopus objects, and instantiates Sucker objects.
     """
 
-    def __init__(self, x_octo: float, y_octo: float, init_angle: float, params: dict):
+    def __init__(self, x_octo: float, y_octo: float, init_angle: float,
+                 params):
+        """params may be a Config or a legacy flat params dict."""
+        cfg = as_config(params)
+        limb = cfg.octopus.limb
+
         self.suckers: list[Sucker] = []
-        self.max_sucker_distance = params['octo_max_sucker_distance']
-        self.min_sucker_distance = params['octo_min_sucker_distance']
+        self.max_sucker_distance = limb.max_sucker_distance
+        self.min_sucker_distance = limb.min_sucker_distance
         self.sucker_distance = self.min_sucker_distance
-        self.rows = params['limb_rows']
-        self.cols = params['limb_cols']
+        self.rows = limb.rows
+        self.cols = limb.cols
         self.center_line = [CenterPoint() for _ in range(self.rows)]
-        self.x_len = params['x_len']
-        self.y_len = params['y_len']
-        self.max_hue_change = params['octo_max_hue_change']
-        self.movement_mode = params['limb_movement_mode']
-        self.max_arm_theta = params['octo_max_arm_theta']
-        self.max_arm_reach_theta = params['octo_max_arm_reach_theta']
+        self.x_len = cfg.world.x_len
+        self.y_len = cfg.world.y_len
+        self.max_hue_change = cfg.octopus.sucker.max_hue_change
+        self.movement_mode = limb.movement_mode
+
+        # Mode-specific knobs, read from the block that owns them.
+        self.max_arm_theta = limb.random.max_arm_theta
+        self.max_arm_reach_theta = limb.lumped.max_arm_reach_theta
+        self.max_limb_offset = limb.lumped.max_limb_offset
+        self.arm_stiffness = limb.lumped.arm_stiffness
+        self.arm_rest_fraction = limb.lumped.arm_rest_fraction
+        self.chain_spring_k = limb.chain.spring_k
+        self.chain_agent_k = limb.chain.agent_k
+        self.chain_move_k = limb.chain.move_k
+
         # How close two suckers must be to count as neighbours for the LIMB
-        # model. Distinct from agent_range_radius (how far this arm senses
-        # AGENTS); octo_datagen builds its training adjacents with this.
-        self.adjacency_radius = params['adjacency_radius']
-        self.max_limb_offset = params['octo_max_limb_offset']
-        self.arm_stiffness = params['octo_arm_stiffness']
-        self.arm_rest_fraction = params['octo_arm_rest_fraction']
-        self.chain_spring_k = params['octo_chain_spring_k']
-        self.chain_agent_k = params['octo_chain_agent_k']
-        self.chain_move_k = params['octo_chain_move_k']
-        self.agent_range_radius = params['agent_range_radius']
-        self.threading = params['octo_threading']
+        # model; octo_datagen builds its training adjacents with this.
+        self.adjacency_radius = cfg.octopus.sucker.adjacency_radius
+        # How far THIS ARM senses agents. Distinct from the agent's own
+        # sensing radius, which it used to be forced to equal.
+        self.agent_range_radius = cfg.octopus.sensing_radius
+        self.threading = cfg.run.threading
 
         # Last-frame force capture (populated by _move_lumped_spring).
         # Shared source of truth for on-screen arrows and the force DB.
@@ -518,13 +529,15 @@ class Octopus:
     set_color(RandomSurface, MLMode, model): passes its set_color parameters
                     to its child Limb object's set_color() function
     """
-    def __init__(self, params: dict):
-        self.x = params['x_len'] / 2.0
-        self.y = params['y_len'] / 2.0
-        self.max_body_velocity = params['octo_max_body_velocity']
-        self.movement_mode = params['octo_movement_mode']
+    def __init__(self, params):
+        """params may be a Config or a legacy flat params dict."""
+        cfg = as_config(params)
+        self.x = cfg.world.x_len / 2.0
+        self.y = cfg.world.y_len / 2.0
+        self.max_body_velocity = cfg.octopus.max_body_velocity
+        self.movement_mode = cfg.octopus.movement_mode
         self.model = None
-        self.threading = params['octo_threading']
+        self.threading = cfg.run.threading
 
         # Last-frame body force capture (populated by _move_lumped_spring):
         # last_body_force is the summed arm tension; last_body_drift is the
@@ -532,13 +545,13 @@ class Octopus:
         self.last_body_force = np.zeros(2, dtype=float)
         self.last_body_drift = np.zeros(2, dtype=float)
 
-        num_arms = params['octo_num_arms']
+        num_arms = cfg.octopus.num_arms
         self.limbs = [
             Limb(
                 self.x,
                 self.y,
                 float(ix/num_arms * 2 * np.pi),
-                params
+                cfg  # already parsed; Limb's as_config passes it through
                 )
             for ix in range(num_arms)
         ]
