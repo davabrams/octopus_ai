@@ -37,7 +37,7 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from OctoConfig import GameParameters
+from OctoConfig import DEFAULT, from_game_parameters, to_game_parameters
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode
@@ -55,8 +55,13 @@ class OctopusSimulationServer:
     def __init__(self, port=8765):
         self.port = port
         self.clients: set = set()
-        # GameParameters is a plain dict; access is dict-style throughout
-        self.config: dict = dict(GameParameters)
+        # The browser speaks a FLAT config (it sends {"x_len": 20, ...}), so
+        # keep a flat mirror for the wire protocol and a typed Config for
+        # everything internal. update_config() edits the mirror and rebuilds
+        # the Config from it.
+        self.profile = DEFAULT
+        self.config: dict = to_game_parameters(self.profile)
+        self.cfg = self.profile
 
         # Simulation state
         self.is_running = False
@@ -84,23 +89,22 @@ class OctopusSimulationServer:
 
     def setup_simulation(self):
         """Initialize the simulation with the current config."""
-        self.surface = RandomSurface(self.config)
-        self.octopus = Octopus(self.config)
-        self.agent_generator = AgentGenerator(self.config)
-        self.agent_generator.generate(
-            num_agents=self.config['agent_number_of_agents']
-        )
+        # Rebuild the typed config from the flat mirror the browser edits.
+        self.cfg = from_game_parameters(self.config)
+
+        self.surface = RandomSurface(self.cfg)
+        self.octopus = Octopus(self.cfg)
+        self.agent_generator = AgentGenerator(self.cfg)
+        self.agent_generator.generate(num_agents=self.cfg.agents.count)
 
         # Optional ML inference: fall back to the heuristic if no model
         # can be loaded for the configured mode.
-        self.inference_mode = self.config.get(
-            'inference_mode', MLMode.NO_MODEL
-        )
+        self.inference_mode = self.cfg.inference.mode
         self.model = None
         if self.inference_mode is not MLMode.NO_MODEL:
             try:
                 self.model = ModelLoader(
-                    self.config['inference_model'],
+                    self.cfg.inference_model_path,
                     custom_objects={
                         "ConstraintLoss": ConstraintLoss,
                         "ClampedTargetLoss": ClampedTargetLoss,
@@ -231,13 +235,13 @@ class OctopusSimulationServer:
 
                 self.iteration += 1
 
-                if self.config.get('log_forces', False):
+                if self.cfg.output.log_forces:
                     if self.force_logger is None:
                         self.force_logger = ForceLogger(
                             run_label="websocket_server")
                     self.force_logger.log_frame(self.iteration, self.octopus)
 
-                max_iterations = self.config['num_iterations']
+                max_iterations = self.cfg.run.num_iterations
                 if max_iterations > 0 and self.iteration >= max_iterations:
                     self.is_running = False
 

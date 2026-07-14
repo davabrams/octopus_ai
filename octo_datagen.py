@@ -17,10 +17,14 @@ class OctoDatagen():
             "Error, number of iterations configured in game parameters "
             "are not compatible with data generation"
         )
+        from OctoConfig import as_config
         self.game_parameters = game_parameters
-        self.data_write_mode = game_parameters['datagen_data_write_format']
-        self.inference_mode = game_parameters['inference_mode']
-        self.model_path = self.game_parameters['inference_model']
+        cfg = as_config(game_parameters)
+        self.cfg = cfg
+        self.data_write_mode = cfg.datagen.write_format
+        self.inference_mode = cfg.inference.mode
+        # The config resolves the path; no MLMode-keyed lookup here.
+        self.model_path = cfg.inference_model_path
         # imported lazily to avoid a circular import: a module-level import
         # of training.models.model_loader runs training/__init__, which
         # imports the trainers, which import this module

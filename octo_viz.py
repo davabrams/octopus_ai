@@ -4,7 +4,7 @@ import time
 import matplotlib.pyplot as plt
 from tensorflow import keras
 
-from OctoConfig import GameParameters
+from OctoConfig import DEBUG, DEFAULT, VIZ  # noqa: F401  (profiles)
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import Color, MLMode, display_refresh, setup_display
@@ -18,28 +18,38 @@ from training.losses import (
 )
 from training.models.model_loader import ModelLoader
 
-# %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-num_agents = GameParameters['agent_number_of_agents']
-INFERENCE_MODE = GameParameters['inference_mode']
+# %% Pick a profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Swap this one line instead of editing (and forgetting to revert) a pile of
+# flags. To watch the locomotion with force arrows use VIZ; to also record a
+# force DB and stitch an MP4 use DEBUG. Derive an ad-hoc variant with
+# dataclasses.replace, e.g.
+#     CFG = replace(VIZ, octopus=replace(VIZ.octopus,
+#                                        movement_mode=MovementMode.SPRING_CHAIN))
+CFG = DEFAULT
 
-ag = AgentGenerator(GameParameters)
-octo = Octopus(GameParameters)
-surf = RandomSurface(GameParameters)
-ag.generate(num_agents=num_agents)
+
+# %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+INFERENCE_MODE = CFG.inference.mode
+
+ag = AgentGenerator(CFG)
+octo = Octopus(CFG)
+surf = RandomSurface(CFG)
+ag.generate(num_agents=CFG.agents.count)
 octo.set_color(surf)
 
 model = None
 
 if INFERENCE_MODE is not MLMode.NO_MODEL:
-    # Override `model` with the model from disk
-    model_path = GameParameters["inference_model"]
+    # Override `model` with the model from disk. The config resolves the
+    # path, so no MLMode-keyed table lookup here.
     custom_objects = {
         "ConstraintLoss": ConstraintLoss,
         "ClampedTargetLoss": ClampedTargetLoss,
         "DeltaColorLayer": DeltaColorLayer,
     }
     model = ModelLoader(
-        file_name_or_ml_mode=model_path, custom_objects=custom_objects
+        file_name_or_ml_mode=CFG.inference_model_path,
+        custom_objects=custom_objects,
     ).get_object()
     assert isinstance(model, keras.Model), (
         f"Expected keras model, got {type(model)}"
@@ -47,14 +57,14 @@ if INFERENCE_MODE is not MLMode.NO_MODEL:
 
 
 # %% Visualizer %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-NUM_ITERATIONS = GameParameters['num_iterations']
-DEBUG_MODE = GameParameters['debug_mode']
-SAVE_IMAGES = GameParameters['save_images']
-LOG_FORCES = GameParameters.get('log_forces', False)
-SHOW_FORCES = GameParameters.get('show_forces', False)
+NUM_ITERATIONS = CFG.run.num_iterations
+DEBUG_MODE = CFG.output.debug_mode
+SHOW_FORCES = CFG.output.show_forces
 
-force_logger = ForceLogger(run_label="octo_viz") if LOG_FORCES else None
-frame_recorder = FrameRecorder(fps=5) if SAVE_IMAGES else None
+force_logger = (ForceLogger(run_label="octo_viz")
+                if CFG.output.log_forces else None)
+frame_recorder = (FrameRecorder(fps=CFG.output.video_fps)
+                  if CFG.output.save_images else None)
 
 fig, ax = setup_display()
 fig.show()
