@@ -200,7 +200,7 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False):
     ax.clear()
 
     # Print the patterned surface
-    ax.imshow(surf.grid.astype(float), cmap="binary_r")
+    ax.imshow(surf.grid.astype(float), cmap="binary_r", vmin=0.0, vmax=1.0)
 
     #used to check for transposed behavior
     if debug_mode:

@@ -24,6 +24,20 @@ class TestSurfaceGenerator(unittest.TestCase):
         for max_dim in range(2,10):
             test_surf_with_size(max_dim)
 
+    def test_random_surface_grayscale(self) -> None:
+        params = {
+            "x_len": 6,
+            "y_len": 6,
+            "rand_seed": 0,
+            "surface_grayscale": True,
+        }
+        surf = RandomSurface(params)
+        vals = [surf.get_val(i, j) for i in range(6) for j in range(6)]
+        self.assertTrue(all(isinstance(v, float) for v in vals))
+        self.assertTrue(all(0.0 <= v < 1.0 for v in vals))
+        # a 36-cell uniform random grid should not be binary
+        self.assertGreater(len(set(round(v, 3) for v in vals)), 2)
+
 class TestAgentGenerator(unittest.TestCase):
     def test_agent_generator(self) -> None:
         max_dim = 5

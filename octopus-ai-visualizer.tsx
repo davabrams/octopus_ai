@@ -165,7 +165,7 @@ const OctopusAIVisualizer = () => {
   const generateFallbackData = () => {
     // Generate random background (checkerboard pattern)
     const background = Array(config.y_len).fill().map(() => 
-      Array(config.x_len).fill().map(() => Math.random() > 0.5 ? 1 : 0)
+      Array(config.x_len).fill().map(() => Math.random())
     );
 
     // Generate octopus limbs and suckers
@@ -243,7 +243,8 @@ const OctopusAIVisualizer = () => {
     // Draw background checkerboard
     simulationData.background.forEach((row, y) => {
       row.forEach((cell, x) => {
-        ctx.fillStyle = cell ? '#ffffff' : '#000000';
+        const shade = Math.round(Math.max(0, Math.min(1, cell)) * 255);
+        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
         ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
       });
     });
