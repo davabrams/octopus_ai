@@ -241,7 +241,7 @@ class TestLimbTrainer(unittest.TestCase):
                 {'color': 0.5, 'adjacents': [(mock_sucker, 0.2)]},
             ],
             'gt_data': [Color(v, v, v) for v in [0.15, 0.25, 0.35, 0.45, 0.55]],
-            # a partial flat dict, exactly as from_game_parameters tolerates
+            # a partial flat dict, exactly as config_from_flat tolerates
             'game_parameters': {'datagen_data_write_format': MLMode.LIMB},
         }
         train_dataset, test_dataset = self.limb_trainer.data_format(data)

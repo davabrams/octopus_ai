@@ -2,13 +2,22 @@
 Octopus game and ML parameters.
 
 The typed schema in config_schema.py is the source of truth. This module
-builds the concrete profiles and, for now, derives the legacy flat
-GameParameters / TrainingParameters dicts from the DEFAULT profile so the
-~38 existing `params['some_key']` call sites keep working untouched while
-they are migrated.
+builds the concrete profiles and converts between a Config and its flat
+dict form.
 
-Once every call site takes a Config object, LEGACY DERIVATION below (and
-this docstring) can go.
+Pick a profile (DEFAULT, VIZ, DEBUG, TEST, DATAGEN, TRAINING) and derive
+variants with dataclasses.replace(). There is no module-level params dict
+to edit: that was the shim, and it is gone.
+
+config_to_flat / config_from_flat are NOT a shim. They are the boundary
+between the nested Config and the three places that legitimately speak
+flat key/value pairs:
+  - the browser wire protocol (websocket_server.py), which sends and
+    receives {"x_len": 20, ...}
+  - the force-log config snapshot (simulator/force_logger.py), where flat
+    keys are what SQLite's json_extract queries most easily
+  - test fixtures (tests/helpers.py), which take flat overrides so a test
+    can say make_config(x_len=30) instead of a nest of replace() calls
 """
 import os
 from dataclasses import replace
@@ -117,20 +126,24 @@ TRAINING = replace(
 )
 
 
-# =================================================== LEGACY DERIVATION ===
-# Flat dicts derived from DEFAULT. Every key below is exactly what it was
-# before the reorg, so no call site changes in this commit. The mapping also
-# documents the old -> new correspondence for the migration.
+# ==================================================== FLAT CONVERSION ===
+# The flat key names are the ones the browser and the force log already
+# speak, so they are preserved verbatim. The mapping doubles as the
+# old -> new correspondence for anything still reading the flat form.
 #
 # Note on agent_range_radius: it used to serve two distinct concepts - how
 # far an AGENT senses the octopus, and how far an ARM senses agents. The
 # schema splits them (agents.sensing_radius / octopus.sensing_radius), but a
-# single flat key cannot express the split, so the legacy view emits the
-# agent's value and both readers see it, exactly as before. The split only
-# becomes real once Limb reads octopus.sensing_radius directly.
+# single flat key cannot express the split, so the flat view emits the
+# agent's value and both readers see it. Anything that needs them to differ
+# has to say so on the Config.
 
-def to_game_parameters(cfg: Config) -> dict:
-    """Legacy flat GameParameters view of a Config."""
+def config_to_flat(cfg: Config) -> dict:
+    """Flat dict view of a Config.
+
+    Lossy by design: the flat surface is the browser's vocabulary, not the
+    schema's. Paths and the training run flags have no flat key.
+    """
     return {
         # General game parameters
         'num_iterations': cfg.run.num_iterations,
@@ -185,9 +198,9 @@ def to_game_parameters(cfg: Config) -> dict:
         'datagen_randomize_colors_interval':
             cfg.datagen.randomize_colors_interval,
 
-        # Training hyperparams. These used to be duplicated here AND in
-        # TrainingParameters with nothing syncing them; now both views read
-        # the single cfg.training.* source.
+        # Training hyperparams. These used to be duplicated across two
+        # flat dicts with nothing syncing them; cfg.training is now the
+        # single source.
         'test_size': cfg.training.test_size,
         'epochs': cfg.training.epochs,
         'batch_size': cfg.training.batch_size,
@@ -195,51 +208,15 @@ def to_game_parameters(cfg: Config) -> dict:
     }
 
 
-def to_training_parameters(cfg: Config) -> dict:
-    """Legacy flat TrainingParameters view of a Config."""
-    return {
-        'ml_mode': cfg.training.ml_mode,
+def config_from_flat(d: dict) -> Config:
+    """Build a Config from a flat dict.
 
-        # Datagen
-        'save_data_to_disk': cfg.datagen.save_to_disk,
-        'restore_data_from_disk': cfg.datagen.restore_from_disk,
-        'datagen_mode': cfg.datagen.datagen_mode,
-
-        # Tensorboard
-        'erase_old_tensorboard_logs': cfg.training.erase_old_tensorboard_logs,
-        'generate_tensorboard': cfg.training.generate_tensorboard,
-
-        # Model save and restore
-        'training_model': cfg.training.training_model,
-        'save_model_to_disk': cfg.training.save_model_to_disk,
-        'restore_model_from_disk': cfg.training.restore_model_from_disk,
-
-        'run_training': cfg.training.run_training,
-
-        # Test & Eval
-        'run_inference': cfg.training.run_inference,
-        'run_eval': cfg.training.run_eval,
-
-        # Paths
-        'models': cfg.paths.model_paths,
-        'datasets': cfg.paths.dataset_paths,
-
-        # Training hyperparams (single source: cfg.training)
-        'test_size': cfg.training.test_size,
-        'epochs': cfg.training.epochs,
-        'batch_size': cfg.training.batch_size,
-        'constraint_loss_weight': cfg.training.constraint_loss_weight,
-    }
-
-
-def from_game_parameters(d: dict) -> Config:
-    """Build a Config from a legacy flat GameParameters dict.
-
-    The inverse of to_game_parameters, and deliberately TOLERANT: any key
-    the dict omits falls back to the DEFAULT profile. That is what lets
+    The inverse of config_to_flat, and deliberately TOLERANT: any key the
+    dict omits falls back to the DEFAULT profile. That is what lets
     partially-specified dicts (e.g. the hand-built one in
-    tests/test_simulator.py) keep working - previously, adding a parameter
-    broke them with a KeyError.
+    tests/test_simulator.py, or a browser sending only what it changed)
+    keep working - previously, adding a parameter broke them with a
+    KeyError.
 
     Note agent_range_radius: one flat key, two concepts. It sets BOTH
     agents.sensing_radius and octopus.sensing_radius, preserving the
@@ -358,15 +335,12 @@ def from_game_parameters(d: dict) -> Config:
 
 
 def as_config(params) -> Config:
-    """Normalize a Config-or-legacy-dict into a Config.
+    """Normalize a Config-or-flat-dict into a Config.
 
-    Lets constructors take typed config internally while call sites (and
-    the whole test suite) keep passing flat dicts during the migration.
+    Lets constructors take typed config internally while the callers that
+    legitimately speak flat (the wire protocol, old pickles) keep passing
+    dicts.
     """
     if isinstance(params, Config):
         return params
-    return from_game_parameters(params)
-
-
-GameParameters: dict = to_game_parameters(DEFAULT)
-TrainingParameters: dict = to_training_parameters(DEFAULT)
+    return config_from_flat(params)

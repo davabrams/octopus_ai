@@ -37,7 +37,7 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from OctoConfig import DEFAULT, from_game_parameters, to_game_parameters
+from OctoConfig import DEFAULT, config_from_flat, config_to_flat
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode
@@ -60,7 +60,7 @@ class OctopusSimulationServer:
         # everything internal. update_config() edits the mirror and rebuilds
         # the Config from it.
         self.profile = DEFAULT
-        self.config: dict = to_game_parameters(self.profile)
+        self.config: dict = config_to_flat(self.profile)
         self.cfg = self.profile
 
         # Simulation state
@@ -90,7 +90,7 @@ class OctopusSimulationServer:
     def setup_simulation(self):
         """Initialize the simulation with the current config."""
         # Rebuild the typed config from the flat mirror the browser edits.
-        self.cfg = from_game_parameters(self.config)
+        self.cfg = config_from_flat(self.config)
 
         self.surface = RandomSurface(self.cfg)
         self.octopus = Octopus(self.cfg)

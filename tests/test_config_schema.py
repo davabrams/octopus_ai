@@ -1,5 +1,5 @@
 """
-Tests for the typed config schema, its profiles, and the legacy flat views.
+Tests for the typed config schema, its profiles, and the flat view.
 """
 import os
 import sys
@@ -15,9 +15,8 @@ from OctoConfig import (
     DEFAULT,
     TEST,
     VIZ,
+    config_to_flat,
     default_models,
-    to_game_parameters,
-    to_training_parameters,
 )
 from simulator.simutil import MLMode, MovementMode
 
@@ -84,25 +83,31 @@ class TestProfiles(unittest.TestCase):
 
 class TestDuplicatedHyperparamsHaveOneSource(unittest.TestCase):
     """epochs / batch_size / test_size / constraint_loss_weight used to live
-    in BOTH flat dicts with nothing keeping them in sync."""
+    in BOTH flat dicts with nothing keeping them in sync.
 
-    def test_both_legacy_views_read_the_same_training_source(self):
+    There is no second dict to drift from now - cfg.training is the only
+    source, and the trainers read it directly. What is still worth pinning
+    is that the flat view reports cfg.training rather than keeping a copy
+    of its own.
+    """
+
+    def test_flat_view_reads_the_training_source(self):
         cfg = replace(DEFAULT,
                       training=replace(DEFAULT.training, epochs=7,
                                        batch_size=3))
-        game = to_game_parameters(cfg)
-        train = to_training_parameters(cfg)
-        self.assertEqual(game['epochs'], 7)
-        self.assertEqual(train['epochs'], 7)
-        self.assertEqual(game['batch_size'], 3)
-        self.assertEqual(train['batch_size'], 3)
+        flat = config_to_flat(cfg)
+        self.assertEqual(flat['epochs'], 7)
+        self.assertEqual(flat['batch_size'], 3)
 
-    def test_they_cannot_drift(self):
-        for key in ('epochs', 'batch_size', 'test_size',
-                    'constraint_loss_weight'):
+    def test_every_hyperparam_tracks_the_training_source(self):
+        for key, field in (('epochs', 'epochs'),
+                           ('batch_size', 'batch_size'),
+                           ('test_size', 'test_size'),
+                           ('constraint_loss_weight',
+                            'constraint_loss_weight')):
             with self.subTest(key=key):
-                self.assertEqual(to_game_parameters(DEFAULT)[key],
-                                 to_training_parameters(DEFAULT)[key])
+                self.assertEqual(config_to_flat(DEFAULT)[key],
+                                 getattr(DEFAULT.training, field))
 
 
 class TestSensingRadiusSplit(unittest.TestCase):
@@ -132,22 +137,18 @@ class TestModelPathResolution(unittest.TestCase):
         self.assertIsNone(cfg.inference_model_path)
 
 
-class TestLegacyViewParity(unittest.TestCase):
-    """The flat dicts are a compat shim; they must stay complete while call
-    sites are migrated."""
+class TestFlatViewParity(unittest.TestCase):
+    """The flat view is the browser's and the force log's vocabulary. It
+    must stay complete: a key that silently stops being emitted is a knob
+    the UI can no longer set."""
 
-    EXPECTED_GAME_KEYS = 45
-    EXPECTED_TRAINING_KEYS = 18
+    EXPECTED_FLAT_KEYS = 45
 
-    def test_game_parameters_key_count(self):
-        self.assertEqual(len(to_game_parameters(DEFAULT)),
-                         self.EXPECTED_GAME_KEYS)
+    def test_flat_view_key_count(self):
+        self.assertEqual(len(config_to_flat(DEFAULT)),
+                         self.EXPECTED_FLAT_KEYS)
 
-    def test_training_parameters_key_count(self):
-        self.assertEqual(len(to_training_parameters(DEFAULT)),
-                         self.EXPECTED_TRAINING_KEYS)
-
-    def test_mode_specific_knobs_reach_the_legacy_view(self):
+    def test_mode_specific_knobs_reach_the_flat_view(self):
         cfg = replace(
             DEFAULT,
             octopus=replace(
@@ -160,9 +161,9 @@ class TestLegacyViewParity(unittest.TestCase):
                 ),
             ),
         )
-        game = to_game_parameters(cfg)
-        self.assertEqual(game['octo_chain_spring_k'], 4.2)
-        self.assertEqual(game['octo_arm_stiffness'], 1.5)
+        flat = config_to_flat(cfg)
+        self.assertEqual(flat['octo_chain_spring_k'], 4.2)
+        self.assertEqual(flat['octo_arm_stiffness'], 1.5)
 
 
 if __name__ == '__main__':

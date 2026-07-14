@@ -159,15 +159,15 @@ class ForceLogger:
 
     @staticmethod
     def _serialize_config(config) -> str:
-        """Flat JSON snapshot of a Config (or legacy params dict).
+        """Flat JSON snapshot of a Config (or flat params dict).
 
         The flat view is stored rather than the nested one: it is what
         SQLite's json_extract queries most easily, e.g.
             SELECT json_extract(config_json, '$.octo_arm_stiffness')
             FROM runs;
         """
-        from OctoConfig import as_config, to_game_parameters
-        flat = to_game_parameters(as_config(config))
+        from OctoConfig import as_config, config_to_flat
+        flat = config_to_flat(as_config(config))
         return json.dumps(flat, default=_json_default, sort_keys=True)
 
     def _start_run(self, label: str, config=None) -> int:

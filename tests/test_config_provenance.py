@@ -11,7 +11,7 @@ from dataclasses import replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from OctoConfig import DEFAULT, to_game_parameters
+from OctoConfig import DEFAULT, config_to_flat
 from simulator.agent_generator import AgentGenerator
 from simulator.force_logger import ForceLogger
 from simulator.octopus_generator import Octopus
@@ -62,7 +62,7 @@ class TestConfigProvenance(unittest.TestCase):
         conn.close()
         self.assertIsNotNone(raw)
         snap = json.loads(raw)
-        self.assertEqual(len(snap), len(to_game_parameters(DEFAULT)))
+        self.assertEqual(len(snap), len(config_to_flat(DEFAULT)))
 
     def test_snapshot_records_the_actual_values_used(self):
         self._run(self._cfg(stiffness=4.0), "stiff")

@@ -6,7 +6,7 @@ import time as tm
 import numpy as np
 import tensorflow as tf
 
-from OctoConfig import GameParameters, TrainingParameters, as_config
+from OctoConfig import TRAINING
 from simulator.simutil import MLMode
 from training.limb import LimbTrainer
 from training.losses import (
@@ -22,20 +22,26 @@ np.set_printoptions(precision=4)
 tf.config.run_functions_eagerly(False)
 
 # %% Entry point for octopus modeling
-ML_MODE = TrainingParameters['ml_mode']
-RUN_DATAGEN = TrainingParameters['datagen_mode']
-SAVE_DATA_TO_DISK = TrainingParameters['save_data_to_disk']
+# Select the profile here; derive a variant with dataclasses.replace() to
+# experiment, e.g.
+#     CFG = replace(TRAINING,
+#                   training=replace(TRAINING.training, epochs=5))
+CFG = TRAINING
 
-RESTORE_DATA_FROM_DISK = TrainingParameters["restore_data_from_disk"]
-RUN_TRAINING = TrainingParameters["run_training"]
-ERASE_OLD_TENSORBOARD_LOGS = TrainingParameters["erase_old_tensorboard_logs"]
-GENERATE_TENSORBOARD = TrainingParameters["generate_tensorboard"]
-SAVE_MODEL_TO_DISK = TrainingParameters["save_model_to_disk"]
+ML_MODE = CFG.training.ml_mode
+RUN_DATAGEN = CFG.datagen.datagen_mode
+SAVE_DATA_TO_DISK = CFG.datagen.save_to_disk
 
-RESTORE_MODEL_FROM_DISK = TrainingParameters["restore_model_from_disk"]
-RUN_INFERENCE = TrainingParameters["run_inference"]
+RESTORE_DATA_FROM_DISK = CFG.datagen.restore_from_disk
+RUN_TRAINING = CFG.training.run_training
+ERASE_OLD_TENSORBOARD_LOGS = CFG.training.erase_old_tensorboard_logs
+GENERATE_TENSORBOARD = CFG.training.generate_tensorboard
+SAVE_MODEL_TO_DISK = CFG.training.save_model_to_disk
 
-RUN_EVAL = TrainingParameters["run_eval"]
+RESTORE_MODEL_FROM_DISK = CFG.training.restore_model_from_disk
+RUN_INFERENCE = CFG.training.run_inference
+
+RUN_EVAL = CFG.training.run_eval
 
 test_dataset = None
 train_dataset = None
@@ -46,18 +52,17 @@ print(f"Octo Model started at {start}, setting t=0.0")
 if ERASE_OLD_TENSORBOARD_LOGS:
     erase_all_logs()
 
-datagen_location = TrainingParameters['datasets'][ML_MODE]
-model_location = TrainingParameters['models'][ML_MODE]
-
-# The trainers take one Config. Both flat dicts are views of the same
-# DEFAULT profile, so converting either yields the same object; step 6
-# replaces this with the TRAINING profile directly.
-cfg = as_config(GameParameters)
+# The config resolves both paths; no MLMode-keyed lookup here. Note the
+# dataset is keyed by training.ml_mode and the model by
+# training.training_model - the same MLMode in every shipped profile, but
+# two separate knobs now.
+datagen_location = CFG.training_dataset_path
+model_location = CFG.training_model_path
 
 if ML_MODE == MLMode.SUCKER:
-    trainer = SuckerTrainer(cfg)
+    trainer = SuckerTrainer(CFG)
 elif ML_MODE == MLMode.LIMB:
-    trainer = LimbTrainer(cfg)
+    trainer = LimbTrainer(CFG)
 else:
     raise ValueError(
         "No trainer available for selected ML Mode, check the config"
@@ -127,7 +132,7 @@ if RUN_EVAL:
     assert test_dataset is not None, "Error: empty test_dataset"
     # For color, eval is defined as the average of RMS of the RGB values
     # mean([rms(pred, gt) for each (pred, gt) in octopus])
-    BATCH_SIZE = TrainingParameters['batch_size']
+    BATCH_SIZE = CFG.training.batch_size
     loss, accuracy = model.evaluate(test_dataset, batch_size=BATCH_SIZE)
     print(f"Loss: {loss:.3f}, Accuracy: {accuracy:.3f}")
     print(f"Model eval completed at time t={tm.time() - start:.3f}")

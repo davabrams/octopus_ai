@@ -205,7 +205,7 @@ class TestDataGenerationIntegration(unittest.TestCase):
     def test_datagen_accepts_legacy_flat_dict(self):
         """OctoDatagen still takes a flat dict.
 
-        The trainers hand it a Config now, but from_game_parameters is
+        The trainers hand it a Config now, but config_from_flat is
         deliberately tolerant and the wire protocol still speaks flat, so
         this path has to keep working. The snapshot in the payload is
         whatever the caller passed, not a normalized form.
