@@ -46,11 +46,11 @@ class AgentGenerator:
         if self.movement_mode == MovementMode.RANDOM:
             self.agents = [self._increment_random(agent)
                            for agent in self.agents]
-        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
+        elif self.movement_mode == MovementMode.LUMPED_SPRING:
             if not octo:
                 assert False, ("movement mode set to attract/repel but no "
                               "octopus object passed")
-            self.agents = [self._increment_attract_repel(agent, octo)
+            self.agents = [self._increment_lumped_spring(agent, octo)
                            for agent in self.agents]
 
     def _increment_random(self, agent: Agent) -> Agent:
@@ -68,11 +68,11 @@ class AgentGenerator:
                         % (2 * np.pi))
         return new_agent
 
-    def _increment_attract_repel(self, agent: Agent, octo) -> Agent:
+    def _increment_lumped_spring(self, agent: Agent, octo) -> Agent:
         """Agent reaction to the octopus (prey flee, threats approach).
 
         Intentional stub: agents are held stationary for now so the
-        octopus's ATTRACT_REPEL locomotion can be observed and tuned
+        octopus's LUMPED_SPRING locomotion can be observed and tuned
         against a fixed target field. Closing the loop (prey fleeing the
         body, threats hunting it) is a planned follow-up. Kept as an
         explicit method rather than inlined so the extension point is

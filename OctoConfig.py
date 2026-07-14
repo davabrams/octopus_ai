@@ -53,10 +53,10 @@ GameParameters: dict = {
     'octo_max_arm_theta': 0.1,  # used for random drift movement
     'octo_max_arm_reach_theta': 0.3,  # per-joint bend cap when reaching
                                   # toward prey / away from threats in
-                                  # ATTRACT_REPEL mode (separate from the
+                                  # LUMPED_SPRING mode (separate from the
                                   # random-drift cap above)
     'octo_max_limb_offset': 0.5,  # used for attract/repel distance
-    'octo_arm_stiffness': 0.5,  # spring stiffness for ATTRACT_REPEL: arm
+    'octo_arm_stiffness': 0.5,  # spring stiffness for LUMPED_SPRING: arm
                                   # rest length is short (wants to retract);
                                   # prey attraction stretches it, and the
                                   # stretch tension both reels the tip back

@@ -94,8 +94,8 @@ class TestSimulationIntegration(unittest.TestCase):
 
     def test_different_movement_modes(self):
         """Test simulation with different movement modes"""
-        # ATTRACT_REPEL is not yet implemented (raises NotImplementedError
-        # in Limb._move_attract_repel), so only test RANDOM for now
+        # LUMPED_SPRING is not yet implemented (raises NotImplementedError
+        # in Limb._move_lumped_spring), so only test RANDOM for now
         movement_modes = [MovementMode.RANDOM]
 
         for mode in movement_modes:

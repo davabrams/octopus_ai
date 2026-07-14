@@ -13,7 +13,7 @@ dt: float = 1.0
 class MovementMode(Enum):
     """Enum stores agent, octopus, and limb movement types"""
     RANDOM: int = 0
-    ATTRACT_REPEL: int = 1
+    LUMPED_SPRING: int = 1
 
 
 class AgentType(Enum):
@@ -305,7 +305,7 @@ def agent_influence_vector(x: float,
     neutral pose".
 
     This is the shared primitive behind octopus body drift and limb
-    reaching in MovementMode.ATTRACT_REPEL.
+    reaching in MovementMode.LUMPED_SPRING.
     """
     influence = np.zeros(2, dtype=float)
     if not agents or radius <= 0:

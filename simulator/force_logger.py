@@ -1,6 +1,6 @@
 """Per-frame force logging to a local SQLite database.
 
-Records the forces driving ATTRACT_REPEL locomotion so a run can be
+Records the forces driving LUMPED_SPRING locomotion so a run can be
 replayed or analyzed offline. Three physical tables plus one derived view:
 
   body_forces      one row / frame: summed arm tension + applied drift

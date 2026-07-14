@@ -232,7 +232,7 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestAttractRepelLocomotion(unittest.TestCase):
-    """ATTRACT_REPEL movement: reaching, anchoring, bend/length limits."""
+    """LUMPED_SPRING movement: reaching, anchoring, bend/length limits."""
 
     def _params(self):
         p = GameParameters.copy()
@@ -241,9 +241,9 @@ class TestAttractRepelLocomotion(unittest.TestCase):
         p['limb_rows'] = 6
         p['limb_cols'] = 2
         p['octo_num_arms'] = 4
-        p['limb_movement_mode'] = MovementMode.ATTRACT_REPEL
-        p['octo_movement_mode'] = MovementMode.ATTRACT_REPEL
-        p['agent_movement_mode'] = MovementMode.ATTRACT_REPEL
+        p['limb_movement_mode'] = MovementMode.LUMPED_SPRING
+        p['octo_movement_mode'] = MovementMode.LUMPED_SPRING
+        p['agent_movement_mode'] = MovementMode.LUMPED_SPRING
         return p
 
     # ---- the shared influence primitive ----

@@ -24,9 +24,9 @@ class TestForceLogger(unittest.TestCase):
         self.p.update({
             'x_len': 20, 'y_len': 20, 'octo_num_arms': 4, 'limb_rows': 6,
             'limb_cols': 2, 'rand_seed': 3,
-            'octo_movement_mode': MovementMode.ATTRACT_REPEL,
-            'limb_movement_mode': MovementMode.ATTRACT_REPEL,
-            'agent_movement_mode': MovementMode.ATTRACT_REPEL,
+            'octo_movement_mode': MovementMode.LUMPED_SPRING,
+            'limb_movement_mode': MovementMode.LUMPED_SPRING,
+            'agent_movement_mode': MovementMode.LUMPED_SPRING,
         })
         self.db = os.path.join(tempfile.gettempdir(),
                                "_force_logger_test.db")

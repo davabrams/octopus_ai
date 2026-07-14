@@ -130,7 +130,7 @@ class Limb:
         self.agent_range_radius = params['agent_range_radius']
         self.threading = params['octo_threading']
 
-        # Last-frame force capture (populated by _move_attract_repel).
+        # Last-frame force capture (populated by _move_lumped_spring).
         # Shared source of truth for on-screen arrows and the force DB.
         # f_attract: prey/threat pull at the tip; f_spring: restoring force;
         # net: their sum; tension: base reaction fed to the body.
@@ -189,7 +189,7 @@ class Limb:
 
         x_octo, y_octo: the (possibly just-moved) body position; the arm
             base is anchored here.
-        agents: list of Agent objects the arm may sense (ATTRACT_REPEL).
+        agents: list of Agent objects the arm may sense (LUMPED_SPRING).
         coordinated_influence: optional (dx, dy) supplied by the Octopus in
             full-body mode so arms share a target rather than each chasing
             independently. When None (limb mode), the arm senses agents on
@@ -197,8 +197,8 @@ class Limb:
         """
         if self.movement_mode == MovementMode.RANDOM:
             self._move_random(x_octo, y_octo)
-        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
-            self._move_attract_repel(
+        elif self.movement_mode == MovementMode.LUMPED_SPRING:
+            self._move_lumped_spring(
                 x_octo, y_octo, agents, coordinated_influence)
         else:
             assert False, "Unknown movement mode"
@@ -272,7 +272,7 @@ class Limb:
         return self.arm_stiffness * signed_stretch * np.array(
             [dx / length, dy / length])
 
-    def _move_attract_repel(self, x_octo: float, y_octo: float,
+    def _move_lumped_spring(self, x_octo: float, y_octo: float,
                             agents: list = None,
                             coordinated_influence=None):
         """Spring-tension reach (overdamped).
@@ -431,7 +431,7 @@ class Octopus:
         self.model = None
         self.threading = params['octo_threading']
 
-        # Last-frame body force capture (populated by _move_attract_repel):
+        # Last-frame body force capture (populated by _move_lumped_spring):
         # last_body_force is the summed arm tension; last_body_drift is the
         # capped displacement actually applied to the body this frame.
         self.last_body_force = np.zeros(2, dtype=float)
@@ -452,11 +452,11 @@ class Octopus:
         """
         Moves the octopus using different movement modes.
         RANDOM: randomly moves the octopus in the x and y dimension
-        ATTRACT_REPEL: randomly moves the octopus, but considers agents.
+        LUMPED_SPRING: randomly moves the octopus, but considers agents.
             - Attracted to prey
             - Repelled by threats
         """
-        if self.movement_mode == MovementMode.ATTRACT_REPEL and not ag:
+        if self.movement_mode == MovementMode.LUMPED_SPRING and not ag:
             assert False, "movement mode set to attract/repel but no agent object passed"
 
         agents = ag.agents if ag is not None else None
@@ -465,15 +465,15 @@ class Octopus:
         if self.movement_mode == MovementMode.RANDOM:
             self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
             self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
-        elif self.movement_mode == MovementMode.ATTRACT_REPEL:
-            coordinated_influence = self._move_attract_repel(ag)
+        elif self.movement_mode == MovementMode.LUMPED_SPRING:
+            coordinated_influence = self._move_lumped_spring(ag)
         else:
             assert False, "Unknown movement mode"
 
         for l in self.limbs:
             l.move(self.x, self.y, agents, coordinated_influence)
 
-    def _move_attract_repel(self, ag=None):
+    def _move_lumped_spring(self, ag=None):
         """Drift the body by the summed spring tension of its arms.
 
         Pure-tension coupling (no direct attraction term): the body only
