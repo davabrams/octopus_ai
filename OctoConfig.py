@@ -29,6 +29,10 @@ GameParameters: dict = {
                                 # False for the classic binary 0/1 grid
     'rand_seed': 0,
     'debug_mode': False,  # enables things like agent attract/repel regions
+    'log_forces': False,  # write per-frame body/limb/sucker forces to a
+                          # local SQLite db (logs/forces.db); off by default
+    'show_forces': False,  # draw force-vector arrows (body drift + per-arm
+                           # attraction/tension) on the visualizer
     'save_images': False,
     'adjacency_radius': 1.0,  # determines what distance is considered
     # 'adjacent'
@@ -47,7 +51,24 @@ GameParameters: dict = {
     # Octopus parameters 🐙
     'octo_max_body_velocity': 0.25,
     'octo_max_arm_theta': 0.1,  # used for random drift movement
+    'octo_max_arm_reach_theta': 0.3,  # per-joint bend cap when reaching
+                                  # toward prey / away from threats in
+                                  # ATTRACT_REPEL mode (separate from the
+                                  # random-drift cap above)
     'octo_max_limb_offset': 0.5,  # used for attract/repel distance
+    'octo_arm_stiffness': 0.5,  # spring stiffness for ATTRACT_REPEL: arm
+                                  # rest length is short (wants to retract);
+                                  # prey attraction stretches it, and the
+                                  # stretch tension both reels the tip back
+                                  # and tugs the body toward the tip. Higher
+                                  # = stubbier arms that yank the body harder;
+                                  # lower = longer reach, gentler body pull.
+    'octo_arm_rest_fraction': 0.3,  # neutral arm length as a fraction from
+                                  # min (0.0, fully tucked) to max (1.0,
+                                  # fully extended). Sits above min so a
+                                  # threat can COMPRESS the arm below rest,
+                                  # producing outward tension that flees the
+                                  # threat; prey STRETCHES it above rest.
     'octo_num_arms': 8,
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,

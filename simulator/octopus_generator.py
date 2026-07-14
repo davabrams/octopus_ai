@@ -7,9 +7,11 @@ from simulator.surface_generator import RandomSurface
 from simulator.simutil import (
     MovementMode,
     Agent,
+    AgentType,
     Color,
     MLMode,
     CenterPoint,
+    agent_influence_vector,
     convert_adjacents_to_ragged_tensor
 )
 
@@ -121,8 +123,22 @@ class Limb:
         self.max_hue_change = params['octo_max_hue_change']
         self.movement_mode = params['limb_movement_mode']
         self.max_arm_theta = params['octo_max_arm_theta']
+        self.max_arm_reach_theta = params['octo_max_arm_reach_theta']
+        self.max_limb_offset = params['octo_max_limb_offset']
+        self.arm_stiffness = params['octo_arm_stiffness']
+        self.arm_rest_fraction = params['octo_arm_rest_fraction']
         self.agent_range_radius = params['agent_range_radius']
         self.threading = params['octo_threading']
+
+        # Last-frame force capture (populated by _move_attract_repel).
+        # Shared source of truth for on-screen arrows and the force DB.
+        # f_attract: prey/threat pull at the tip; f_spring: restoring force;
+        # net: their sum; tension: base reaction fed to the body.
+        self.last_f_attract = np.zeros(2, dtype=float)
+        self.last_f_spring = np.zeros(2, dtype=float)
+        self.last_net = np.zeros(2, dtype=float)
+        self.last_tension = np.zeros(2, dtype=float)
+        self.last_arm_length = 0.0
 
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
@@ -167,17 +183,23 @@ class Limb:
 
                 self.suckers[row + self.rows * col].set_loc(x_prime, y_prime)
 
-    def move(self, x_octo: float, y_octo: float):
-        """randomly shift thetas, reconstruct centerline, and refresh sucker 
-        locations """
-        # TODO(davabrams): instead of doing it this way, adjust the final
-        # centerpoint to move towards prey and away from threats, and then
-        # adjust the rest of the center points accordingly as a spline or
-        # something
+    def move(self, x_octo: float, y_octo: float,
+             agents: list = None, coordinated_influence=None):
+        """Move the limb, then refresh sucker locations.
+
+        x_octo, y_octo: the (possibly just-moved) body position; the arm
+            base is anchored here.
+        agents: list of Agent objects the arm may sense (ATTRACT_REPEL).
+        coordinated_influence: optional (dx, dy) supplied by the Octopus in
+            full-body mode so arms share a target rather than each chasing
+            independently. When None (limb mode), the arm senses agents on
+            its own.
+        """
         if self.movement_mode == MovementMode.RANDOM:
             self._move_random(x_octo, y_octo)
         elif self.movement_mode == MovementMode.ATTRACT_REPEL:
-            self._move_attract_repel(x_octo, y_octo)
+            self._move_attract_repel(
+                x_octo, y_octo, agents, coordinated_influence)
         else:
             assert False, "Unknown movement mode"
 
@@ -201,11 +223,150 @@ class Limb:
             x_octo = x_prime
             y_octo = y_prime
 
-    def _move_attract_repel(self, x_octo: float, y_octo: float):
-        raise NotImplementedError("Not implemented yet")
-        # step 1: move the last centerpoint towards prey and away from threats
-        # step 2: shift the first centerpoint relative to the octopus new postion
-        # step 3:
+    def _rest_length(self) -> float:
+        """The arm's spring rest (neutral) length.
+
+        Sits a fraction (arm_rest_fraction) of the way from the fully-tucked
+        minimum to the fully-extended maximum, so the arm can BOTH stretch
+        above rest (reaching prey) and compress below rest (recoiling from a
+        threat). If rest were the minimum, threats could never compress the
+        arm and the body would never flee.
+        """
+        n = len(self.center_line) - 1
+        min_len = self.min_sucker_distance * n
+        max_len = self.max_sucker_distance * n
+        return min_len + self.arm_rest_fraction * (max_len - min_len)
+
+    def _max_length(self) -> float:
+        """Fully-stretched arm length (segments at max_sucker_distance)."""
+        return self.max_sucker_distance * (len(self.center_line) - 1)
+
+    def tension_vector(self):
+        """Signed spring tension reaction at the base - the ONLY thing the
+        body feels from this arm.
+
+        Magnitude is stiffness * |length - rest|; the sign follows real
+        spring mechanics:
+
+        - Arm STRETCHED past rest (reaching prey): tension pulls the base
+          toward the tip. Since a prey-seeking tip points at the prey, the
+          body is drawn toward the prey.
+        - Arm COMPRESSED below rest (recoiling from a threat): the spring
+          pushes the base away from the tip. A threat pulls the tip inward
+          toward the threat side, so "away from tip" is "away from the
+          threat" - the body flees. This is why threat avoidance needs no
+          separate term: it emerges from the same base tension (per the
+          "only the base connection moves the base" model).
+
+        Returned as an (dx, dy) numpy vector; ~zero at rest length.
+        """
+        base = self.center_line[0]
+        tip = self.center_line[-1]
+        dx, dy = tip.x - base.x, tip.y - base.y
+        length = float(np.hypot(dx, dy))
+        if length < 1e-9:
+            return np.zeros(2, dtype=float)
+        signed_stretch = length - self._rest_length()  # + stretch, - compress
+        # unit vector base -> tip; scaling by signed_stretch flips direction
+        # automatically under compression (pushes base away from tip)
+        return self.arm_stiffness * signed_stretch * np.array(
+            [dx / length, dy / length])
+
+    def _move_attract_repel(self, x_octo: float, y_octo: float,
+                            agents: list = None,
+                            coordinated_influence=None):
+        """Spring-tension reach (overdamped).
+
+        The arm is a spring with a short rest length. Two forces act on the
+        tip: prey/threat attraction pulls it out, and spring tension
+        (stiffness * stretch, directed tip -> base) reels it back. The tip
+        moves to the overdamped balance of the two, which sets the new arm
+        length (hence sucker_distance). With no attraction, tension wins and
+        the arm retracts toward rest length. The base stays pinned to the
+        body; the chain is reflowed with a per-joint bend cap.
+        """
+        n = len(self.center_line)
+
+        # 1) Anchor the base to the (already-updated) body position.
+        base = self.center_line[0]
+        base.x = x_octo
+        base.y = y_octo
+
+        # 2) Attraction at the tip (or the shared body influence in
+        #    coordinated full-octopus mode).
+        tip = self.center_line[-1]
+        if coordinated_influence is not None:
+            f_attract = np.asarray(coordinated_influence, dtype=float)
+        else:
+            f_attract = agent_influence_vector(
+                tip.x, tip.y, agents, self.agent_range_radius)
+
+        # 3) Spring restoring force at the tip: magnitude stiffness * stretch,
+        #    directed from tip back toward base (i.e. -[base->tip]).
+        dx, dy = tip.x - base.x, tip.y - base.y
+        length = float(np.hypot(dx, dy))
+        rest = self._rest_length()
+        if length > 1e-9:
+            axis = np.array([dx / length, dy / length])
+        else:
+            # degenerate: use the base heading so the arm has a direction
+            axis = np.array([np.cos(base.t), np.sin(base.t)])
+        stretch = length - rest
+        f_spring = -self.arm_stiffness * stretch * axis  # reels tip inward
+
+        # 4) Overdamped tip update: step by the net force, capped so the tip
+        #    can't jump more than max_limb_offset in one step.
+        net = f_attract + f_spring
+        nm = float(np.hypot(net[0], net[1]))
+        if nm > 1e-9:
+            step = min(self.max_limb_offset, nm)
+            target_x = tip.x + step * net[0] / nm
+            target_y = tip.y + step * net[1] / nm
+        else:
+            target_x, target_y = tip.x, tip.y
+
+        # 5) New arm length -> new segment spacing (sucker_distance).
+        #    The arm may compress below rest (threat recoil, tucking in) down
+        #    to its fully-tucked minimum, or stretch up to max. The min floor
+        #    is the compact length, not rest, so threats can shorten the arm.
+        min_len = self.min_sucker_distance * (n - 1)
+        new_len = float(np.hypot(target_x - base.x, target_y - base.y))
+        new_len = min(max(new_len, min_len), self._max_length())
+        seg_len = new_len / (n - 1) if n > 1 else new_len
+        seg_len = min(max(seg_len, self.min_sucker_distance),
+                      self.max_sucker_distance)
+        self.sucker_distance = seg_len
+
+        # 6) Reflow the chain base -> tip: each joint aims at the tip target
+        #    but turns at most max_arm_reach_theta from the previous heading,
+        #    and sits seg_len from its parent.
+        prev_x, prev_y = base.x, base.y
+        prev_angle = base.t
+        for i in range(1, n):
+            desired_angle = np.arctan2(target_y - prev_y, target_x - prev_x)
+            dtheta = (desired_angle - prev_angle + np.pi) % (2 * np.pi) - np.pi
+            dtheta = max(-self.max_arm_reach_theta,
+                         min(self.max_arm_reach_theta, dtheta))
+            angle = prev_angle + dtheta
+
+            new_x = prev_x + seg_len * np.cos(angle)
+            new_y = prev_y + seg_len * np.sin(angle)
+
+            new_x = min(max(new_x, -0.5), self.x_len - 0.51)
+            new_y = min(max(new_y, -0.5), self.y_len - 0.51)
+
+            self.center_line[i].x = new_x
+            self.center_line[i].y = new_y
+            self.center_line[i].t = angle
+
+            prev_x, prev_y, prev_angle = new_x, new_y, angle
+
+        # Capture this frame's forces for logging / visualization.
+        self.last_f_attract = np.asarray(f_attract, dtype=float).copy()
+        self.last_f_spring = np.asarray(f_spring, dtype=float).copy()
+        self.last_net = np.asarray(net, dtype=float).copy()
+        self.last_tension = self.tension_vector().copy()
+        self.last_arm_length = float(new_len)
 
     def find_adjacents(self, s_target: Sucker, radius: float):
         """
@@ -270,6 +431,12 @@ class Octopus:
         self.model = None
         self.threading = params['octo_threading']
 
+        # Last-frame body force capture (populated by _move_attract_repel):
+        # last_body_force is the summed arm tension; last_body_drift is the
+        # capped displacement actually applied to the body this frame.
+        self.last_body_force = np.zeros(2, dtype=float)
+        self.last_body_drift = np.zeros(2, dtype=float)
+
         num_arms = params['octo_num_arms']
         self.limbs = [
             Limb(
@@ -292,19 +459,55 @@ class Octopus:
         if self.movement_mode == MovementMode.ATTRACT_REPEL and not ag:
             assert False, "movement mode set to attract/repel but no agent object passed"
 
+        agents = ag.agents if ag is not None else None
+        coordinated_influence = None
+
         if self.movement_mode == MovementMode.RANDOM:
             self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
             self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
         elif self.movement_mode == MovementMode.ATTRACT_REPEL:
-            self._move_attract_repel(ag)
+            coordinated_influence = self._move_attract_repel(ag)
         else:
             assert False, "Unknown movement mode"
 
         for l in self.limbs:
-            l.move(self.x, self.y)
+            l.move(self.x, self.y, agents, coordinated_influence)
 
-    def _move_attract_repel(self, ag: Agent = None):
-        print("Attract/Repel movement mode not complete", ag.agent_type)
+    def _move_attract_repel(self, ag=None):
+        """Drift the body by the summed spring tension of its arms.
+
+        Pure-tension coupling (no direct attraction term): the body only
+        moves because its arms are straining. Each arm contributes its
+        tension reaction (stiffness * stretch, directed toward that arm's
+        tip); relaxed arms contribute ~nothing, arms reaching hard toward
+        prey tug strongly. The body eases along the summed tension, capped
+        by max_body_velocity.
+
+        Note the ordering in Octopus.move: arms are reflowed *after* this,
+        so the tension summed here reflects last step's arm strain. Over the
+        loop this is a stable one-step lag - the body chases the strain the
+        arms reported, they re-strain toward prey, and it converges.
+
+        Returns None: arms sense agents at their own tips (limb autonomy).
+        Full-octopus coordination can later pass a shared influence here.
+        """
+        total = np.zeros(2, dtype=float)
+        for limb in self.limbs:
+            total += limb.tension_vector()
+
+        drift = np.zeros(2, dtype=float)
+        mag = float(np.hypot(total[0], total[1]))
+        if mag > 1e-9:
+            step = min(self.max_body_velocity, mag)
+            drift = np.array([step * total[0] / mag, step * total[1] / mag])
+            self.x += drift[0]
+            self.y += drift[1]
+
+        # Capture for logging / visualization.
+        self.last_body_force = total.copy()
+        self.last_body_drift = drift.copy()
+
+        return None
 
     def find_color(
             self,

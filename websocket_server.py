@@ -42,6 +42,7 @@ from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode
 from simulator.surface_generator import RandomSurface
+from simulator.force_logger import ForceLogger
 from training.losses import (
     ClampedTargetLoss,
     ConstraintLoss,
@@ -73,6 +74,11 @@ class OctopusSimulationServer:
 
         # Performance tracking
         self.last_frame_time = time.time()
+
+        # Optional force logging (created lazily on first play so the run
+        # label reflects when it actually started). All DB access stays on
+        # the simulation-loop thread, matching SQLite's threading rules.
+        self.force_logger = None
 
         self.setup_simulation()
 
@@ -222,6 +228,12 @@ class OctopusSimulationServer:
 
                 self.iteration += 1
 
+                if self.config.get('log_forces', False):
+                    if self.force_logger is None:
+                        self.force_logger = ForceLogger(
+                            run_label="websocket_server")
+                    self.force_logger.log_frame(self.iteration, self.octopus)
+
                 max_iterations = self.config['num_iterations']
                 if max_iterations > 0 and self.iteration >= max_iterations:
                     self.is_running = False
@@ -262,6 +274,9 @@ class OctopusSimulationServer:
         """Reset the simulation."""
         with self.simulation_lock:
             self.iteration = 0
+            if self.force_logger is not None:
+                self.force_logger.close()
+                self.force_logger = None
             self.setup_simulation()
 
     async def handle_client(self, websocket):

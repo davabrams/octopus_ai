@@ -551,12 +551,27 @@
                 </div>
                 
                 {/* Canvas area */}
-                <div className="flex-1 flex items-center justify-center bg-gray-800 p-4">
+                <div className="flex-1 flex flex-col items-center justify-center bg-gray-800 p-4">
                   <canvas
                     ref={canvasRef}
                     className="border border-gray-600 rounded-lg"
                     style={{ maxWidth: '100%', maxHeight: '100%' }}
                   />
+                  {/* Legend */}
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-4 bg-gray-900 bg-opacity-70 px-4 py-2 rounded-lg text-xs">
+                    <div className="flex items-center space-x-2">
+                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#32cd32' }}></span>
+                      <span>Prey &mdash; arms reach toward it (arm stretches; body drawn in)</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#ff69b4' }}></span>
+                      <span>Threat &mdash; arms recoil (arm compresses; body flees)</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: 'linear-gradient(90deg,#000,#fff)', border: '1px solid #555' }}></span>
+                      <span>Suckers &mdash; shaded to camouflage against the surface</span>
+                    </div>
+                  </div>
                 </div>
               </div>
               

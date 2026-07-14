@@ -69,4 +69,13 @@ class AgentGenerator:
         return new_agent
 
     def _increment_attract_repel(self, agent: Agent, octo) -> Agent:
+        """Agent reaction to the octopus (prey flee, threats approach).
+
+        Intentional stub: agents are held stationary for now so the
+        octopus's ATTRACT_REPEL locomotion can be observed and tuned
+        against a fixed target field. Closing the loop (prey fleeing the
+        body, threats hunting it) is a planned follow-up. Kept as an
+        explicit method rather than inlined so the extension point is
+        obvious.
+        """
         return agent
