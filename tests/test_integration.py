@@ -19,7 +19,8 @@ from simulator.simutil import State, MLMode, InferenceLocation, MovementMode, Ag
 from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
 from inference_server.model_inference import InferenceQueue, InferenceJob
-from OctoConfig import GameParameters, TrainingParameters
+from OctoConfig import DEFAULT
+from helpers import make_config, make_flat
 
 
 class TestSimulationIntegration(unittest.TestCase):
@@ -29,23 +30,21 @@ class TestSimulationIntegration(unittest.TestCase):
         """Set up integration test environment"""
         # Clear class-level shared agents list
         AgentGenerator.agents = []
-        self.game_params = GameParameters.copy()
-        self.game_params.update({
-            'x_len': 8,
-            'y_len': 8,
-            'octo_num_arms': 2,
-            'limb_rows': 3,
-            'limb_cols': 2,
-            'agent_number_of_agents': 2,
-            'num_iterations': 5,
-            'inference_location': InferenceLocation.LOCAL,
-            # These tests call move() with no agent, valid only in RANDOM
-            # mode; pin it rather than inherit the config default (which
-            # gets flipped to a spring mode during interactive testing).
-            'octo_movement_mode': MovementMode.RANDOM,
-            'limb_movement_mode': MovementMode.RANDOM,
-            'agent_movement_mode': MovementMode.RANDOM,
-        })
+        self._base = dict(
+            x_len=8,
+            y_len=8,
+            octo_num_arms=2,
+            limb_rows=3,
+            limb_cols=2,
+            agent_number_of_agents=2,
+            num_iterations=5,
+            inference_location=InferenceLocation.LOCAL,
+            # These tests call move() with no agent, valid only in RANDOM.
+            octo_movement_mode=MovementMode.RANDOM,
+            limb_movement_mode=MovementMode.RANDOM,
+            agent_movement_mode=MovementMode.RANDOM,
+        )
+        self.game_params = make_config(**self._base)
 
     def test_complete_simulation_cycle(self):
         """Test a complete simulation cycle with all components"""
@@ -54,13 +53,15 @@ class TestSimulationIntegration(unittest.TestCase):
 
         octopus = Octopus(self.game_params)
         self.assertIsNotNone(octopus)
-        self.assertEqual(len(octopus.limbs), self.game_params['octo_num_arms'])
+        self.assertEqual(len(octopus.limbs),
+                         self.game_params.octopus.num_arms)
 
         agent_gen = AgentGenerator(self.game_params)
-        agent_gen.generate(self.game_params['agent_number_of_agents'])
-        self.assertEqual(len(agent_gen.agents), self.game_params['agent_number_of_agents'])
+        agent_gen.generate(self.game_params.agents.count)
+        self.assertEqual(len(agent_gen.agents),
+                         self.game_params.agents.count)
 
-        for iteration in range(self.game_params['num_iterations']):
+        for iteration in range(self.game_params.run.num_iterations):
             agent_gen.increment_all(octopus)
             octopus.move()
 
@@ -72,12 +73,18 @@ class TestSimulationIntegration(unittest.TestCase):
             self.assertGreaterEqual(visibility, 0.0)
 
     def test_multi_agent_interaction(self):
-        """Test interactions between multiple agents and octopus"""
-        self.game_params.update({'agent_number_of_agents': 0})
-        surface = RandomSurface(self.game_params)
-        octopus = Octopus(self.game_params)
+        """Test interactions between multiple agents and octopus.
 
-        agent_gen = AgentGenerator(self.game_params)
+        agent_number_of_agents=0 says "don't auto-spawn; this test makes its
+        own agents below". It is inert either way - AgentGenerator never
+        reads the count, callers pass it to generate() - but it is stated as
+        config rather than by mutating the shared fixture mid-test.
+        """
+        params = make_config(**{**self._base, 'agent_number_of_agents': 0})
+        surface = RandomSurface(params)
+        octopus = Octopus(params)
+
+        agent_gen = AgentGenerator(params)
         agent_gen.generate(1, fixed_agent_type=AgentType.PREY)
         agent_gen.generate(1, fixed_agent_type=AgentType.THREAT)
         self.assertEqual(len(agent_gen.agents), 2)
@@ -113,12 +120,14 @@ class TestSimulationIntegration(unittest.TestCase):
 
         for mode in movement_modes:
             with self.subTest(movement_mode=mode):
-                params = self.game_params.copy()
-                params['octo_movement_mode'] = mode
-                params['limb_movement_mode'] = mode
                 # agents themselves stay RANDOM; the spring modes describe
                 # how the octopus moves, not the agents
-                params['agent_movement_mode'] = MovementMode.RANDOM
+                params = make_config(**{
+                    **self._base,
+                    'octo_movement_mode': mode,
+                    'limb_movement_mode': mode,
+                    'agent_movement_mode': MovementMode.RANDOM,
+                })
 
                 surface = RandomSurface(params)
                 octopus = Octopus(params)
@@ -133,36 +142,30 @@ class TestSimulationIntegration(unittest.TestCase):
                         octopus.move(agent_gen)
                     octopus.set_color(surface)
 
-    def test_configuration_consistency(self):
-        """Test consistency between different configuration parameters"""
-        game_params = GameParameters.copy()
+    def test_default_profile_values_are_sane(self):
+        """Sanity-check the shipped DEFAULT profile.
 
-        required_params = [
-            'x_len', 'y_len', 'octo_num_arms', 'limb_rows', 'limb_cols',
-            'agent_number_of_agents', 'num_iterations'
-        ]
+        This used to also assert that required KEYS were present and
+        non-None. That half is gone: the fields are dataclass attributes
+        now, so a missing key is an AttributeError at import rather than
+        something a test has to go looking for. What is still worth
+        checking is that the shipped VALUES are sensible.
+        """
+        self.assertGreater(DEFAULT.world.x_len, 0)
+        self.assertGreater(DEFAULT.world.y_len, 0)
+        self.assertGreater(DEFAULT.octopus.num_arms, 0)
+        self.assertGreater(DEFAULT.octopus.limb.rows, 0)
+        self.assertGreater(DEFAULT.octopus.limb.cols, 0)
+        self.assertGreater(DEFAULT.agents.count, 0)
 
-        for param in required_params:
-            self.assertIn(param, game_params)
-            self.assertIsNotNone(game_params[param])
+        self.assertGreater(DEFAULT.training.epochs, 0)
+        self.assertGreater(DEFAULT.training.batch_size, 0)
+        self.assertGreater(DEFAULT.training.test_size, 0.0)
+        self.assertLess(DEFAULT.training.test_size, 1.0)
 
-        training_params = TrainingParameters.copy()
-
-        required_training_params = [
-            'epochs', 'batch_size', 'test_size'
-        ]
-
-        for param in required_training_params:
-            self.assertIn(param, training_params)
-            self.assertIsNotNone(training_params[param])
-
-        self.assertGreater(game_params['x_len'], 0)
-        self.assertGreater(game_params['y_len'], 0)
-        self.assertGreater(game_params['octo_num_arms'], 0)
-        self.assertGreater(training_params['epochs'], 0)
-        self.assertGreater(training_params['batch_size'], 0)
-        self.assertGreater(training_params['test_size'], 0.0)
-        self.assertLess(training_params['test_size'], 1.0)
+        # a sucker must be able to sit at least as far out as its minimum
+        self.assertLessEqual(DEFAULT.octopus.limb.min_sucker_distance,
+                             DEFAULT.octopus.limb.max_sucker_distance)
 
 
 class TestDataGenerationIntegration(unittest.TestCase):
@@ -170,7 +173,9 @@ class TestDataGenerationIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up data generation tests"""
-        self.game_params = GameParameters.copy()
+        # NOTE: flat dict, not a Config - the trainers still index their
+        # params as dicts. Flips to make_config in step 4.
+        self.game_params = make_flat()
         self.game_params.update({
             'x_len': 5,
             'y_len': 5,
@@ -274,12 +279,13 @@ class TestEndToEndWorkflow(unittest.TestCase):
         """Test workflow from simulation to training"""
         from simulator.simutil import Color
 
-        game_params = GameParameters.copy()
-        game_params.update({
-            'x_len': 4, 'y_len': 4, 'octo_num_arms': 1,
-            'limb_rows': 2, 'limb_cols': 1, 'num_iterations': 2,
-            'epochs': 1, 'batch_size': 2,
-        })
+        # NOTE: flat dict - SuckerTrainer still indexes params as a dict.
+        # Flips to make_config in step 4.
+        game_params = make_flat(
+            x_len=4, y_len=4, octo_num_arms=1,
+            limb_rows=2, limb_cols=1, num_iterations=2,
+            epochs=1, batch_size=2,
+        )
 
         trainer = SuckerTrainer(game_params)
 
