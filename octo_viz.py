@@ -61,7 +61,7 @@ NUM_ITERATIONS = CFG.run.num_iterations
 DEBUG_MODE = CFG.output.debug_mode
 SHOW_FORCES = CFG.output.show_forces
 
-force_logger = (ForceLogger(run_label="octo_viz")
+force_logger = (ForceLogger(run_label="octo_viz", config=CFG)
                 if CFG.output.log_forces else None)
 frame_recorder = (FrameRecorder(fps=CFG.output.video_fps)
                   if CFG.output.save_images else None)

@@ -27,11 +27,22 @@ Usage:
 
 The DB path defaults to logs/forces.db (created if absent).
 """
+import enum
+import json
 import os
 import sqlite3
 import time
 
 import numpy as np
+
+
+def _json_default(o):
+    """Serialize the odd types a config holds (enums, numpy scalars)."""
+    if isinstance(o, enum.Enum):
+        return o.name
+    if isinstance(o, np.generic):
+        return o.item()
+    return str(o)
 
 
 DEFAULT_DB_PATH = os.path.join(
@@ -42,14 +53,21 @@ DEFAULT_DB_PATH = os.path.join(
 
 class ForceLogger:
     def __init__(self, db_path: str = DEFAULT_DB_PATH,
-                 run_label: str = ""):
+                 run_label: str = "", config=None):
+        """config: the Config (or legacy params dict) this run used.
+
+        Stored as JSON on the run row so force data can be joined back to
+        the exact parameters that produced it. Without it, tuning e.g.
+        arm_stiffness and re-running leaves the DB with no record of which
+        stiffness produced which numbers.
+        """
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         # check_same_thread stays True (default): we only ever touch this
         # connection from the thread that created it.
         self.conn = sqlite3.connect(db_path)
         self._create_schema()
-        self.run_id = self._start_run(run_label)
+        self.run_id = self._start_run(run_label, config)
 
     # ---- schema -------------------------------------------------------
     def _create_schema(self):
@@ -57,9 +75,10 @@ class ForceLogger:
         c.executescript(
             """
             CREATE TABLE IF NOT EXISTS runs (
-                run_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                label      TEXT,
-                started_at REAL
+                run_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                label       TEXT,
+                started_at  REAL,
+                config_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS body_forces (
@@ -123,11 +142,42 @@ class ForceLogger:
             """
         )
         self.conn.commit()
+        self._migrate_schema()
 
-    def _start_run(self, label: str) -> int:
+    def _migrate_schema(self):
+        """Add columns an older forces.db predates.
+
+        CREATE TABLE IF NOT EXISTS won't alter an existing table, so a DB
+        written before config snapshots would silently lack the column.
+        """
         c = self.conn.cursor()
-        c.execute("INSERT INTO runs (label, started_at) VALUES (?, ?)",
-                  (label, time.time()))
+        cols = {row[1] for row in
+                c.execute("PRAGMA table_info(runs)").fetchall()}
+        if "config_json" not in cols:
+            c.execute("ALTER TABLE runs ADD COLUMN config_json TEXT")
+            self.conn.commit()
+
+    @staticmethod
+    def _serialize_config(config) -> str:
+        """Flat JSON snapshot of a Config (or legacy params dict).
+
+        The flat view is stored rather than the nested one: it is what
+        SQLite's json_extract queries most easily, e.g.
+            SELECT json_extract(config_json, '$.octo_arm_stiffness')
+            FROM runs;
+        """
+        from OctoConfig import as_config, to_game_parameters
+        flat = to_game_parameters(as_config(config))
+        return json.dumps(flat, default=_json_default, sort_keys=True)
+
+    def _start_run(self, label: str, config=None) -> int:
+        config_json = (self._serialize_config(config)
+                       if config is not None else None)
+        c = self.conn.cursor()
+        c.execute(
+            "INSERT INTO runs (label, started_at, config_json) "
+            "VALUES (?, ?, ?)",
+            (label, time.time(), config_json))
         self.conn.commit()
         return c.lastrowid
 

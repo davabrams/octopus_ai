@@ -238,7 +238,7 @@ class OctopusSimulationServer:
                 if self.cfg.output.log_forces:
                     if self.force_logger is None:
                         self.force_logger = ForceLogger(
-                            run_label="websocket_server")
+                            run_label="websocket_server", config=self.cfg)
                     self.force_logger.log_frame(self.iteration, self.octopus)
 
                 max_iterations = self.cfg.run.num_iterations
