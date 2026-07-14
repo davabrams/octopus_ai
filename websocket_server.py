@@ -183,6 +183,8 @@ class OctopusSimulationServer:
                     "iteration": self.iteration,
                     "visibility_score": float(self.visibility_score),
                     "fps": float(self.fps),
+                    "prey_captured": int(
+                        self.agent_generator.prey_captured),
                 },
             }
         except Exception as e:
@@ -221,6 +223,7 @@ class OctopusSimulationServer:
             with self.simulation_lock:
                 self.agent_generator.increment_all(self.octopus)
                 self.octopus.move(self.agent_generator)
+                self.agent_generator.remove_captured_prey(self.octopus)
                 self.octopus.set_color(
                     self.surface, self.inference_mode, self.model
                 )

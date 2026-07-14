@@ -50,6 +50,8 @@ class TestAgentGenerator(unittest.TestCase):
             "agent_max_theta": max_theta,
             "agent_movement_mode": MovementMode.RANDOM,
             "agent_range_radius": 1,
+            "agent_prey_capture_radius": 0.3,
+            "agent_respawn_captured_prey": False,
             "rand_seed": 0
         }
         agent_gen = AgentGenerator(params)

@@ -47,6 +47,13 @@ GameParameters: dict = {
     'agent_max_theta': 0.1,
     'agent_movement_mode': MovementMode.RANDOM,
     'agent_range_radius': 5,
+    'agent_prey_capture_radius': 0.3,  # a PREY agent is captured (removed)
+                                  # when any sucker comes within this
+                                  # distance of it. Threats are never
+                                  # captured. 0 disables capture.
+    'agent_respawn_captured_prey': False,  # spawn a fresh prey elsewhere
+                                  # for each one captured, so the run
+                                  # doesn't just run out of food
 
     # Octopus parameters 🐙
     'octo_max_body_velocity': 0.25,
@@ -82,7 +89,8 @@ GameParameters: dict = {
     'octo_num_arms': 8,
     'octo_max_sucker_distance': 0.3,
     'octo_min_sucker_distance': 0.1,
-    'octo_movement_mode': MovementMode.RANDOM,
+    'octo_movement_mode': MovementMode.RANDOM,  # RANDOM, LUMPED_SPRING,
+                                                # or SPRING_CHAIN
     'octo_threading': True,
 
     # Limb parameters 💪

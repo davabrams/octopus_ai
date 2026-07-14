@@ -72,6 +72,11 @@ while i != NUM_ITERATIONS:
     ag.increment_all(octo)
     octo.move(ag)
 
+    # 2) any prey touched by a sucker is caught and removed
+    captured = ag.remove_captured_prey(octo)
+    if captured:
+        print(f"  caught {captured} prey (total {ag.prey_captured})")
+
     if force_logger is not None:
         force_logger.log_frame(i, octo)
 
@@ -86,7 +91,8 @@ while i != NUM_ITERATIONS:
     # 3) draw the updated state and flush it to the window
     display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE,
                     show_forces=SHOW_FORCES)
-    y.set_text(f"Visibility = {octo.visibility(surf):.4f}")
+    y.set_text(f"Visibility = {octo.visibility(surf):.4f}   "
+               f"Prey caught = {ag.prey_captured}")
 
     if frame_recorder is not None:
         frame_recorder.save_frame(fig)
