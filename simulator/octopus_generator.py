@@ -125,6 +125,10 @@ class Limb:
         self.movement_mode = params['limb_movement_mode']
         self.max_arm_theta = params['octo_max_arm_theta']
         self.max_arm_reach_theta = params['octo_max_arm_reach_theta']
+        # How close two suckers must be to count as neighbours for the LIMB
+        # model. Distinct from agent_range_radius (how far this arm senses
+        # AGENTS); octo_datagen builds its training adjacents with this.
+        self.adjacency_radius = params['adjacency_radius']
         self.max_limb_offset = params['octo_max_limb_offset']
         self.arm_stiffness = params['octo_arm_stiffness']
         self.arm_rest_fraction = params['octo_arm_rest_fraction']
@@ -481,7 +485,7 @@ class Limb:
         pool = ThreadPool()
 
         find_color_parameter_list = [(surf, inference_mode, model,
-                self.find_adjacents(s, self.agent_range_radius)
+                self.find_adjacents(s, self.adjacency_radius)
                 if inference_mode == MLMode.LIMB
                 else None,
                 ix,) for ix, s in enumerate(self.suckers)]
