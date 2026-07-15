@@ -409,9 +409,11 @@ A Flask REST server intended to let simulations offload model prediction.
 
 - **Startup**: `model_inference.py` loads the sucker model **at import
   time** using `default_models[MLMode.SUCKER]`, and does
-  `sys.path.insert(1, '..')` — so run the server from inside
-  `inference_server/` (`cd inference_server && python server.py`); it
-  listens on `localhost:8080`.
+  `sys.path.insert(1, '..')`. Run it via `bazel run
+  //inference_server:server` (the BUILD's `imports = ["."]` puts the
+  package dir on the path so the in-directory bare imports resolve), or
+  directly with `cd inference_server && python server.py`. It listens on
+  `localhost:8080`.
 - **Queueing** (`InferenceQueue`): all queue state is per-instance
   (a July 2026 fix; they were class-level and shared). Jobs live in
   `_q` (id → `InferenceJob`) and move through
@@ -485,7 +487,9 @@ Requires a GUI backend and an initial button press
   if the model can't load. Config updates are type-coerced to the existing
   value's type and rebuild the simulation. Handler uses the websockets ≥13
   single-argument API. Wire format is documented in the module docstring.
-  Run: `python visualizer/websocket_server.py` (no Bazel target).
+  Run: `bazel run //visualizer:websocket_server` (or `python
+  visualizer/websocket_server.py`). The `octopus-visualizer.html` page is a
+  `data` dep of the Bazel target so it ends up in the binary's runfiles.
 - `visualizer/octopus-visualizer.html` — self-contained browser frontend
   (canvas rendering, config sliders, connect/play/pause/reset). Expects
   messages of type `simulation_state` with `{background,
@@ -501,11 +505,15 @@ Requires a GUI backend and an initial button press
 
 - **Environment**: Python ≥3.10 (venv here is 3.12, ARM-native — see
   TRAINING.md for Apple Silicon setup). `pip install -e ".[dev]"`.
-- **Bazel**: Bzlmod-era (`MODULE.bazel`, no `WORKSPACE`). Targets:
-  `//visualizer:octo_viz`, `//octopus_ai:datagen`, `//octopus_ai:model`,
+- **Bazel**: Bzlmod-era (`MODULE.bazel`, no `WORKSPACE`). Runnable targets:
+  `//visualizer:octo_viz`, `//visualizer:websocket_server`,
+  `//octopus_ai:datagen`, `//octopus_ai:model`, `//inference_server:server`,
   `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`.
   Bazel does not manage Python deps here — it relies on the ambient
-  interpreter having tensorflow etc.
+  interpreter having tensorflow etc. `config.py` reads
+  `BUILD_WORKSPACE_DIRECTORY` (set by `bazel run`) so datagen/training write
+  models and datasets into the source `training/` tree rather than the
+  runfiles sandbox; `bazel test` leaves it unset and stays hermetic.
 - **Tests**: `python run_tests.py` (pytest under the hood; `--verbose`,
   `--coverage`, `--test <file>`, `--runner unittest|bazel`,
   `--check-deps`). Makefile wraps the same plus per-file targets. Suite is

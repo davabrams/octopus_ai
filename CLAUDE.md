@@ -153,11 +153,11 @@ python octopus_ai/datagen.py        # or: bazel run //octopus_ai:datagen
 # Training pipeline (behavior driven by the TRAINING profile; CFG at the top of the file)
 python octopus_ai/model.py          # or: bazel run //octopus_ai:model
 
-# Inference server (must run from inside inference_server/ — it does sys.path tricks)
-cd inference_server && python server.py    # localhost:8080; API in ARCHITECTURE.md §7
+# Inference server (localhost:8080; API in ARCHITECTURE.md §7)
+bazel run //inference_server:server        # or: cd inference_server && python server.py
 
 # WebSocket visualization server (then open visualizer/octopus-visualizer.html in a browser)
-python visualizer/websocket_server.py    # ws://localhost:8765; no bazel target
+bazel run //visualizer:websocket_server  # or: python visualizer/websocket_server.py; ws://localhost:8765
 ```
 
 Always activate the venv first: `source .venv/bin/activate` (ARM-native
