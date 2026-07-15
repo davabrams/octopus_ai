@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import tensorflow as tf
 
-from octopus_ai.config import TRAINING
+from octopus_ai.config import TRAINING, print_config
 from simulator.simutil import MLMode
 from training.limb import LimbTrainer
 from training.losses import (
@@ -33,6 +33,8 @@ tf.config.run_functions_eagerly(False)
 #     CFG = replace(TRAINING,
 #                   training=replace(TRAINING.training, epochs=5))
 CFG = TRAINING
+
+print_config(CFG, "model.py CONFIG")
 
 ML_MODE = CFG.training.ml_mode
 RUN_DATAGEN = CFG.datagen.datagen_mode

@@ -20,7 +20,8 @@ flat key/value pairs:
     can say make_config(x_len=30) instead of a nest of replace() calls
 """
 import os
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
+from enum import Enum
 
 from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenience)
     AgentConfig,
@@ -389,3 +390,42 @@ def as_config(params) -> Config:
     if isinstance(params, Config):
         return params
     return config_from_flat(params)
+
+
+def format_config(cfg: Config, title: str = "CONFIG") -> str:
+    """Render a Config (nested frozen dataclasses) as an indented tree.
+
+    Meant for a startup dump so a run's full configuration is visible in the
+    console. Enums print by name, nested dataclasses are indented, and dict
+    fields (e.g. the path maps) are expanded one entry per line.
+    """
+    def fmt_scalar(v):
+        if isinstance(v, Enum):
+            return v.name
+        if isinstance(v, str):
+            return repr(v)
+        return str(v)
+
+    lines = [f"===== {title} ====="]
+
+    def render(obj, prefix):
+        for f in fields(obj):
+            val = getattr(obj, f.name)
+            if is_dataclass(val) and not isinstance(val, type):
+                lines.append(f"{prefix}{f.name}:")
+                render(val, prefix + "  ")
+            elif isinstance(val, dict):
+                lines.append(f"{prefix}{f.name}:")
+                for k, v in val.items():
+                    lines.append(f"{prefix}  {fmt_scalar(k)}: {fmt_scalar(v)}")
+            else:
+                lines.append(f"{prefix}{f.name}: {fmt_scalar(val)}")
+
+    render(cfg, "  ")
+    lines.append("=" * (len(title) + 12))
+    return "\n".join(lines)
+
+
+def print_config(cfg: Config, title: str = "CONFIG") -> None:
+    """Print the full config tree to stdout (startup dump)."""
+    print(format_config(cfg, title))

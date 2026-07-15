@@ -179,6 +179,9 @@ if __name__ == "__main__":
 
     }
 
+    from octopus_ai.config import as_config, print_config
+    print_config(as_config(default_params), "datagen CONFIG")
+
     datagen = OctoDatagen(default_params)
     synthetic_data = datagen.run_color_datagen()
     from octopus_ai.config import default_datasets

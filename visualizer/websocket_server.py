@@ -44,7 +44,12 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from octopus_ai.config import DEFAULT, config_from_flat, config_to_flat
+from octopus_ai.config import (
+    DEFAULT,
+    config_from_flat,
+    config_to_flat,
+    print_config,
+)
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode
@@ -419,6 +424,7 @@ class OctopusSimulationServer:
     async def start_server(self):
         """Start the WebSocket server."""
         print(f"Starting Octopus AI WebSocket server on port {self.port}")
+        print_config(self.cfg, "websocket_server CONFIG")
 
         asyncio.create_task(self.simulation_loop())
 

@@ -11,7 +11,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import matplotlib.pyplot as plt
 from tensorflow import keras
 
-from octopus_ai.config import DEBUG, DEFAULT, VIZ  # noqa: F401  (profiles)
+from octopus_ai.config import (  # noqa: F401  (DEBUG/DEFAULT are profiles)
+    DEBUG,
+    DEFAULT,
+    VIZ,
+    print_config,
+)
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import (
@@ -65,6 +70,7 @@ CFG = replace(
 
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+print_config(CFG, "octo_viz CONFIG")
 INFERENCE_MODE = CFG.inference.mode
 
 ag = AgentGenerator(CFG)
