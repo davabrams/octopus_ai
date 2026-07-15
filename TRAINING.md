@@ -22,21 +22,27 @@ python -c "import tensorflow as tf; print(tf.__version__)"
 ## Training Pipeline
 
 Training has three stages: **data generation**, **model training**, and
-**model saving**. All stages are controlled by `OctoConfig.py` (plain dicts,
-dict-style access) and executed via `octo_model.py`.
+**model saving**. All stages are controlled by the profile `octo_model.py`
+selects (`CFG = TRAINING`, from `OctoConfig.py`) and executed by running it.
 
 ### Quick Start
 
 Train a sucker (camouflage) model from scratch:
 
-```bash
-# Edit OctoConfig.py to enable datagen + training:
-#   TrainingParameters['ml_mode'] = MLMode.SUCKER
-#   TrainingParameters['datagen_mode'] = True
-#   TrainingParameters['run_training'] = True
-#   TrainingParameters['save_model_to_disk'] = True
+The `TRAINING` profile already enables datagen + training + model saving,
+so this is just:
 
+```bash
 python octo_model.py
+```
+
+To vary it, edit `CFG` at the top of `octo_model.py` rather than a shared
+dict — configs are frozen, so derive:
+
+```python
+CFG = replace(TRAINING,
+              training=replace(TRAINING.training,
+                               ml_mode=MLMode.SUCKER, epochs=5))
 ```
 
 This generates data in memory, trains the model, and saves it to
@@ -64,8 +70,8 @@ pairs.
 python octo_model.py
 ```
 
-**Save a dataset to disk / reuse a saved dataset:** dataset paths come from
-`TrainingParameters['datasets']` (→ `default_datasets` in `OctoConfig.py`,
+**Save a dataset to disk / reuse a saved dataset:** the path comes from
+`cfg.training_dataset_path` (→ `default_datasets` in `OctoConfig.py`,
 resolving to `training/datagen/{sucker,limb}.pkl`).
 
 ```bash
@@ -91,7 +97,7 @@ produced while `Octopus.set_color` was a no-op: the recorded
 between iterations. `training/datagen/sucker.pkl` predates the fix —
 regenerate before training anything you care about.
 
-**Control data volume** by adjusting `num_iterations` in `GameParameters`
+**Control data volume** by adjusting `cfg.run.num_iterations`
 (default: 120). Each iteration produces `num_arms × limb_rows × limb_cols`
 data points (default: 8 × 16 × 2 = 256 per iteration → 30,720 total).
 
@@ -109,7 +115,7 @@ python octo_model.py
 ```bash
 # OctoConfig.py:
 #   ml_mode = MLMode.LIMB
-#   datagen_data_write_format = MLMode.LIMB   # in GameParameters, so adjacents are captured
+#   datagen.write_format = MLMode.LIMB   # so adjacents are captured
 #   run_training = True
 python octo_model.py
 ```
@@ -119,12 +125,12 @@ current Keras.
 
 ### 3. Hyperparameters
 
-Set in `TrainingParameters` (and duplicated in `GameParameters`, which is
-what the trainers actually read) in `OctoConfig.py`:
+Set under `cfg.training` in `config_schema.py` (one source — these used to
+be duplicated across two dicts with nothing keeping them in sync):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `epochs` | 10 | Training epochs |
+| `epochs` | 50 | Training epochs |
 | `batch_size` | 32 | Batch size |
 | `test_size` | 0.2 | Test fraction (train gets the remaining 80%) |
 | `constraint_loss_weight` | 0.95 | Weight for constraint loss vs MAE |
@@ -167,9 +173,12 @@ a note-to-self; ignore it.)
 
 ```bash
 # Requires a trained model on disk
-# In GameParameters:
-#   inference_mode = MLMode.SUCKER    # or MLMode.LIMB
-#   inference_model = MLMode.SUCKER   # resolved to the .keras path via default_models
+# Set CFG at the top of octo_viz.py, e.g.
+#   CFG = replace(VIZ, inference=replace(VIZ.inference,
+#                                        mode=MLMode.SUCKER,
+#                                        model=MLMode.SUCKER))
+#   mode  = how colors are computed; model = which .keras to load
+#   (resolved via CFG.inference_model_path)
 python octo_viz.py
 # or
 bazel run octo_viz
@@ -184,8 +193,8 @@ better camouflage).
 python websocket_server.py     # ws://localhost:8765
 # then open octopus-visualizer.html in a browser and click Connect
 ```
-Uses the heuristic by default; set `inference_mode` in `GameParameters` to
-drive it with a trained model (falls back to the heuristic if the model
+Uses the heuristic by default; set `inference.mode` on the server's
+profile to drive it with a trained model (falls back to the heuristic if the model
 can't load).
 
 ### Inference server

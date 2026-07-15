@@ -37,7 +37,8 @@ used as the signal and g/b are set equal to r.
 
 ```
 octopus_ai/
-├── OctoConfig.py            # THE config: GameParameters + TrainingParameters (plain dicts)
+├── config_schema.py         # THE config: frozen Config dataclass tree (source of truth)
+├── OctoConfig.py            # Profiles built from it + flat<->nested converters
 │                            #   + default_models / default_datasets path maps
 ├── octo_viz.py              # Entry point: matplotlib visualizer loop
 ├── octo_datagen.py          # OctoDatagen class + standalone datagen entry point
@@ -82,20 +83,40 @@ octopus_ai/
 
 ---
 
-## 3. Configuration (`OctoConfig.py`)
+## 3. Configuration (`config_schema.py` + `OctoConfig.py`)
 
-Two **plain dicts** (not dataclasses):
+A tree of **frozen dataclasses**, rooted at `Config` in
+`config_schema.py`. Nesting follows the concern, not the old key prefix:
 
-- `GameParameters` — simulation shape and behavior: grid size (`x_len`,
-  `y_len` = 15), `num_iterations` (120; `-1` = run forever), arm/sucker
-  geometry, movement modes, agent counts, `octo_max_hue_change` (0.25),
-  plus training hyperparams duplicated for trainer convenience
-  (`epochs`, `batch_size`, `test_size`, `constraint_loss_weight`).
-- `TrainingParameters` — pipeline switches consumed by `octo_model.py`:
-  `ml_mode`, `datagen_mode`, `save_data_to_disk`, `restore_data_from_disk`,
-  `run_training`, `save_model_to_disk`, `restore_model_from_disk`,
-  `run_inference`, `run_eval`, tensorboard toggles, plus two path maps:
-  `models` (→ `default_models`) and `datasets` (→ `default_datasets`).
+| Section | Holds |
+|---------|-------|
+| `cfg.run` | `num_iterations` (120; `-1` = forever), `rand_seed`, `threading` |
+| `cfg.world` | `x_len` / `y_len` (15), `surface_grayscale` |
+| `cfg.agents` | `count`, velocities, `movement_mode`, `sensing_radius`, prey capture |
+| `cfg.octopus` | `num_arms`, `sensing_radius`, `.limb` (rows/cols, `.random` / `.lumped` / `.chain` knobs), `.sucker` (`max_hue_change` 0.25, `adjacency_radius`) |
+| `cfg.inference` | `location`, `mode`, `model` |
+| `cfg.output` | `debug_mode`, `show_forces`, `log_forces`, `save_images`, `video_fps` |
+| `cfg.datagen` | `write_format`, `randomize_colors_interval`, disk toggles |
+| `cfg.training` | `ml_mode`, `training_model`, `epochs`, `batch_size`, `test_size`, `constraint_loss_weight`, `sucker_delta_model`, run/save/tensorboard switches |
+| `cfg.paths` | `model_paths` / `dataset_paths`, `MLMode`-keyed |
+
+The hyperparams under `cfg.training` used to be duplicated across both flat
+dicts with nothing keeping them in sync; there is one source now.
+
+`OctoConfig.py` builds the profiles — `DEFAULT`, `VIZ`, `DEBUG`, `TEST`,
+`DATAGEN`, `TRAINING` — with `dataclasses.replace()`, which is also how you
+derive an ad-hoc variant. Selecting a profile is what "experimenting" means;
+there is no shared dict to edit and forget to revert.
+
+Mode-specific limb knobs live under the mode that reads them
+(`cfg.octopus.limb.chain.spring_k`), so "which knobs apply to SPRING_CHAIN?"
+is an autocomplete question.
+
+`config_to_flat` / `config_from_flat` convert to and from the flat dict form
+for the three callers that legitimately speak it: the browser wire protocol,
+the force-log config snapshot (flat keys suit SQLite's `json_extract`), and
+test fixtures. `config_from_flat` is deliberately tolerant — an omitted key
+falls back to `DEFAULT` — and `as_config()` normalizes a Config-or-dict.
 
 Path maps (both `MLMode`-keyed, absolute paths under `ROOT_DIR`):
 
@@ -103,7 +124,10 @@ Path maps (both `MLMode`-keyed, absolute paths under `ROOT_DIR`):
 - `default_datasets` → `training/datagen/{sucker,limb}.pkl` (added in the
   July 2026 fix pass; used by dataset save/restore)
 
-Access is dict-style: `params['x_len']`.
+Access is attribute-style: `cfg.world.x_len`. Configs are frozen;
+in-place mutation raises `FrozenInstanceError`. Resolve model/dataset paths
+via `cfg.inference_model_path` / `cfg.training_model_path` /
+`cfg.training_dataset_path` rather than indexing the path maps by hand.
 
 Key enums live in `simulator/simutil.py`:
 
@@ -267,18 +291,18 @@ The `__main__` block uses its own hardcoded params (2 iterations,
 
 ### 6.1 Orchestration (`octo_model.py`)
 
-A script (module-level code, no `main()`) that reads `TrainingParameters`
-and runs stages in order:
+A script (module-level code, no `main()`) that selects the `TRAINING`
+profile (`CFG` at the top of the file) and runs stages in order:
 
 1. Optionally erase TensorBoard logs (`util.erase_all_logs`).
-2. Pick trainer by `ml_mode`: `SuckerTrainer(GameParameters,
-   TrainingParameters)` or `LimbTrainer(GameParameters, TrainingParameters)`.
+2. Pick trainer by `cfg.training.ml_mode`: `SuckerTrainer(CFG)` or
+   `LimbTrainer(CFG)`.
 3. **Data**: `datagen_mode` → `trainer.datagen(SAVE_DATA_TO_DISK)` then
    `trainer.data_format(data)`; else `restore_data_from_disk` → unpickle
-   from `TrainingParameters['datasets'][ml_mode]`.
+   from `CFG.training_dataset_path`.
 4. **Train**: `trainer.train(train_dataset, GENERATE_TENSORBOARD=...)`;
    save with `model.save(model_location)` if configured
-   (`TrainingParameters['models'][ml_mode]`).
+   (`CFG.training_model_path`).
 5. **Inference** (optional): reload via
    `ModelLoader(path, custom_objects=...).get_object()` when
    `restore_model_from_disk`, then run `trainer.inference(model)` sweep.
@@ -288,11 +312,10 @@ Don't import this module from library code — it executes at import.
 
 ### 6.2 SuckerTrainer (`training/sucker.py`)
 
-- **Constructor** — `SuckerTrainer(GameParameters, TrainingParameters=None)`;
-  the second arg is optional for backwards compatibility with tests.
+- **Constructor** — `SuckerTrainer(cfg)`, one `Config`.
 - **datagen** — wraps `OctoDatagen.run_color_datagen()`. When saving, the
-  path comes from `TrainingParameters['datasets'][MLMode.SUCKER]` if
-  available, else `default_datasets` from OctoConfig.
+  path comes from `cfg.paths.dataset_paths[MLMode.SUCKER]`, falling back to
+  `default_datasets` if the config carries no paths table.
 - **data_format** — model input is the pair *(current color, surface
   color)*; both the "x" and "y" of the tf.data pipeline are the same stacked
   `(state, gt)` tensor (the loss unpacks what it needs from `y_true`).
@@ -319,7 +342,8 @@ Don't import this module from library code — it executes at import.
   `tf.data.Dataset.from_generator` with `RaggedTensorSpec(shape=(4, None))`
   where the 4 rows are [state color], [gt], colors-of-adjacents,
   dists-of-adjacents. Uses `train_test_split_multiple_state_vectors`.
-- **datagen** — saves to `TrainingParameters['datasets'][ml_mode]`.
+- **datagen** — saves to `cfg.training_dataset_path` (i.e.
+  `paths.dataset_paths[cfg.training.ml_mode]`).
 - **train** — same custom-loop pattern as sucker, batch semantics differ
   (each generator element is one sample; batching is effectively 1). Logs to
   `models/logs/limb/fit/<timestamp>`. Per-epoch ETA math is now
@@ -434,7 +458,8 @@ Nothing in the simulator automatically routes to this server yet;
 
 ### 8.1 Local matplotlib (`octo_viz.py`)
 
-Reads `GameParameters`, builds surface/agents/octopus, optionally loads a
+Selects a profile (`CFG = DEFAULT` at the top; swap for `VIZ` or
+`DEBUG`), builds surface/agents/octopus, optionally loads a
 model (validated as `keras.Model`), then loops: `display_refresh`, show
 `visibility` score, move agents/octopus, compute colors via
 `octo.find_color(...)` and apply with `limb.force_color(...)` per limb.
@@ -447,10 +472,11 @@ Requires a GUI backend and an initial button press
 - `websocket_server.py` (rewritten July 2026) streams simulation
   state as JSON at ~10 FPS on `ws://localhost:8765`, with play/pause/reset
   and config-update messages. It drives the **real** simulator classes:
-  dict-style config access, real `Octopus` serialization (limb centerlines
+  a flat mirror for the wire and a typed `Config` rebuilt from it on every
+  update, real `Octopus` serialization (limb centerlines
   as `limbs`, flat `suckers` list with `color`/`target_color`, agents as
   `prey`/`predator`), visibility via `Octopus.visibility`, and optional ML
-  inference per `GameParameters['inference_mode']` with heuristic fallback
+  inference per `cfg.inference.mode` with heuristic fallback
   if the model can't load. Config updates are type-coerced to the existing
   value's type and rebuild the simulation. Handler uses the websockets ≥13
   single-argument API. Wire format is documented in the module docstring.
@@ -481,7 +507,8 @@ Requires a GUI backend and an initial button press
   `--check-deps`). Makefile wraps the same plus per-file targets. Suite is
   8 files / 136 tests; `tests/README.md` describes coverage per file.
 - **Lint**: ruff configured in `pyproject.toml` (E, W, F, I, N, UP, B, SIM,
-  RUF; several N-rules ignored to tolerate `GameParameters`-style names).
+  RUF; several N-rules ignored to tolerate the legacy CamelCase argument
+  names that remain in the trainers).
   `make lint` / `make format` wrap `ruff check .` / `ruff format .`.
   Pre-existing lint debt remains in older modules and tests.
 
@@ -490,7 +517,7 @@ Requires a GUI backend and an initial button press
 ## 10. Data flow summary (sucker pipeline, the one that works end-to-end)
 
 ```
-OctoConfig.GameParameters
+OctoConfig.DEFAULT (a Config)
         │
         ▼
 OctoDatagen.run_color_datagen()          # simulator rollout

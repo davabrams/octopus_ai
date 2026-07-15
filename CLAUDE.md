@@ -36,8 +36,9 @@ frontends.
 
 ```
 octopus_ai/
-├── OctoConfig.py           # GameParameters + TrainingParameters — plain DICTS
-│                           #   + default_models / default_datasets path maps
+├── OctoConfig.py           # Profiles (DEFAULT/VIZ/DEBUG/TEST/DATAGEN/TRAINING)
+│                           #   + flat<->nested converters + path maps
+├── config_schema.py        # The typed Config dataclasses — source of truth
 ├── octo_viz.py             # matplotlib visualizer entry point
 ├── octo_datagen.py         # OctoDatagen class + standalone pickle-writing main
 ├── octo_model.py           # datagen → train → save → inference/eval pipeline
@@ -52,22 +53,55 @@ octopus_ai/
 
 ## Configuration — IMPORTANT
 
-`OctoConfig.py` contains two **plain dicts**: `GameParameters` and
-`TrainingParameters`. Access is **dict-style**: `params['x_len']`,
-`params['octo_num_arms']`.
+Config is a tree of **frozen dataclasses** defined in `config_schema.py`
+(the source of truth). Access is **attribute-style**: `cfg.world.x_len`,
+`cfg.octopus.num_arms`, `cfg.training.epochs`.
 
-There are NO `GameConfig`/`TrainingConfig` dataclasses — if you encounter
-references to them in old branches or history, that code predates the current
-config. Do not introduce attribute access on config.
+Note this is the reverse of what older code and history will show you. The
+module-level mutable dicts `GameParameters` / `TrainingParameters` are
+**gone**; so is dict-style `params['x_len']` access. If you find a branch
+or a comment describing them as current, it predates the config reorg.
 
-Path maps in `OctoConfig.py`:
+`OctoConfig.py` builds the **profiles** — pick one, don't edit shared
+state:
+
+| Profile | For |
+|---------|-----|
+| `DEFAULT` | the shipped baseline; writes nothing to disk |
+| `VIZ` | watching a run: force arrows on, disk quiet |
+| `DEBUG` | everything on: arrows + force DB + PNG/MP4 capture |
+| `TEST` | deterministic, side-effect free, needs no model on disk |
+| `TRAINING` | the training pipeline; `octo_model.py` selects it |
+| `DATAGEN` | data generation. Defined and tested, but nothing selects it yet — `octo_datagen.py`'s `__main__` still hand-builds a flat dict |
+
+Derive a variant with `dataclasses.replace()` — configs are frozen, so
+in-place mutation raises:
+
+```python
+CFG = replace(VIZ, octopus=replace(VIZ.octopus,
+                                   movement_mode=MovementMode.SPRING_CHAIN))
+```
+
+`config_to_flat` / `config_from_flat` convert to and from a flat dict. That
+boundary exists for three callers only — the browser wire protocol, the
+force-log snapshot, and test fixtures — and `as_config()` normalizes either
+form. Don't reach for them in new simulator or training code; take a
+`Config`.
+
+Path maps in `OctoConfig.py`, both `MLMode`-keyed and reachable as
+`cfg.paths.model_paths` / `cfg.paths.dataset_paths`:
 - `default_models` — `MLMode` → absolute `.keras` path
-  (`training/models/{sucker,limb}.keras`); also exposed as
-  `TrainingParameters['models']`.
+  (`training/models/{sucker,limb}.keras`).
 - `default_datasets` — `MLMode` → absolute `.pkl` path
-  (`training/datagen/{sucker,limb}.pkl`); also exposed as
-  `TrainingParameters['datasets']`. Used by `save_data_to_disk` /
+  (`training/datagen/{sucker,limb}.pkl`). Used by `save_data_to_disk` /
   `restore_data_from_disk`.
+
+Resolve paths through the properties rather than indexing by hand:
+`cfg.inference_model_path`, `cfg.training_model_path`,
+`cfg.training_dataset_path`.
+
+Tests build configs with `tests/helpers.make_config(**flat_overrides)`,
+which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
 
 ## Key Concepts
 
@@ -95,9 +129,8 @@ Path maps in `OctoConfig.py`:
   (placeholder, no implementation).
 - **Trainer pattern:** `training/trainutil.Trainer` base; `SuckerTrainer`
   and `LimbTrainer` implement `datagen`, `data_format`, `train`,
-  `inference`. Orchestrated by `octo_model.py` reading `TrainingParameters`.
-  Both trainers accept `(GameParameters, TrainingParameters)`;
-  `SuckerTrainer`'s second arg is optional.
+  `inference`. Orchestrated by `octo_model.py`, which selects the
+  `TRAINING` profile. Both trainers take a single `Config`.
 - **Loss:** `WeightedSumLoss = 0.95·ConstraintLoss + 0.05·MAE`. The
   constraint loss penalizes color changes beyond the 0.25 threshold and
   ignores ground truth; MAE pulls toward the surface color. This is why
@@ -119,7 +152,7 @@ python octo_viz.py            # or: bazel run octo_viz
 # Data generation (standalone; writes training/datagen/sucker.pkl)
 python octo_datagen.py        # or: bazel run octo_datagen
 
-# Training pipeline (behavior driven by TrainingParameters in OctoConfig.py)
+# Training pipeline (behavior driven by the TRAINING profile; CFG at the top of the file)
 python octo_model.py          # or: bazel run octo_model
 
 # Inference server (must run from inside inference_server/ — it does sys.path tricks)
@@ -163,7 +196,8 @@ unused imports); clean opportunistically, don't let it block work.
   is indexed `[y][x]`.
 - Sucker/limb inference is parallelized with `multiprocessing.pool.ThreadPool`
   + `imap_unordered`, carrying an index through and re-sorting after.
-- Config access is dict-style throughout.
+- Config access is attribute-style on a frozen `Config`; derive
+  variants with `dataclasses.replace()`, never mutate.
 - Mutable containers are initialized in `__init__`, never as class
   attributes (class-level lists were shared across instances and bit us
   in July 2026).
@@ -176,8 +210,8 @@ unused imports); clean opportunistically, don't let it block work.
 
 ## Gotchas for future Claude instances
 
-1. `restore_data_from_disk` unpickles from
-   `TrainingParameters['datasets']` — make sure a dataset was actually
+1. `restore_data_from_disk` unpickles from `cfg.training_dataset_path`
+   — make sure a dataset was actually
    generated (e.g. `python octo_datagen.py`) and postdates July 2026
    (older pickles were generated with a bug that pinned sucker state at
    0.5 because the color feedback loop never ran).

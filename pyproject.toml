@@ -46,7 +46,7 @@ select = [
 ignore = [
     "E501",   # line too long — handled by formatter
     "N802",   # function name should be lowercase (too many existing violations)
-    "N803",   # argument name should be lowercase (e.g. GameParameters)
+    "N803",   # argument name should be lowercase (e.g. SAVE_DATA_TO_DISK)
     "N806",   # variable in function should be lowercase
     "B008",   # do not perform function calls in argument defaults
     "SIM108", # ternary operator — readability preference
