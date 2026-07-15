@@ -116,9 +116,6 @@ python run_tests.py
 
 # Method 2: Using Make (if available)
 make test
-
-# Method 3: Using shell script
-./test.sh
 ```
 
 ### **Advanced Test Options**

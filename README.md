@@ -21,9 +21,8 @@ Run the comprehensive test suite with a single command:
 # Easiest method - using the test runner
 python run_tests.py
 
-# Alternative methods
+# Alternative method
 make test      # If you have make
-./test.sh      # Shell script
 
 # With options
 python run_tests.py --verbose    # Detailed output

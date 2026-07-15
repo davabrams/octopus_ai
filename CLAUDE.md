@@ -171,7 +171,6 @@ python run_tests.py --verbose
 python run_tests.py --coverage
 python run_tests.py --test test_kinematics.py
 make test / make test-kinematics / make test-training / ...
-./test.sh
 ```
 
 ## Linting & Formatting

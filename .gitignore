@@ -11,3 +11,10 @@ ml_server/server
 .vscode/tasks.json
 .venv/
 *.egg-info/
+
+# Bazel convenience symlinks (machine-specific, point into the build cache)
+/bazel-*
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/

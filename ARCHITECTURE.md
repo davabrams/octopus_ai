@@ -77,7 +77,7 @@ octopus_ai/                   # repo root
 ├── tests/                   # pytest suite, ~2,400 lines / 136 tests across 8 files
 ├── models/logs/             # TensorBoard output (sucker/, limb/)
 ├── MODULE.bazel             # Bazel (Bzlmod) module; BUILD files are per-package
-├── Makefile, run_tests.py, test.sh   # Test/lint entry points
+├── Makefile, run_tests.py   # Test/lint entry points
 └── pyproject.toml           # pip deps, ruff config, pytest config
 ```
 
@@ -501,7 +501,7 @@ Requires a GUI backend and an initial button press
 
 - **Environment**: Python ≥3.10 (venv here is 3.12, ARM-native — see
   TRAINING.md for Apple Silicon setup). `pip install -e ".[dev]"`.
-- **Bazel**: Bzlmod-era (`MODULE.bazel`, empty `WORKSPACE`). Targets:
+- **Bazel**: Bzlmod-era (`MODULE.bazel`, no `WORKSPACE`). Targets:
   `//visualizer:octo_viz`, `//octopus_ai:datagen`, `//octopus_ai:model`,
   `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`.
   Bazel does not manage Python deps here — it relies on the ambient
