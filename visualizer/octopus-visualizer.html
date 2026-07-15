@@ -347,6 +347,15 @@
               ctx.stroke();
             }
             
+            // Entities live at CELL CENTRES, but a background cell (x, y) is
+            // drawn spanning [x, x+1] x [y, y+1] px. Shift entity drawing by
+            // half a cell so a sucker at coordinate i lands at the centre of
+            // cell i - the same cell the server sampled its camouflage colour
+            // from (grid[round(y)][round(x)]). Without this the suckers are
+            // drawn a cell off and appear not to match the surface.
+            ctx.save();
+            ctx.translate(cellSize / 2, cellSize / 2);
+
             // Draw octopus limbs
             ctx.strokeStyle = '#ff4444';
             ctx.lineWidth = 3;
@@ -409,7 +418,9 @@
                 ctx.setLineDash([]);
               }
             });
-            
+
+            ctx.restore();  // end half-cell entity shift
+
           }, [simulationData, config]);
 
           const handleConfigChange = (key, value) => {

@@ -265,6 +265,13 @@ const OctopusAIVisualizer = () => {
       ctx.stroke();
     }
     
+    // Shift entity drawing by half a cell so a sucker at coordinate i lands at
+    // the centre of cell i - the cell the server sampled its camouflage colour
+    // from - rather than the cell corner. (Background cell (x,y) spans
+    // [x, x+1] x [y, y+1] px.)
+    ctx.save();
+    ctx.translate(cellSize / 2, cellSize / 2);
+
     // Draw octopus limbs
     ctx.strokeStyle = '#ff4444';
     ctx.lineWidth = 3;
@@ -327,7 +334,9 @@ const OctopusAIVisualizer = () => {
         ctx.setLineDash([]);
       }
     });
-    
+
+    ctx.restore();  // end half-cell entity shift
+
   }, [simulationData, config]);
 
   const handleConfigChange = (key, value) => {
