@@ -103,6 +103,22 @@ DEBUG = replace(
     ),
 )
 
+# Watching the iLQR octopus. The shared profile for BOTH front ends - the
+# matplotlib visualizer (octo_viz) and the browser/websocket server - so they
+# show the same simulation: iLQR motor control on the body and every limb,
+# camouflage via the fast NO_MODEL heuristic (no trained model needed), the
+# octopus outlined so it stays visible, and per-step performance tracking.
+VIZ_ILQR = replace(
+    VIZ,
+    inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
+    output=replace(VIZ.output, highlight_octopus=True, track_performance=True),
+    octopus=replace(
+        VIZ.octopus,
+        movement_mode=MovementMode.ILQR,   # body drifts by the arms' pull
+        limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
+    ),
+)
+
 # Deterministic and side-effect free. Nothing written to disk, no dependence
 # on a trained model existing, and RANDOM movement (the only mode where
 # move() works without an agent). tests/conftest.py applies this.

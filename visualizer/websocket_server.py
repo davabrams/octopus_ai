@@ -44,8 +44,9 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from octopus_ai.config import (
+from octopus_ai.config import (  # noqa: F401  (DEFAULT kept for convenience)
     DEFAULT,
+    VIZ_ILQR,
     config_from_flat,
     config_to_flat,
     print_config,
@@ -71,7 +72,10 @@ class OctopusSimulationServer:
         # keep a flat mirror for the wire protocol and a typed Config for
         # everything internal. update_config() edits the mirror and rebuilds
         # the Config from it.
-        self.profile = DEFAULT
+        #
+        # VIZ_ILQR is the same profile the matplotlib visualizer (octo_viz)
+        # uses, so both front ends show the same iLQR simulation.
+        self.profile = VIZ_ILQR
         self.config: dict = config_to_flat(self.profile)
         self.cfg = self.profile
 

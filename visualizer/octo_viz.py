@@ -2,7 +2,6 @@
 import os
 import sys
 import time
-from dataclasses import replace
 
 # This lives in visualizer/ but imports top-level project modules; put the repo
 # root on sys.path so `python visualizer/octo_viz.py` works from the repo root.
@@ -11,10 +10,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import matplotlib.pyplot as plt
 from tensorflow import keras
 
-from octopus_ai.config import (  # noqa: F401  (DEBUG/DEFAULT are profiles)
+from octopus_ai.config import (  # noqa: F401  (profiles offered for swapping)
     DEBUG,
     DEFAULT,
     VIZ,
+    VIZ_ILQR,
     print_config,
 )
 from octopus_ai.perf import PerfTracker
@@ -23,7 +23,6 @@ from simulator.octopus_generator import Octopus
 from simulator.simutil import (
     Color,
     MLMode,
-    MovementMode,
     display_refresh,
     setup_display,
 )
@@ -39,36 +38,17 @@ from training.models.model_loader import ModelLoader
 
 # %% Pick a profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 # Swap this one line instead of editing (and forgetting to revert) a pile of
-# flags. To watch the locomotion with force arrows use VIZ; to also record a
-# force DB and stitch an MP4 use DEBUG. Derive an ad-hoc variant with
-# dataclasses.replace, e.g.
-#     CFG = replace(VIZ, octopus=replace(VIZ.octopus,
-#                                        movement_mode=MovementMode.SPRING_CHAIN))
-#     CFG = replace(VIZ, octopus=replace(VIZ.octopus,
-#                                        movement_mode=MovementMode.SPRING_CHAIN))
-#
-# iLQR limb motor control (ARCHITECTURE.md §11.4): each arm reaches toward
-# nearby prey via its own compiled TensorFlow iLQR controller, receding-horizon
-# (MPC). The BODY (octopus movement_mode=ILQR too) drifts by the summed base
-# reactions of all eight arms - it follows the collective reach, one frame
-# lagged. Color inference is pinned to the fast NO_MODEL heuristic so no
-# trained model is needed.
+# flags. VIZ_ILQR is the shared iLQR-octopus profile the websocket server also
+# uses, so both front ends show the same simulation (ARCHITECTURE.md §11.4):
+# iLQR body+limb motor control, camouflage via the fast NO_MODEL heuristic,
+# the octopus outlined, and per-step performance tracking. For the older
+# modes use VIZ (force arrows) or DEBUG (force DB + MP4); derive an ad-hoc
+# variant with dataclasses.replace.
 #
 # Heads up on speed: every arm compiles its own graph on the FIRST frame (a
 # multi-second pause), then each frame runs 8 independent solves (~1-2 s/frame).
-# For snappier playback, thin the octopus - fewer/shorter arms - e.g. add
-#     num_arms=4, limb=replace(..., rows=8, ...)
-CFG = replace(
-    VIZ,
-    inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
-    output=replace(VIZ.output, highlight_octopus=True,   # outline the camouflaged octopus
-                   track_performance=True),               # per-step timing + memory summary
-    octopus=replace(
-        VIZ.octopus,
-        movement_mode=MovementMode.ILQR,   # body follows the arms' pull
-        limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
-    ),
-)
+# For snappier playback, thin the octopus (fewer/shorter arms) via replace().
+CFG = VIZ_ILQR
 
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
