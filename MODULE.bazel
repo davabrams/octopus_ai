@@ -7,4 +7,8 @@
 
 # Use the project venv interpreter (which has the pip deps) instead of the
 # system python3. Lets `bazel run`/`bazel test` work without activating .venv.
-register_toolchains("//python_toolchain:venv_python_toolchain")
+# The interpreter path is computed at build time from the workspace root
+# (<workspace>/.venv/bin/python3), so nothing machine-specific is committed.
+venv_python = use_extension("//python_toolchain:venv_interpreter.bzl", "venv_python")
+use_repo(venv_python, "venv_python")
+register_toolchains("@venv_python//:venv_python_toolchain")

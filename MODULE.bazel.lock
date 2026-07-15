@@ -61,6 +61,23 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//python_toolchain:venv_interpreter.bzl%venv_python": {
+      "general": {
+        "bzlTransitiveDigest": "izO7NBNyQn1Dn6wa6MmHpSBLZr5U+xi32TAXA1xG4uQ=",
+        "usagesDigest": "hdd0G2fLK/kxe7VemHUqHNflQmPZ3AqDDEPFcfvyuCw=",
+        "recordedFileInputs": {},
+        "recordedDirentsInputs": {},
+        "envVariables": {},
+        "generatedRepoSpecs": {
+          "venv_python": {
+            "bzlFile": "@@//python_toolchain:venv_interpreter.bzl",
+            "ruleClassName": "venv_python_repo",
+            "attributes": {}
+          }
+        },
+        "recordedRepoMappingEntries": []
+      }
+    },
     "@@apple_support~//crosstool:setup.bzl%apple_cc_configure_extension": {
       "general": {
         "bzlTransitiveDigest": "PjIds3feoYE8SGbbIq2SFTZy3zmxeO2tQevJZNDo7iY=",
