@@ -129,7 +129,10 @@ class ILQRConfig:
     """
     horizon: int = 10            # trajectory length planned each frame
     max_iters: int = 5           # iLQR iterations per frame (MPC, warm-started)
-    body_stiffness: float = 0.5  # how hard an arm's reach/flee tugs the body
+    body_stiffness: float = 3.0  # gain from the arm's base-segment spring
+                                 # tension to the body's drift (the body only
+                                 # ever moves via this tension - never sensing
+                                 # agents directly)
     w_spring: float = 2.0        # segment spacing toward rest length
     w_bend: float = 1.0          # straightness (anti-crumple)
     w_effort: float = 0.1        # control-magnitude penalty

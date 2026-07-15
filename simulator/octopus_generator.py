@@ -600,34 +600,40 @@ class Limb:
         self._ilqr_u = np.roll(u_np, -1, axis=0)
         self._ilqr_u[-1] = 0.0
 
-        # Base reaction: the pull THIS arm exerts on the body, from what the
-        # arm itself sensed (at its tip) - not re-sensed from the body centre,
-        # which would miss the far prey the arm is stretching for. Two terms:
-        #   reach: toward the prey this arm found, (prey - tip). An arm straining
-        #          for distant prey tugs the body hard toward it; the pull fades
-        #          as the tip arrives.
-        #   flee:  away from the threat this arm found, scaled by proximity, so a
-        #          threatened arm shoves the body clear.
-        # Summed across arms by _drift_body_by_tension next frame, this makes the
-        # body follow the arms toward prey and away from threats - no central
-        # negotiation, and reachable prey moves the body even when it is beyond
-        # the body's own sensing radius.
-        tip = self.center_line[-1]
-        reach = np.zeros(2, dtype=float)
-        if prey is not None:
-            reach = np.array([prey[0] - tip.x, prey[1] - tip.y], dtype=float)
-        flee = np.zeros(2, dtype=float)
-        if threat is not None:
-            dx, dy = tip.x - threat[0], tip.y - threat[1]
-            d = float(np.hypot(dx, dy))
-            if d > 1e-9:
-                w = max(0.0, 1.0 - d / self.agent_range_radius)
-                flee = w * self.agent_range_radius * np.array([dx / d, dy / d])
-
-        self.last_tension = self.ilqr_body_stiffness * (reach + flee)
-        self.last_f_attract = self.ilqr_body_stiffness * reach
-        self.last_f_spring = self.ilqr_body_stiffness * flee
+        # Base reaction: the ONLY thing the body feels is the tensile force in
+        # the spring between the base (node 0, pinned to the body) and its
+        # adjacent node (node 1). The body is never influenced by agents
+        # directly - prey/threats act on the arm's centerline nodes (the tip
+        # attractor pulls toward prey, the repulsion barrier pushes off
+        # threats), and the inter-node springs carry that as tension down the
+        # chain to node 1. When the arm strains toward far prey the whole chain
+        # stretches, so this first segment is stretched and its tension pulls
+        # the body toward node 1 (up the arm, toward the prey); when the arm
+        # recoils from a threat, node 1 is shoved clear and the tension pulls
+        # the body after it. At rest the segment sits at its rest length and the
+        # body feels nothing. Summed across arms by _drift_body_by_tension.
+        # Tensile only: the segment PULLS the body when stretched (a taut arm
+        # reaching prey / recoiling from a threat) but does not PUSH when
+        # compressed - it is a rope, not a rod. This matters: an idle arm
+        # settles a hair under rest length, and a two-sided spring would turn
+        # that tiny compression into a persistent inward shove that, once the
+        # body drifts and the arms trail into alignment, runs away into a
+        # wander. Clamping to tension (stretch > 0) leaves an idle octopus
+        # still, and only a genuinely straining arm moves the body.
+        node1 = self.center_line[1]
+        dx, dy = node1.x - x_octo, node1.y - y_octo
+        seg_len = float(np.hypot(dx, dy))
+        rest = self.max_sucker_distance  # the iLQR segment rest length
+        stretch = seg_len - rest
+        if seg_len > 1e-9 and stretch > 0.0:
+            self.last_tension = self.ilqr_body_stiffness * stretch \
+                * np.array([dx / seg_len, dy / seg_len])
+        else:
+            self.last_tension = np.zeros(2, dtype=float)
+        self.last_f_attract = np.asarray(self.last_tension, dtype=float).copy()
+        self.last_f_spring = np.zeros(2, dtype=float)
         self.last_net = np.asarray(self.last_tension, dtype=float).copy()
+        tip = self.center_line[-1]
         self.last_arm_length = float(np.hypot(tip.x - x_octo, tip.y - y_octo))
 
     def find_adjacents(self, s_target: Sucker, radius: float):
