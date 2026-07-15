@@ -210,14 +210,15 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False,
 
     ax.clear()
 
-    # Print the patterned surface
-    ax.imshow(surf.grid.astype(float), cmap="binary_r", vmin=0.0, vmax=1.0)
+    # Print the patterned surface (RGB grid, shape (y, x, 3))
+    ax.imshow(np.clip(surf.grid.astype(float), 0.0, 1.0))
 
     #used to check for transposed behavior
     if debug_mode:
         for i_x, row in enumerate(surf.grid):
             for i_y, val in enumerate(row):
-                ax.plot(i_x, i_y, marker='.', mfc=[float(val)] * 3, markeredgewidth = 0)
+                ax.plot(i_x, i_y, marker='.',
+                        mfc=np.clip(val, 0.0, 1.0), markeredgewidth=0)
 
     # Outline suckers + draw centerlines when highlighting (or debugging), so a
     # camouflaged octopus is still visible against the surface.

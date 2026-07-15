@@ -7,14 +7,10 @@ from simulator.simutil import MovementMode, AgentType, State
 
 
 class TestSurfaceGenerator(unittest.TestCase):
-    def test_random_surface_binary(self) -> None:
-        """Binary mode is now requested explicitly.
-
-        This used to omit surface_grayscale and rely on RandomSurface's
-        params.get(..., False) fallback meaning "binary" - an implicit
-        default that disagreed with the project default (grayscale). The
-        test asserts binary behaviour, so it should ask for it.
-        """
+    def test_random_surface_color(self) -> None:
+        """surface_grayscale=False gives a full-colour surface: the grid is
+        (y, x, 3) and each get_val is an [r, g, b] triple with independent
+        channels."""
         def test_surf_with_size(max_dim: int) -> None:
             params = {
                 "x_len": max_dim,
@@ -23,13 +19,12 @@ class TestSurfaceGenerator(unittest.TestCase):
                 "surface_grayscale": False,
             }
             surf = RandomSurface(params)
-            self.assertIsInstance(surf.get_val(1,1), int)
-            # self.assertRaises(surf.get_val(10,10))
-            for i in range(max_dim):
-                for j in range(max_dim):
-                    self.assertTrue(surf.get_val(i,j) in [0,1])
+            self.assertEqual(surf.grid.shape, (max_dim, max_dim, 3))
+            rgb = surf.get_val(1, 1)
+            self.assertEqual(np.asarray(rgb).shape, (3,))
+            self.assertTrue(all(0.0 <= float(c) <= 1.0 for c in rgb))
 
-        for max_dim in range(2,10):
+        for max_dim in range(2, 10):
             test_surf_with_size(max_dim)
 
     def test_random_surface_grayscale(self) -> None:
@@ -40,11 +35,15 @@ class TestSurfaceGenerator(unittest.TestCase):
             "surface_grayscale": True,
         }
         surf = RandomSurface(params)
+        self.assertEqual(surf.grid.shape, (6, 6, 3))
         vals = [surf.get_val(i, j) for i in range(6) for j in range(6)]
-        self.assertTrue(all(isinstance(v, float) for v in vals))
-        self.assertTrue(all(0.0 <= v < 1.0 for v in vals))
+        # Grayscale: every cell has r == g == b, in [0, 1).
+        for rgb in vals:
+            self.assertTrue(0.0 <= float(rgb[0]) < 1.0)
+            self.assertAlmostEqual(float(rgb[0]), float(rgb[1]))
+            self.assertAlmostEqual(float(rgb[0]), float(rgb[2]))
         # a 36-cell uniform random grid should not be binary
-        self.assertGreater(len(set(round(v, 3) for v in vals)), 2)
+        self.assertGreater(len(set(round(float(v[0]), 3) for v in vals)), 2)
 
 class TestAgentGenerator(unittest.TestCase):
     def test_agent_generator(self) -> None:

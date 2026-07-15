@@ -81,11 +81,11 @@ class Sucker:
         self.y = y
 
     def get_surf_color_at_this_sucker(self, surf: RandomSurface) -> Color:
-        """Gets the color of the surface underneath the sucker"""
+        """Gets the RGB color of the surface underneath the sucker"""
         x_grid_location = int(round(self.x))
         y_grid_location = int(round(self.y))
-        c_val = surf.get_val(x_grid_location, y_grid_location) * 1.0
-        return Color(c_val, c_val, c_val)
+        rgb = surf.get_val(x_grid_location, y_grid_location)
+        return Color(float(rgb[0]), float(rgb[1]), float(rgb[2]))
 
     def _find_color_change(self, c_start: float, c_target: float):
         d_max = self.max_hue_change
@@ -867,8 +867,10 @@ class Octopus:
         suckers = [s for l in self.limbs for s in l.suckers]
 
         # Read the Python-float object state into tensors (the one unavoidable
-        # host->device gather while suckers remain Python objects).
-        cur = tf.constant([s.c.r for s in suckers], dtype=tf.float32)  # (N,)
+        # host->device gather while suckers remain Python objects). RGB: each
+        # sucker contributes its current [r, g, b].
+        cur = tf.constant([[s.c.r, s.c.g, s.c.b] for s in suckers],
+                          dtype=tf.float32)  # (N, 3)
         # float64 positions so the round-to-grid matches the per-sucker path
         # bit-for-bit: at float32, a position at x.5+epsilon collapses onto the
         # .5 boundary and banker's-rounds the other way, reading a neighbouring
@@ -877,36 +879,44 @@ class Octopus:
                          dtype=tf.float64)  # (N, 2)
 
         # Surface color under each sucker, in one on-device gather. The grid is
-        # indexed [y][x]; positions are rounded and clamped to the grid, exactly
-        # mirroring Sucker.get_surf_color_at_this_sucker / RandomSurface.get_val.
-        grid = tf.constant(surf.grid, dtype=tf.float32)  # (y_len, x_len)
+        # RGB, indexed [y][x] -> (3,); positions are rounded and clamped to the
+        # grid, mirroring Sucker.get_surf_color_at_this_sucker / get_val.
+        grid = tf.constant(surf.grid, dtype=tf.float32)  # (y_len, x_len, 3)
         y_len, x_len = int(grid.shape[0]), int(grid.shape[1])
         ix = tf.clip_by_value(
             tf.cast(tf.round(xy[:, 0]), tf.int32), 0, x_len - 1)
         iy = tf.clip_by_value(
             tf.cast(tf.round(xy[:, 1]), tf.int32), 0, y_len - 1)
-        surf_c = tf.gather_nd(grid, tf.stack([iy, ix], axis=1))  # (N,)
+        surf_c = tf.gather_nd(grid, tf.stack([iy, ix], axis=1))  # (N, 3)
 
         if inference_mode == MLMode.NO_MODEL:
-            # Vectorized form of Sucker._find_color_change: step toward the
-            # surface color, capped at +/- each sucker's max_hue_change, then
-            # clip to [0, 1]. Per-sucker threshold preserves exact parity.
+            # Vectorized Sucker._find_color_change, applied to every channel
+            # independently: step each of r/g/b toward the surface colour,
+            # capped at +/- each sucker's max_hue_change, then clip to [0, 1].
             d_max = tf.constant([s.max_hue_change for s in suckers],
-                                dtype=tf.float32)  # (N,)
+                                dtype=tf.float32)[:, None]  # (N, 1) broadcasts
             dc = tf.clip_by_value(surf_c - cur, -d_max, d_max)
-            new_r = tf.clip_by_value(cur + dc, 0.0, 1.0)  # (N,)
+            new_c = tf.clip_by_value(cur + dc, 0.0, 1.0)  # (N, 3)
         else:  # MLMode.SUCKER
-            model_in = tf.stack([cur, surf_c], axis=1)  # (N, 2)
-            new_r = tf.reshape(model(model_in, training=False), [-1])  # (N,)
+            # The sucker model is a single-channel (current, surface) -> new
+            # map; apply it to each RGB channel independently.
+            channels = [
+                tf.reshape(
+                    model(tf.stack([cur[:, ch], surf_c[:, ch]], axis=1),
+                          training=False),
+                    [-1])
+                for ch in range(3)
+            ]
+            new_c = tf.stack(channels, axis=1)  # (N, 3)
 
-        # Single host pull, then scatter back into Color objects (grayscale:
-        # g and b mirror r), rebuilding the per-limb nesting in order.
-        new_r = new_r.numpy()
+        # Single host pull, then scatter back into Color objects, rebuilding
+        # the per-limb nesting in order.
+        new_c = new_c.numpy()
         out: List[List[Color]] = []
         k = 0
         for size in limb_sizes:
-            row = [Color(float(v), float(v), float(v))
-                   for v in new_r[k:k + size]]
+            row = [Color(float(v[0]), float(v[1]), float(v[2]))
+                   for v in new_c[k:k + size]]
             out.append(row)
             k += size
         return out

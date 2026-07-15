@@ -169,8 +169,10 @@ class OctopusSimulationServer:
                     suckers.append({
                         "x": float(s.x),
                         "y": float(s.y),
-                        "color": float(s.c.r),
-                        "target_color": float(target.r),
+                        # RGB triples in [0, 1]; grayscale surfaces have r=g=b.
+                        "color": [float(s.c.r), float(s.c.g), float(s.c.b)],
+                        "target_color": [float(target.r), float(target.g),
+                                         float(target.b)],
                     })
 
             agents = [

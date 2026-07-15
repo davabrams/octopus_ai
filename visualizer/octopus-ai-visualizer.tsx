@@ -164,8 +164,9 @@ const OctopusAIVisualizer = () => {
 
   const generateFallbackData = () => {
     // Generate random background (checkerboard pattern)
-    const background = Array(config.y_len).fill().map(() => 
-      Array(config.x_len).fill().map(() => Math.random())
+    const background = Array(config.y_len).fill().map(() =>
+      Array(config.x_len).fill().map(() =>
+        [Math.random(), Math.random(), Math.random()])
     );
 
     // Generate octopus limbs and suckers
@@ -193,11 +194,13 @@ const OctopusAIVisualizer = () => {
           const offset = (k - config.limb_cols / 2 + 0.5) * 0.3;
           const suckerX = x + Math.cos(angle + Math.PI/2) * offset;
           const suckerY = y + Math.sin(angle + Math.PI/2) * offset;
-          suckers.push({ 
-            x: suckerX, 
-            y: suckerY, 
-            color: Math.random(),
-            targetColor: background[Math.floor(suckerY)]?.[Math.floor(suckerX)] || 0
+          const bgCell = background[Math.floor(suckerY)]
+            ?.[Math.floor(suckerX)] || [0, 0, 0];
+          suckers.push({
+            x: suckerX,
+            y: suckerY,
+            color: bgCell,
+            targetColor: bgCell
           });
         }
       }
@@ -240,11 +243,12 @@ const OctopusAIVisualizer = () => {
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw background checkerboard
+    // Draw background. Each cell is an [r, g, b] triple in [0, 1].
+    const to255 = v => Math.round(Math.max(0, Math.min(1, v)) * 255);
     simulationData.background.forEach((row, y) => {
       row.forEach((cell, x) => {
-        const shade = Math.round(Math.max(0, Math.min(1, cell)) * 255);
-        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+        const [r, g, b] = Array.isArray(cell) ? cell : [cell, cell, cell];
+        ctx.fillStyle = `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`;
         ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
       });
     });
@@ -298,10 +302,11 @@ const OctopusAIVisualizer = () => {
     );
     ctx.fill();
     
-    // Draw suckers
+    // Draw suckers (colour is an [r, g, b] triple in [0, 1])
     simulationData.octopus.suckers.forEach(sucker => {
-      const gray = Math.floor(sucker.color * 255);
-      ctx.fillStyle = `rgb(${gray}, ${gray}, ${gray})`;
+      const [sr, sg, sb] = Array.isArray(sucker.color)
+        ? sucker.color : [sucker.color, sucker.color, sucker.color];
+      ctx.fillStyle = `rgb(${to255(sr)}, ${to255(sg)}, ${to255(sb)})`;
       ctx.strokeStyle = '#333333';
       ctx.lineWidth = 1;
       ctx.beginPath();

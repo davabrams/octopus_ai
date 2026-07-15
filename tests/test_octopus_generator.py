@@ -27,9 +27,10 @@ class TestSucker(unittest.TestCase):
         """Set up test fixtures"""
         self.params = make_config(x_len=10, y_len=10, rand_seed=42)
 
-        # Create a mock surface
+        # Create a mock surface (get_val returns an RGB triple)
         self.mock_surface = Mock()
-        self.mock_surface.get_val.return_value = 0.5
+        self.mock_surface.get_val.return_value = np.array(
+            [0.5, 0.5, 0.5], dtype=np.float32)
 
         # Create test sucker
         self.sucker = Sucker(
@@ -50,12 +51,13 @@ class TestSucker(unittest.TestCase):
         self.assertAlmostEqual(self.sucker.distance_to(other_sucker), expected_distance)
 
     def test_get_surf_color_at_this_sucker(self):
-        """Test surface color retrieval"""
-        self.mock_surface.get_val.return_value = 0.7
+        """Test surface color retrieval (RGB)"""
+        self.mock_surface.get_val.return_value = np.array(
+            [0.7, 0.6, 0.5], dtype=np.float32)
         color = self.sucker.get_surf_color_at_this_sucker(self.mock_surface)
-        self.assertEqual(color.r, 0.7)
-        self.assertEqual(color.b, 0.7)
-        self.assertEqual(color.g, 0.7)
+        self.assertAlmostEqual(color.r, 0.7, places=5)
+        self.assertAlmostEqual(color.g, 0.6, places=5)
+        self.assertAlmostEqual(color.b, 0.5, places=5)
         self.mock_surface.get_val.assert_called_with(5, 5)
 
     def test_find_color_change_heuristic(self):
@@ -164,11 +166,11 @@ class TestOctopus(unittest.TestCase):
 
         # Create mock surface. Batched color inference reads surf.grid
         # directly (one vectorized gather over all suckers) rather than calling
-        # get_val per sucker, so provide a real (y_len, x_len) grid. All-0.5
-        # matches the old get_val.return_value = 0.5.
+        # get_val per sucker, so provide a real (y_len, x_len, 3) RGB grid.
         self.mock_surface = Mock()
-        self.mock_surface.get_val.return_value = 0.5
-        self.mock_surface.grid = np.full((10, 10), 0.5, dtype=np.float32)
+        self.mock_surface.get_val.return_value = np.array(
+            [0.5, 0.5, 0.5], dtype=np.float32)
+        self.mock_surface.grid = np.full((10, 10, 3), 0.5, dtype=np.float32)
 
         # Octopus.__init__ takes (params) only
         self.octopus = Octopus(params=self.params)

@@ -31,24 +31,28 @@ class RandomSurface:
         self._y_len = y_len
         self.grayscale = bool(cfg.world.surface_grayscale)
 
+        # The grid is always RGB: shape (y_len, x_len, 3), float in [0, 1]. A
+        # grayscale surface simply has r == g == b, so all downstream colour
+        # matching is full-colour and grayscale is just a special case.
         image_grid = None
         if cfg.world.background_image:
             image_grid = self._load_image(
                 cfg.world.background_image, x_len, y_len)
 
         if image_grid is not None:
-            self.grid = image_grid
-            self.grayscale = True  # an image is continuous-tone
+            self.grid = image_grid  # full-colour picture (r,g,b independent)
         elif self.grayscale:
-            self.grid = np.random.rand(
-                self._y_len, self._x_len).astype(np.float32)
+            # Grayscale noise: one random channel broadcast to r == g == b.
+            gray = np.random.rand(self._y_len, self._x_len).astype(np.float32)
+            self.grid = np.repeat(gray[:, :, None], 3, axis=2)
         else:
-            self.grid = np.random.randint(
-                2, size=(self._y_len, self._x_len), dtype=np.int8)
+            # Full-colour noise: independent r, g, b per cell.
+            self.grid = np.random.rand(
+                self._y_len, self._x_len, 3).astype(np.float32)
 
     @staticmethod
     def _load_image(path, x_len, y_len):
-        """Load an image as a (y_len, x_len) grayscale grid in [0, 1].
+        """Load an image as a (y_len, x_len, 3) RGB grid in [0, 1].
 
         Returns None (so the caller falls back to a random surface) if the
         image can't be read, rather than crashing a run over a bad path.
@@ -57,9 +61,9 @@ class RandomSurface:
             from PIL import Image
             with Image.open(path) as img:
                 # resize takes (width, height) = (x_len, y_len); the resulting
-                # array is (height, width) = (y_len, x_len), i.e. grid[y][x].
-                gray = img.convert("L").resize((x_len, y_len))
-            return np.asarray(gray, dtype=np.float32) / 255.0
+                # array is (height, width, 3) = (y_len, x_len, 3), grid[y][x].
+                rgb = img.convert("RGB").resize((x_len, y_len))
+            return np.asarray(rgb, dtype=np.float32) / 255.0
         except Exception as e:
             logging.warning(
                 "Could not load background image %r (%s); "
@@ -67,13 +71,13 @@ class RandomSurface:
             return None
 
     def get_val(self, x: float, y: float):
-        """Gets the value at any location within the boundary of the grid:
-        0/1 int in binary mode, a float in [0, 1) in grayscale mode.
-        Takes in a float and quantizes it."""
+        """RGB colour at (x, y) as a float32 array [r, g, b] in [0, 1].
+
+        Takes floats and quantizes to the nearest grid cell.
+        """
         if not ((x >= 0.0) and (x < self._x_len)):
             raise ValueError(f"x ({x}) must be between 0 and {self._x_len}")
         if not ((y >= 0.0) and (y < self._y_len)):
             raise ValueError(f"y ({y}) must be between 0 and {self._y_len}")
 
-        val = self.grid[int(round(y))][int(round(x))]
-        return float(val) if self.grayscale else int(val)
+        return self.grid[int(round(y))][int(round(x))]

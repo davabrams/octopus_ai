@@ -60,7 +60,7 @@ class TestLimbAdjacencyRadius(unittest.TestCase):
         model = Mock(spec=keras.Model)  # isinstance(model, keras.Model)
         model.predict.return_value = [[0.5]]
         surf = Mock()
-        surf.get_val.return_value = 0.5
+        surf.get_val.return_value = [0.5, 0.5, 0.5]  # RGB triple
 
         self.limb.find_color(surf, MLMode.LIMB, model)
 

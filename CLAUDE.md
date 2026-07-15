@@ -108,9 +108,13 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   to [0, 2π). `dt = 1.0`.
 - **Octopus model:** head at (x, y) → 8 `Limb`s → each limb has
   `limb_rows × limb_cols` `Sucker`s (default 16×2 = 32; 256 total).
-- **Camouflage:** each sucker matches the binary surface color beneath it,
-  constrained to change ≤ `octo_max_hue_change` (0.25) per step. Grayscale
-  in practice — only `Color.r` is the signal; g/b mirror it.
+- **Camouflage:** each sucker matches the surface color beneath it,
+  constrained to change ≤ `octo_max_hue_change` (0.25) per step **per
+  channel**. Full **RGB**: the surface grid is `(y, x, 3)` and each of
+  `Color.r/g/b` matches its channel independently (grayscale surfaces are the
+  special case r=g=b). The `SUCKER`/`LIMB` models are single-channel and are
+  applied per channel. `world.background_image` loads an image as the surface;
+  `world.surface_grayscale` picks grayscale vs colour random noise.
 - **Setting colors:** `octo.set_color(surf, inference_mode, model)` computes
   colors in parallel and applies them (fixed July 2026). The
   equivalent explicit form, used where the caller wants the matrix too:
