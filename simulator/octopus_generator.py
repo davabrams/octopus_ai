@@ -493,24 +493,27 @@ class Limb:
     def _ilqr_target(self, tip, agents):
         """The reach target for this arm's tip this frame.
 
-        Nearest sensed PREY within the arm's range, else the current tip
-        position (hold). Threats are handled separately by
-        _ilqr_nearest_threat (a repulsion cost pushes the arm away from them).
+        Nearest sensed PREY within the arm's range as [x, y], or None when no
+        prey is in range. Sensing is measured from the arm's TIP, so an
+        extended arm reaches prey well beyond the body's own sensing radius -
+        which is exactly why the body must follow the ARM's reach rather than
+        re-sensing from its centre (see _move_ilqr). Threats are handled
+        separately by _ilqr_nearest_threat.
         """
-        if agents:
-            nearest = None
-            nearest_d = None
-            for ag in agents:
-                d = np.hypot(ag.x - tip.x, ag.y - tip.y)
-                if d > self.agent_range_radius:
-                    continue
-                if ag.agent_type == AgentType.PREY:
-                    if nearest_d is None or d < nearest_d:
-                        nearest_d = d
-                        nearest = ag
-            if nearest is not None:
-                return [nearest.x, nearest.y]
-        return [tip.x, tip.y]
+        if not agents:
+            return None
+        nearest = None
+        nearest_d = None
+        for ag in agents:
+            if ag.agent_type != AgentType.PREY:
+                continue
+            d = np.hypot(ag.x - tip.x, ag.y - tip.y)
+            if d > self.agent_range_radius:
+                continue
+            if nearest_d is None or d < nearest_d:
+                nearest_d = d
+                nearest = ag
+        return [nearest.x, nearest.y] if nearest is not None else None
 
     def _ilqr_nearest_threat(self, tip, agents):
         """Nearest sensed THREAT within the arm's range as [x, y], or None.
@@ -572,11 +575,13 @@ class Limb:
                       dtype=np.float32).reshape(-1)
 
         tip = self.center_line[-1]
-        target = self._ilqr_target(tip, agents)
+        prey = self._ilqr_target(tip, agents)      # [x, y] or None
         threat = self._ilqr_nearest_threat(tip, agents)
+        # The arm reaches toward its prey; with none, it holds at the tip.
+        solve_target = prey if prey is not None else [tip.x, tip.y]
 
         res = self._ilqr_controller.solve(
-            base_xy=[x_octo, y_octo], target=target, x0=x0,
+            base_xy=[x_octo, y_octo], target=solve_target, x0=x0,
             threat=threat, u_init=self._ilqr_u)
 
         # Receding horizon: apply only the first planned step (x_traj[1]).
@@ -595,19 +600,34 @@ class Limb:
         self._ilqr_u = np.roll(u_np, -1, axis=0)
         self._ilqr_u[-1] = 0.0
 
-        # Base reaction: the pull this arm exerts on the body = the local
-        # attract/repel influence at the body (toward nearby prey, away from
-        # nearby threats), the same primitive the spring modes use. Summed
-        # across arms by _drift_body_by_tension next frame, this makes the body
-        # chase prey AND flee threats - no central negotiation.
-        influence = agent_influence_vector(
-            x_octo, y_octo, agents, self.agent_range_radius)
-        self.last_tension = self.ilqr_body_stiffness * np.asarray(
-            influence, dtype=float)
-        self.last_f_attract = np.asarray(self.last_tension, dtype=float).copy()
-        self.last_f_spring = np.zeros(2, dtype=float)
-        self.last_net = np.asarray(self.last_tension, dtype=float).copy()
+        # Base reaction: the pull THIS arm exerts on the body, from what the
+        # arm itself sensed (at its tip) - not re-sensed from the body centre,
+        # which would miss the far prey the arm is stretching for. Two terms:
+        #   reach: toward the prey this arm found, (prey - tip). An arm straining
+        #          for distant prey tugs the body hard toward it; the pull fades
+        #          as the tip arrives.
+        #   flee:  away from the threat this arm found, scaled by proximity, so a
+        #          threatened arm shoves the body clear.
+        # Summed across arms by _drift_body_by_tension next frame, this makes the
+        # body follow the arms toward prey and away from threats - no central
+        # negotiation, and reachable prey moves the body even when it is beyond
+        # the body's own sensing radius.
         tip = self.center_line[-1]
+        reach = np.zeros(2, dtype=float)
+        if prey is not None:
+            reach = np.array([prey[0] - tip.x, prey[1] - tip.y], dtype=float)
+        flee = np.zeros(2, dtype=float)
+        if threat is not None:
+            dx, dy = tip.x - threat[0], tip.y - threat[1]
+            d = float(np.hypot(dx, dy))
+            if d > 1e-9:
+                w = max(0.0, 1.0 - d / self.agent_range_radius)
+                flee = w * self.agent_range_radius * np.array([dx / d, dy / d])
+
+        self.last_tension = self.ilqr_body_stiffness * (reach + flee)
+        self.last_f_attract = self.ilqr_body_stiffness * reach
+        self.last_f_spring = self.ilqr_body_stiffness * flee
+        self.last_net = np.asarray(self.last_tension, dtype=float).copy()
         self.last_arm_length = float(np.hypot(tip.x - x_octo, tip.y - y_octo))
 
     def find_adjacents(self, s_target: Sucker, radius: float):
