@@ -4,3 +4,7 @@
 #
 # For more details, please check https://github.com/bazelbuild/bazel/issues/18958
 ###############################################################################
+
+# Use the project venv interpreter (which has the pip deps) instead of the
+# system python3. Lets `bazel run`/`bazel test` work without activating .venv.
+register_toolchains("//python_toolchain:venv_python_toolchain")
