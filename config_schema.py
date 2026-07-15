@@ -1,8 +1,8 @@
 """Typed configuration schema for the octopus simulator.
 
-This is the source of truth for every tunable. OctoConfig.py derives the
-legacy flat GameParameters / TrainingParameters dicts from it, so existing
-`params['some_key']` call sites keep working while they are migrated.
+This is the source of truth for every tunable. OctoConfig.py builds the
+concrete profiles from it and converts to/from the flat dict form that the
+browser, the force log, and the test fixtures speak.
 
 WHY DATACLASSES
 ---------------

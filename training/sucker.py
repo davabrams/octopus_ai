@@ -38,9 +38,8 @@ class SuckerTrainer(Trainer):
         datagen = OctoDatagen(self.cfg)
         data = datagen.run_color_datagen()
         if SAVE_DATA_TO_DISK:
-            # A Config built from a bare Config() has no paths table; fall
-            # back to the shipped default, as the TrainingParameters=None
-            # case used to.
+            # A bare Config() has an empty paths table; fall back to
+            # the shipped default rather than opening None.
             datagen_path = (self.cfg.paths.dataset_paths.get(MLMode.SUCKER)
                             or default_datasets[MLMode.SUCKER])
             with open(datagen_path, 'wb') as file:

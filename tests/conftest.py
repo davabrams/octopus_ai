@@ -9,11 +9,12 @@ SPRING_CHAIN during interactive runs, and every test inherited it - the
 suite broke three separate times that way, and nothing structurally stopped
 a test writing videos into the repo.
 
-The config reorg removed the need rather than the symptom. GameParameters is
-now derived from the DEFAULT profile, whose defaults are side-effect free by
-construction, and experimenting means selecting a profile (CFG = DEBUG in
-octo_viz) instead of editing shared state. There is no longer a global to
-leak, so there is nothing to isolate.
+The config reorg removed the need rather than the symptom. Configs are
+frozen and every profile is derived from DEFAULT, whose defaults are
+side-effect free by construction; experimenting means selecting a profile
+(CFG = DEBUG in octo_viz) instead of editing shared state. The dict is gone
+entirely - there is no global left to leak, so there is nothing to
+isolate.
 
 Tests that produce real artifacts (e.g. test_frame_recorder) still write to
 tmp, never into the project's logs/ directory.

@@ -1,6 +1,6 @@
 """Frame capture + video stitching for the octopus visualizer.
 
-When GameParameters['save_images'] is on, octo_viz saves one PNG per frame
+When output.save_images is on, octo_viz saves one PNG per frame
 into a per-run folder, then stitches them into an MP4 at the end of the
 run. Encoding shells out to the system ffmpeg binary (no extra Python
 dependency); if ffmpeg is missing, the PNGs are left in place and a clear
