@@ -118,6 +118,27 @@ class SpringChainConfig:
                          # go nonlinear.
 
 
+@dataclass(frozen=True)
+class ILQRConfig:
+    """Knobs for MovementMode.ILQR (simulator/ilqr; ARCHITECTURE.md §11.4).
+
+    Each limb runs its own compiled iLQR controller. `horizon`/`max_iters`
+    size the per-frame receding-horizon solve; the `w_*` weights balance the
+    arm's competing wants (see ARCHITECTURE.md §4.5). `body_stiffness` scales
+    how hard each arm's attract/repel influence tugs the shared body.
+    """
+    horizon: int = 10            # trajectory length planned each frame
+    max_iters: int = 5           # iLQR iterations per frame (MPC, warm-started)
+    body_stiffness: float = 0.5  # how hard an arm's reach/flee tugs the body
+    w_spring: float = 2.0        # segment spacing toward rest length
+    w_bend: float = 1.0          # straightness (anti-crumple)
+    w_effort: float = 0.1        # control-magnitude penalty
+    w_reach_run: float = 0.1     # weak per-step tip pull toward the target
+    w_reach_terminal: float = 6.0  # strong terminal tip pull (dominates)
+    w_repel: float = 8.0         # threat avoidance strength
+    repel_radius: float = 2.5    # threat keep-out radius
+
+
 # ---------------------------------------------------------------- limbs ---
 @dataclass(frozen=True)
 class SuckerConfig:
@@ -138,6 +159,7 @@ class LimbConfig:
     random: RandomDriftConfig = field(default_factory=RandomDriftConfig)
     lumped: LumpedSpringConfig = field(default_factory=LumpedSpringConfig)
     chain: SpringChainConfig = field(default_factory=SpringChainConfig)
+    ilqr: ILQRConfig = field(default_factory=ILQRConfig)
 
 
 # -------------------------------------------------------------- octopus ---
@@ -170,6 +192,9 @@ class OutputConfig:
     should not write databases or videos unprompted."""
     debug_mode: bool = False  # draws agent sensing regions, etc.
     show_forces: bool = False  # force-vector arrows on the visualizer
+    highlight_octopus: bool = False  # encircle suckers + draw the arm
+                                     # centerlines, so the octopus stays visible
+                                     # even when camouflaged into the surface
     log_forces: bool = False  # per-frame forces -> logs/forces.db
     save_images: bool = False  # per-frame PNGs -> stitched to MP4
     video_fps: int = 5  # playback rate of the stitched video

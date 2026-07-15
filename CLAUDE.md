@@ -218,11 +218,13 @@ unused imports); clean opportunistically, don't let it block work.
    not `"input"`.
 3. `AgentGenerator` seeds numpy's global RNG from `rand_seed` on every
    construction — order of object creation affects random sequences.
-4. Only `MovementMode.RANDOM` works; `ATTRACT_REPEL` is stubbed everywhere
-   (octopus prints a stub message, limbs raise `NotImplementedError`,
-   agents pass through unchanged). The `TODO(davabrams)` in `Limb.move`
-   sketches the intended spline approach; `simulator/ilqr/` is the
-   prototype for it.
+4. `MovementMode` has four working limb modes: `RANDOM`, `LUMPED_SPRING`,
+   `SPRING_CHAIN`, and `ILQR` (per-limb TensorFlow iLQR reach; each limb owns
+   its own compiled `ArmController`, `simulator/ilqr/` + `Limb._move_ilqr`,
+   MPC-style). Agents only implement `RANDOM`/`REACTIVE`. The old
+   `simulator/ilqr/nodemesh.py` + `costs.py` gradient-relaxation prototype is
+   superseded by `solver.py` + `arm.py` and is not wired in. See
+   ARCHITECTURE.md §4.5 and §11 for the compute-placement rationale.
 5. `InferenceLocation.REMOTE` exists but nothing routes inference to the
    server yet — wiring it up means giving `Sucker.find_color` (or a layer
    above it) an HTTP client path.

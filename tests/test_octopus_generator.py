@@ -162,9 +162,13 @@ class TestOctopus(unittest.TestCase):
         # RANDOM mode. Pin it so the suite doesn't depend on whatever the
         # config default happens to be set to.
 
-        # Create mock surface
+        # Create mock surface. Batched color inference reads surf.grid
+        # directly (one vectorized gather over all suckers) rather than calling
+        # get_val per sucker, so provide a real (y_len, x_len) grid. All-0.5
+        # matches the old get_val.return_value = 0.5.
         self.mock_surface = Mock()
         self.mock_surface.get_val.return_value = 0.5
+        self.mock_surface.grid = np.full((10, 10), 0.5, dtype=np.float32)
 
         # Octopus.__init__ takes (params) only
         self.octopus = Octopus(params=self.params)

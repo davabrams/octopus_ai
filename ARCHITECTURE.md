@@ -234,7 +234,35 @@ velocities and ω; `ATTRACT_REPEL` is a stub that returns agents unchanged.
 seeded RNG. `get_val(x, y)` rounds float coords and raises `ValueError` out
 of bounds. Note the grid is indexed `[y][x]`.
 
-### 4.5 `simulator/ilqr/` (standalone prototype)
+### 4.5 `simulator/ilqr/` (limb motor control)
+
+The built-out, TensorFlow-native iLQR that drives `MovementMode.ILQR`:
+
+- `solver.py` — a **generic Gauss-Newton iLQR** optimizer. `make_solver(...)`
+  builds a reusable solver from three differentiable callables (`dynamics`,
+  `running_cost`, `terminal_cost`) plus a per-solve **params tensor** carrying
+  frame-varying data (base position, reach target). Costs are squared-residual
+  vectors so the Hessian is the Gauss-Newton `2·Jᵀ·J` (always PSD). The heavy
+  per-step Jacobian/cost kernels are `@tf.function`-compiled once and reused,
+  so calling the returned solver each frame does not retrace — the difference
+  between a ~240 ms and a ~26 s solve (see §11.6). Standard iLQR loop: forward
+  rollout → backward Riccati pass → line search with Levenberg-Marquardt
+  regularization. Both passes are horizon recurrences → CPU work.
+- `arm.py` — the single-limb model. `ArmController` is a **persistent per-limb
+  controller**: chain of nodes (node 0 = base, pinned to the body; the rest are
+  decision variables), single-integrator dynamics `x' = x + u·dt`, and
+  squared-residual costs (neighbour springs toward `rest_length`, control
+  effort, tip attractor toward the target). It builds its compiled solver once
+  and exposes `solve(base_xy, target, x0, u_init)`; `Limb._move_ilqr` calls it
+  receding-horizon (MPC): plan, apply the first step, warm-start next frame.
+- Tests: `tests/test_ilqr.py` (reach convergence, multi-target graph reuse,
+  effort-holds-still).
+
+Each limb owns its own `ArmController` and solves independently of the others
+(§11.4). The legacy prototype below predates this and is not used by the
+simulator.
+
+Legacy prototype (`costs.py` + `nodemesh.py`, standalone):
 
 - `costs.py` defines a small gradient-cost framework:
   - `ColocationRepeller` — pushes nodes apart below `min_distance`;
@@ -251,9 +279,11 @@ of bounds. Note the grid is indexed `[y][x]`.
   importable. Run it via `python simulator/ilqr/nodemesh.py` or
   `bazel run //simulator/ilqr:nodemesh`.
 
-This subsystem shares `State` with the simulator but nothing else; the main
-octopus does not use iLQR motion yet (that's the intent behind the TODO in
-`Limb.move`).
+This legacy prototype shares `State` with the simulator but nothing else and
+is not wired into `Limb.move`; the active iLQR path is `solver.py` + `arm.py`
+above. iLQR is the **motor-control tier** of the compute hierarchy and is CPU
+work with each limb solving independently — see §11.4 for the placement
+rationale.
 
 ---
 
@@ -556,3 +586,132 @@ training/models/sucker.keras
 The limb pipeline (adjacency-aware model) exists and has a saved artifact,
 but the artifact is old and the RNN training loop hasn't been re-verified
 under current Keras; treat it as experimental.
+
+---
+
+## 11. Compute placement philosophy (the fast/slow hierarchy)
+
+This is the guiding principle behind how the project *wants* to compute, and
+it should shape new simulator/inference code. It is a design north star, not
+a description of everything that is wired up today — see "Current status"
+below for the gap.
+
+### 11.1 The thesis
+
+The project models biological control as a hierarchy of **timescales**:
+
+| Tier | What | Model size | Cadence | Home device |
+|------|------|-----------|---------|-------------|
+| Reflex | **Suckers** (camouflage color) | tiny (~50-param MLP) | every tick | **CPU**, batched |
+| Motor control | **Limb iLQR** (arm trajectory) | small analytic optimizer | mid-rate, per-arm | **CPU**, parallel across arms |
+| Cognition | **Octopus brain** (high-level choices) | large | slow | **GPU** |
+
+Small models make **quick** choices; large models make **slow** choices; and
+the slow tier must **never block** the fast tier. That "never block" is the
+core requirement, and it drives every decision below.
+
+### 11.2 Parallelism comes from batching, not from threads/agents
+
+The intuitive model — "each sucker is an independent agent, give it its own
+thread/process so they don't block each other" — is the wrong *execution*
+mapping, even though it is a fine *conceptual* model. A GPU is one serial
+device with one command stream: N per-agent inference calls (whether from N
+threads or N processes) serialize on the hardware and each pays kernel-launch
+overhead. That is the pathology the batched color path replaced (§4.2).
+
+The correct realization of "N independent agents computed in parallel" is a
+single call over a batched `(N, …)` tensor: the device evaluates all N rows
+at once across its ALUs — genuine data-parallelism, no per-agent dispatch.
+**Map one agent to one row of a batch, not to one thread.** Keep "agent" as
+simulation semantics; keep the batch axis as the execution reality. If agents
+later diverge in behavior, group same-model agents into batches or express the
+branch with vectorized ops (`tf.where`), not per-agent calls.
+
+### 11.3 "Slow doesn't block fast" is temporal decoupling, not simultaneity
+
+On a single GPU you cannot run the slow brain and the fast reflex literally at
+the same instant. You don't need to. The only thing that actually *blocks* is
+an `await`. The fast loop stays at rate as long as it **never waits** for the
+slow tier: the slow model runs as a background actor and *publishes* its latest
+decision to a size-1 slot; the fast loop *reads the most recent published
+decision* (non-blocking) and acts on it. The slow result is consumed whenever
+it is ready, a few fast-ticks stale.
+
+This staleness is biologically faithful: octopus arms carry substantial
+autonomous neural processing and act on delayed, coarse central commands. The
+lag is a feature of the model, not an artifact.
+
+The repo already has the process-separated form of this: `InferenceLocation.
+REMOTE` + the Flask `inference_server/` (§7) is a persistent process holding a
+model, called asynchronously and coalescing requests via its job queue — the
+natural home for the slow cognition tier. It is scaffolded but unwired.
+
+### 11.4 Device placement, and why it resolves the "one GPU" problem
+
+Don't put everything on the GPU. The tiers split naturally across hardware:
+
+- **Tiny fast models → CPU.** A ~50-param MLP over 256 rows is microseconds;
+  GPU kernel-launch overhead makes the GPU *lose* at this size (measured). The
+  batched sucker path runs best on CPU.
+- **Large slow model → GPU.** This is what actually benefits from the device.
+- Because TensorFlow releases the GIL during kernel execution, a CPU-op thread
+  and a GPU-op thread **genuinely overlap**. Placing the fast tier on CPU and
+  the slow tier on GPU means they run on different hardware and truly do not
+  contend — which is how you get "async on one GPU" without the GPU running two
+  things at once. Use explicit placement: `with tf.device('/CPU:0'):` for the
+  fast tier, `with tf.device('/GPU:0'):` for the brain.
+
+**Limb iLQR is CPU** (§4.5): iLQR is sequential along the horizon (forward
+rollout + backward Riccati are recurrences), does tiny dense linear algebra
+per step (small matrices underutilize a GPU), and is branchy/iterative (line
+search, regularization) — all CPU-favorable, latency-bound work. Each limb is
+an **independent controller**: it solves its own controls for its own arm,
+functioning autonomously of the other seven. That independence is the parallel
+axis — the eight per-limb solves genuinely parallelize across CPU cores (BLAS
+releases the GIL), leaving the GPU free for cognition. (This is autonomy per
+limb, not one coupled batched solve across arms — each arm owns its optimizer.) The one condition that flips iLQR to GPU: if its **dynamics or cost
+model becomes a neural network**, the rollout turns inference-bound and wants
+to be batched on the GPU (differentiable iLQR, batched across arms/horizon).
+With today's analytic costs it stays on CPU.
+
+### 11.5 Current status (the honest gap)
+
+- **Reflex tier: done.** Color inference for `NO_MODEL`/`SUCKER` is a single
+  batched TensorFlow pass over all 256 suckers (`Octopus._find_color_batched`,
+  §4.2), ~1300× faster than the old per-sucker `model.predict` loop, bit-for-bit
+  identical output. `LIMB` still uses the per-sucker path (its ragged stateful
+  RNN doesn't batch trivially).
+- **Motor tier: built.** A TensorFlow Gauss-Newton iLQR (`simulator/ilqr/
+  solver.py` + `arm.py`) drives `MovementMode.ILQR`: each limb owns a
+  persistent, compiled `ArmController` and reaches toward prey receding-horizon
+  (MPC). Arm costs = spring (rest spacing) + bending (anti-crumple) + effort +
+  tip attractor (prey) + a one-sided **threat repulsion barrier** (every node
+  pays for being inside a keep-out radius of the nearest threat). The body
+  drifts by the summed per-arm base reactions, which are the local attract/repel
+  influence (toward prey, away from threats) - so the body chases prey and flees
+  threats with no central negotiation. CPU work per §11.4. All the knobs
+  (horizon, iters, body stiffness, and every cost weight) live in
+  `LimbConfig.ilqr` (`ILQRConfig`), tunable per profile via `replace()`.
+  Remaining polish: warm-tune the per-frame iteration budget, and (optionally)
+  share one compiled graph across arms to avoid N first-frame compiles while
+  keeping per-arm state.
+- **Cognition tier: not built.** No large brain model or async actor yet.
+- **No GPU on the dev machine.** `tf.config.list_physical_devices('GPU')` is
+  empty here (ARM Mac, `tensorflow-metal` not installed). So *today everything
+  runs on CPU* and the CPU/GPU split is architecture, not a live configuration.
+  Keep code vectorized and device-agnostic; validate placement once a GPU is
+  available. The win from batching (§11.2) is real on CPU regardless.
+
+### 11.6 Rules of thumb
+
+- One agent → one row of a batch. Never one agent → one thread/process for
+  inference.
+- Never `await` the slow tier from the fast loop; read its latest published
+  decision instead.
+- Tiny models on CPU, large models on GPU; let the GIL-releasing overlap give
+  you concurrency across the two.
+- Keep every device submission bounded; if one forward pass would monopolize
+  the GPU, chunk it or move it off the fast path.
+- Vectorize and compile (`@tf.function`) before choosing a device — an eager,
+  per-element implementation is the worst case on *any* device, and its cost
+  swamps the placement decision.

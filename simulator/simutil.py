@@ -15,6 +15,8 @@ class MovementMode(Enum):
     RANDOM: int = 0
     LUMPED_SPRING: int = 1
     SPRING_CHAIN: int = 2
+    ILQR: int = 3  # per-limb iLQR trajectory optimizer (simulator/ilqr);
+                   # each limb solves its own controls (ARCHITECTURE.md §11.4)
 
 
 class AgentType(Enum):
@@ -195,8 +197,15 @@ def setup_display():
     fig.show()
     return fig, ax
 
-def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False):
-    """ Displays all of the octopus simulator components """
+def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False,
+                    highlight_octopus = False):
+    """ Displays all of the octopus simulator components.
+
+    highlight_octopus: encircle each sucker with an outline and draw the arm
+    centerlines, so the octopus stays legible even when its suckers have
+    camouflaged into the surface. debug_mode implies it (plus the extra
+    transposed-grid overlay).
+    """
     from matplotlib.lines import Line2D
 
     ax.clear()
@@ -210,10 +219,10 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False)
             for i_y, val in enumerate(row):
                 ax.plot(i_x, i_y, marker='.', mfc=[float(val)] * 3, markeredgewidth = 0)
 
-    # Print the octopus
-    sucker_edge_width = 0
-    if debug_mode:
-        sucker_edge_width = 1
+    # Outline suckers + draw centerlines when highlighting (or debugging), so a
+    # camouflaged octopus is still visible against the surface.
+    outline = debug_mode or highlight_octopus
+    sucker_edge_width = 1 if outline else 0
     for limb in octo.limbs:
         for sucker in limb.suckers:
             # TODO(davabrams) : we want this to use the update() method to save time
@@ -224,7 +233,7 @@ def display_refresh(ax, octo, ag, surf, debug_mode = False, show_forces = False)
                     mfc = sucker.c.to_rgb(),
                     mec = [0.5, 0.5, 0.5],
                     markeredgewidth = sucker_edge_width)
-        if debug_mode:
+        if outline:
             for c_row in range(len(limb.center_line) - 1):
                 pt_1 = limb.center_line[c_row]
                 pt_2 = limb.center_line[c_row + 1]

@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+from dataclasses import replace
 
 # This lives in visualizer/ but imports top-level project modules; put the repo
 # root on sys.path so `python visualizer/octo_viz.py` works from the repo root.
@@ -13,7 +14,13 @@ from tensorflow import keras
 from octopus_ai.config import DEBUG, DEFAULT, VIZ  # noqa: F401  (profiles)
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
-from simulator.simutil import Color, MLMode, display_refresh, setup_display
+from simulator.simutil import (
+    Color,
+    MLMode,
+    MovementMode,
+    display_refresh,
+    setup_display,
+)
 from simulator.surface_generator import RandomSurface
 from simulator.force_logger import ForceLogger
 from simulator.frame_recorder import FrameRecorder
@@ -31,7 +38,30 @@ from training.models.model_loader import ModelLoader
 # dataclasses.replace, e.g.
 #     CFG = replace(VIZ, octopus=replace(VIZ.octopus,
 #                                        movement_mode=MovementMode.SPRING_CHAIN))
-CFG = DEFAULT
+#     CFG = replace(VIZ, octopus=replace(VIZ.octopus,
+#                                        movement_mode=MovementMode.SPRING_CHAIN))
+#
+# iLQR limb motor control (ARCHITECTURE.md §11.4): each arm reaches toward
+# nearby prey via its own compiled TensorFlow iLQR controller, receding-horizon
+# (MPC). The BODY (octopus movement_mode=ILQR too) drifts by the summed base
+# reactions of all eight arms - it follows the collective reach, one frame
+# lagged. Color inference is pinned to the fast NO_MODEL heuristic so no
+# trained model is needed.
+#
+# Heads up on speed: every arm compiles its own graph on the FIRST frame (a
+# multi-second pause), then each frame runs 8 independent solves (~1-2 s/frame).
+# For snappier playback, thin the octopus - fewer/shorter arms - e.g. add
+#     num_arms=4, limb=replace(..., rows=8, ...)
+CFG = replace(
+    VIZ,
+    inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
+    output=replace(VIZ.output, highlight_octopus=True),  # outline the camouflaged octopus
+    octopus=replace(
+        VIZ.octopus,
+        movement_mode=MovementMode.ILQR,   # body follows the arms' pull
+        limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
+    ),
+)
 
 
 # %% Generate game scenario %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -66,6 +96,7 @@ if INFERENCE_MODE is not MLMode.NO_MODEL:
 NUM_ITERATIONS = CFG.run.num_iterations
 DEBUG_MODE = CFG.output.debug_mode
 SHOW_FORCES = CFG.output.show_forces
+HIGHLIGHT_OCTOPUS = CFG.output.highlight_octopus
 
 force_logger = (ForceLogger(run_label="octo_viz", config=CFG)
                 if CFG.output.log_forces else None)
@@ -106,7 +137,8 @@ while i != NUM_ITERATIONS:
 
     # 3) draw the updated state and flush it to the window
     display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE,
-                    show_forces=SHOW_FORCES)
+                    show_forces=SHOW_FORCES,
+                    highlight_octopus=HIGHLIGHT_OCTOPUS)
     y.set_text(f"Visibility = {octo.visibility(surf):.4f}   "
                f"Prey caught = {ag.prey_captured}")
 

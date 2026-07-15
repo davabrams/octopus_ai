@@ -1,5 +1,6 @@
 """Octopus Class"""
 from typing import List
+import tensorflow as tf
 from tensorflow import keras
 from multiprocessing.pool import ThreadPool
 import numpy as np
@@ -15,6 +16,7 @@ from simulator.simutil import (
     convert_adjacents_to_ragged_tensor
 )
 from simulator.spring_chain import solve_chain, base_reaction
+from simulator.ilqr.arm import ArmController
 from octopus_ai.config import as_config
 
 class Sucker:
@@ -140,6 +142,7 @@ class Limb:
         self.chain_spring_k = limb.chain.spring_k
         self.chain_agent_k = limb.chain.agent_k
         self.chain_move_k = limb.chain.move_k
+        self.ilqr_cfg = limb.ilqr
 
         # How close two suckers must be to count as neighbours for the LIMB
         # model; datagen builds its training adjacents with this.
@@ -158,6 +161,17 @@ class Limb:
         self.last_net = np.zeros(2, dtype=float)
         self.last_tension = np.zeros(2, dtype=float)
         self.last_arm_length = 0.0
+
+        # iLQR motor-control state (MovementMode.ILQR). Each limb owns its own
+        # controller and warm-start controls, functioning autonomously of the
+        # others (ARCHITECTURE.md §11.4). Built lazily on first move so the
+        # compile cost is only paid by limbs that actually use iLQR.
+        self._ilqr_controller = None
+        self._ilqr_u = None            # warm-start control sequence
+        # horizon/iters/weights come from self.ilqr_cfg; body_stiffness is read
+        # out here because the base-reaction path uses it every frame.
+        self.ilqr_body_stiffness = limb.ilqr.body_stiffness  # how hard this
+        # arm's reach/flee tugs the body (feeds _drift_body_by_tension)
 
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
@@ -221,6 +235,8 @@ class Limb:
                 x_octo, y_octo, agents, coordinated_influence)
         elif self.movement_mode == MovementMode.SPRING_CHAIN:
             self._move_spring_chain(x_octo, y_octo, agents)
+        elif self.movement_mode == MovementMode.ILQR:
+            self._move_ilqr(x_octo, y_octo, agents)
         else:
             assert False, "Unknown movement mode"
 
@@ -474,6 +490,126 @@ class Limb:
         self.last_arm_length = float(
             np.hypot(free[-1].x - base.x, free[-1].y - base.y))
 
+    def _ilqr_target(self, tip, agents):
+        """The reach target for this arm's tip this frame.
+
+        Nearest sensed PREY within the arm's range, else the current tip
+        position (hold). Threats are handled separately by
+        _ilqr_nearest_threat (a repulsion cost pushes the arm away from them).
+        """
+        if agents:
+            nearest = None
+            nearest_d = None
+            for ag in agents:
+                d = np.hypot(ag.x - tip.x, ag.y - tip.y)
+                if d > self.agent_range_radius:
+                    continue
+                if ag.agent_type == AgentType.PREY:
+                    if nearest_d is None or d < nearest_d:
+                        nearest_d = d
+                        nearest = ag
+            if nearest is not None:
+                return [nearest.x, nearest.y]
+        return [tip.x, tip.y]
+
+    def _ilqr_nearest_threat(self, tip, agents):
+        """Nearest sensed THREAT within the arm's range as [x, y], or None.
+
+        Fed to the iLQR repulsion cost so the arm bends away from it.
+        """
+        if not agents:
+            return None
+        nearest = None
+        nearest_d = None
+        for ag in agents:
+            if ag.agent_type != AgentType.THREAT:
+                continue
+            d = np.hypot(ag.x - tip.x, ag.y - tip.y)
+            if d > self.agent_range_radius:
+                continue
+            if nearest_d is None or d < nearest_d:
+                nearest_d = d
+                nearest = ag
+        return [nearest.x, nearest.y] if nearest is not None else None
+
+    def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None):
+        """Per-limb iLQR reach, receding-horizon (MPC) style.
+
+        Each frame the arm re-plans a short trajectory toward its target with
+        its own compiled iLQR controller (ARCHITECTURE.md §11.4), applies just
+        the first planned step, and warm-starts next frame from the shifted
+        plan. The base (centerline node 0) is pinned to the body; the free
+        centerline nodes are the optimizer's decision variables. Springs hold
+        the chain near its rest spacing, an effort cost keeps motion economical,
+        and a tip attractor pulls toward nearby prey.
+        """
+        n_free = self.rows - 1
+        if n_free < 1:
+            return
+
+        if self._ilqr_controller is None:
+            ic = self.ilqr_cfg
+            self._ilqr_controller = ArmController(
+                n_free=n_free,
+                rest_length=self.max_sucker_distance,
+                horizon=ic.horizon,
+                max_iters=ic.max_iters,
+                w_spring=ic.w_spring,
+                w_bend=ic.w_bend,
+                w_effort=ic.w_effort,
+                w_reach_run=ic.w_reach_run,
+                w_reach_terminal=ic.w_reach_terminal,
+                w_repel=ic.w_repel,
+                repel_radius=ic.repel_radius,
+            )
+
+        # Pin the base; collect current free-node positions as the warm start.
+        base = self.center_line[0]
+        base.x = x_octo
+        base.y = y_octo
+        x0 = np.array([[self.center_line[i].x, self.center_line[i].y]
+                       for i in range(1, self.rows)],
+                      dtype=np.float32).reshape(-1)
+
+        tip = self.center_line[-1]
+        target = self._ilqr_target(tip, agents)
+        threat = self._ilqr_nearest_threat(tip, agents)
+
+        res = self._ilqr_controller.solve(
+            base_xy=[x_octo, y_octo], target=target, x0=x0,
+            threat=threat, u_init=self._ilqr_u)
+
+        # Receding horizon: apply only the first planned step (x_traj[1]).
+        new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
+        prev_x, prev_y = x_octo, y_octo
+        for i in range(1, self.rows):
+            nx = min(max(float(new_free[i - 1, 0]), -0.5), self.x_len - 0.51)
+            ny = min(max(float(new_free[i - 1, 1]), -0.5), self.y_len - 0.51)
+            self.center_line[i].x = nx
+            self.center_line[i].y = ny
+            self.center_line[i].t = float(np.arctan2(ny - prev_y, nx - prev_x))
+            prev_x, prev_y = nx, ny
+
+        # Warm-start next frame: shift the plan forward one step, pad with zero.
+        u_np = res.u_traj.numpy()
+        self._ilqr_u = np.roll(u_np, -1, axis=0)
+        self._ilqr_u[-1] = 0.0
+
+        # Base reaction: the pull this arm exerts on the body = the local
+        # attract/repel influence at the body (toward nearby prey, away from
+        # nearby threats), the same primitive the spring modes use. Summed
+        # across arms by _drift_body_by_tension next frame, this makes the body
+        # chase prey AND flee threats - no central negotiation.
+        influence = agent_influence_vector(
+            x_octo, y_octo, agents, self.agent_range_radius)
+        self.last_tension = self.ilqr_body_stiffness * np.asarray(
+            influence, dtype=float)
+        self.last_f_attract = np.asarray(self.last_tension, dtype=float).copy()
+        self.last_f_spring = np.zeros(2, dtype=float)
+        self.last_net = np.asarray(self.last_tension, dtype=float).copy()
+        tip = self.center_line[-1]
+        self.last_arm_length = float(np.hypot(tip.x - x_octo, tip.y - y_octo))
+
     def find_adjacents(self, s_target: Sucker, radius: float):
         """
         Finds all suckers within a specified radius
@@ -564,7 +700,8 @@ class Octopus:
             - Attracted to prey
             - Repelled by threats
         """
-        agent_modes = (MovementMode.LUMPED_SPRING, MovementMode.SPRING_CHAIN)
+        agent_modes = (MovementMode.LUMPED_SPRING, MovementMode.SPRING_CHAIN,
+                       MovementMode.ILQR)
         if self.movement_mode in agent_modes and not ag:
             assert False, ("movement mode needs agents but no agent object "
                            "was passed")
@@ -576,10 +713,10 @@ class Octopus:
             self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
             self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
         elif self.movement_mode in agent_modes:
-            # Both spring modes share body dynamics: drift by summed arm base
-            # tension. For LUMPED_SPRING the tension is computed live; for
-            # SPRING_CHAIN each arm stored its base reaction in last_tension
-            # on the previous frame. First frame (all-zero) just doesn't move.
+            # These modes share body dynamics: drift by summed arm base tension.
+            # For LUMPED_SPRING the tension is computed live; SPRING_CHAIN and
+            # ILQR each stored their base reaction in last_tension on the
+            # previous frame. First frame (all-zero) just doesn't move.
             coordinated_influence = self._drift_body_by_tension()
         else:
             assert False, "Unknown movement mode"
@@ -595,19 +732,23 @@ class Octopus:
 
         - LUMPED_SPRING: each arm's live tension_vector() (signed stretch/
           compression along base->tip).
-        - SPRING_CHAIN: each arm's stored base reaction from last frame
-          (last_tension), i.e. the base<->node1 spring. Same one-step lag as
-          LUMPED_SPRING - arms reflow after this call, body chases the
-          reported strain, converges over the loop.
+        - SPRING_CHAIN / ILQR: each arm's stored base reaction from last frame
+          (last_tension) - the base<->tip spring strain the arm reported after
+          its own solve. Same one-step lag as LUMPED_SPRING: arms replan after
+          this call, the body chases the reported strain, converges over the
+          loop. This is how eight independent per-limb controllers reconcile
+          into one body trajectory - the body is a passive mass integrating the
+          vector sum of their base reactions, no central negotiation.
 
         Relaxed arms contribute ~nothing; arms reaching hard tug strongly.
         The body eases along the summed tension, capped by max_body_velocity.
         Returns None (arms sense agents at their own nodes; full-octopus
         coordination can later pass a shared influence).
         """
+        stored_tension_modes = (MovementMode.SPRING_CHAIN, MovementMode.ILQR)
         total = np.zeros(2, dtype=float)
         for limb in self.limbs:
-            if self.movement_mode == MovementMode.SPRING_CHAIN:
+            if self.movement_mode in stored_tension_modes:
                 total += np.asarray(limb.last_tension, dtype=float)
             else:
                 total += limb.tension_vector()
@@ -631,7 +772,32 @@ class Octopus:
             model = None
     ) -> List[List[Color]]:
         """
-        Finds the color of the suckers in the limbs, in parallel
+        Finds the color of the suckers in the limbs.
+
+        NO_MODEL and SUCKER inference vectorize cleanly: every sucker is
+        independent (no cross-sucker interaction), so the whole octopus is
+        evaluated in a single TensorFlow pass over an (N, 2) tensor - one
+        forward call instead of 256 single-row `model.predict` calls. LIMB
+        inference still uses the per-sucker ThreadPool path because its model
+        consumes a ragged, per-sucker neighbourhood (a stateful RNN branch)
+        that does not batch trivially.
+        """
+        if inference_mode in (MLMode.NO_MODEL, MLMode.SUCKER):
+            return self._find_color_batched(surf, inference_mode, model)
+        return self._find_color_threadpool(surf, inference_mode, model)
+
+    def _find_color_threadpool(
+            self,
+            surf: RandomSurface,
+            inference_mode: MLMode = MLMode.NO_MODEL,
+            model = None
+    ) -> List[List[Color]]:
+        """
+        Finds the color of the suckers in the limbs, in parallel (per-sucker).
+
+        The original inference path: one Keras call per sucker, dispatched
+        through nested ThreadPools. Retained for LIMB mode and as the
+        reference implementation the batched path is validated against.
         """
         pool = ThreadPool(processes = 2)
         pool_iterable = [(l, ix) for ix, l in enumerate(self.limbs)]
@@ -641,6 +807,83 @@ class Octopus:
         ret = sorted(result, key = lambda x: x[1])
         ret = [x[0] for x in ret]
         return ret
+
+    def _find_color_batched(
+            self,
+            surf: RandomSurface,
+            inference_mode: MLMode,
+            model = None
+    ) -> List[List[Color]]:
+        """
+        Whole-octopus color inference in a single TensorFlow pass.
+
+        Gathers every sucker's (current_color, surface_color) into one
+        (N, 2) tensor and computes all N new colors at once, then scatters
+        them back into the per-limb Color lists in original order. All of the
+        math - the surface lookup, the constraint clamp, and the model forward
+        pass - runs as TensorFlow ops on one batched tensor. Only the initial
+        read of Python-float object attributes and the final write back into
+        Color objects cross the tensor boundary.
+
+        Semantically identical to the per-sucker path: the batch axis carries
+        independent suckers, so batching == calling the single-agent model
+        once per sucker.
+        """
+        if inference_mode == MLMode.SUCKER:
+            assert model is not None, \
+                "model inference specified but no model was specified"
+            assert isinstance(model, keras.Model), \
+                f"Expected keras model, got {type(model)}"
+
+        # Flatten suckers, remembering how many belong to each limb so the
+        # nested (per-limb) list can be rebuilt in the same order.
+        limb_sizes = [len(l.suckers) for l in self.limbs]
+        suckers = [s for l in self.limbs for s in l.suckers]
+
+        # Read the Python-float object state into tensors (the one unavoidable
+        # host->device gather while suckers remain Python objects).
+        cur = tf.constant([s.c.r for s in suckers], dtype=tf.float32)  # (N,)
+        # float64 positions so the round-to-grid matches the per-sucker path
+        # bit-for-bit: at float32, a position at x.5+epsilon collapses onto the
+        # .5 boundary and banker's-rounds the other way, reading a neighbouring
+        # grid cell. The reference path rounds Python float64s, so we do too.
+        xy = tf.constant([[s.x, s.y] for s in suckers],
+                         dtype=tf.float64)  # (N, 2)
+
+        # Surface color under each sucker, in one on-device gather. The grid is
+        # indexed [y][x]; positions are rounded and clamped to the grid, exactly
+        # mirroring Sucker.get_surf_color_at_this_sucker / RandomSurface.get_val.
+        grid = tf.constant(surf.grid, dtype=tf.float32)  # (y_len, x_len)
+        y_len, x_len = int(grid.shape[0]), int(grid.shape[1])
+        ix = tf.clip_by_value(
+            tf.cast(tf.round(xy[:, 0]), tf.int32), 0, x_len - 1)
+        iy = tf.clip_by_value(
+            tf.cast(tf.round(xy[:, 1]), tf.int32), 0, y_len - 1)
+        surf_c = tf.gather_nd(grid, tf.stack([iy, ix], axis=1))  # (N,)
+
+        if inference_mode == MLMode.NO_MODEL:
+            # Vectorized form of Sucker._find_color_change: step toward the
+            # surface color, capped at +/- each sucker's max_hue_change, then
+            # clip to [0, 1]. Per-sucker threshold preserves exact parity.
+            d_max = tf.constant([s.max_hue_change for s in suckers],
+                                dtype=tf.float32)  # (N,)
+            dc = tf.clip_by_value(surf_c - cur, -d_max, d_max)
+            new_r = tf.clip_by_value(cur + dc, 0.0, 1.0)  # (N,)
+        else:  # MLMode.SUCKER
+            model_in = tf.stack([cur, surf_c], axis=1)  # (N, 2)
+            new_r = tf.reshape(model(model_in, training=False), [-1])  # (N,)
+
+        # Single host pull, then scatter back into Color objects (grayscale:
+        # g and b mirror r), rebuilding the per-limb nesting in order.
+        new_r = new_r.numpy()
+        out: List[List[Color]] = []
+        k = 0
+        for size in limb_sizes:
+            row = [Color(float(v), float(v), float(v))
+                   for v in new_r[k:k + size]]
+            out.append(row)
+            k += size
+        return out
 
 
     def set_color(self,
