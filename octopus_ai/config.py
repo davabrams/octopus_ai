@@ -119,7 +119,9 @@ BACKGROUND_IMAGE = "/Users/davabrams/Pictures/ucfN3bl.jpg"
 
 VIZ_ILQR = replace(
     VIZ,
-    inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
+    # Camouflage via the trained per-channel SUCKER model (falls back to the
+    # NO_MODEL heuristic if you swap this to MLMode.NO_MODEL).
+    inference=replace(VIZ.inference, mode=MLMode.SUCKER),
     output=replace(VIZ.output, highlight_octopus=True, track_performance=True),
     world=replace(VIZ.world, background_image=BACKGROUND_IMAGE,
                   x_len=30, y_len=30),
