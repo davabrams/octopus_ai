@@ -1,6 +1,11 @@
+# imports = ["."] puts inference_server/ on the runfiles import path, so the
+# in-directory bare imports (`from model_inference import ...`, `from server
+# import app`) resolve under `bazel run`/`bazel test` the same way they do
+# when run with `cd inference_server && python ...`.
 py_library(
     name = "model_inference",
     srcs = ["model_inference.py"],
+    imports = ["."],
     data = ["//training:saved_models"],
     visibility = ["//visibility:public"],
     deps = [
@@ -13,6 +18,7 @@ py_library(
 py_binary(
     name = "server",
     srcs = ["server.py"],
+    imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
         ":model_inference",
@@ -22,6 +28,7 @@ py_binary(
 py_test(
     name = "test_server",
     srcs = ["test_server.py"],
+    imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
         ":model_inference",

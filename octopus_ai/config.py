@@ -41,9 +41,17 @@ from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenien
 )
 from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
-# This module lives in octopus_ai/; the repo root (where training/ lives) is
-# its parent, so walk up two levels from this file.
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Under `bazel run`, __file__ points into the sandboxed runfiles tree, so
+# artifact paths (datasets, saved models) would resolve there instead of the
+# source tree. Bazel sets BUILD_WORKSPACE_DIRECTORY to the repo root for
+# `bazel run`; honor it so datagen/training read and write the real
+# training/ dir. It is unset for plain `python` and for `bazel test` (which
+# should stay hermetic), where we fall back to this file's location — the repo
+# root is two levels up (octopus_ai/ is the parent, its parent is the root).
+ROOT_DIR = (
+    os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+    or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 default_models = {
     MLMode.SUCKER: os.path.join(ROOT_DIR, 'training/models/sucker.keras'),
