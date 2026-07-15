@@ -108,10 +108,21 @@ DEBUG = replace(
 # show the same simulation: iLQR motor control on the body and every limb,
 # camouflage via the fast NO_MODEL heuristic (no trained model needed), the
 # octopus outlined so it stays visible, and per-step performance tracking.
+# To camouflage against a picture instead of random noise, set
+# BACKGROUND_IMAGE to an image path (any format Pillow reads); it is
+# grayscaled and resized to the grid. None = the usual random surface. A
+# missing/unreadable file degrades gracefully back to random. The grid is
+# bumped to 30x30 so the picture is legible (the octopus is then smaller
+# relative to the world); drop it back to 15 for a chunkier, octopus-prominent
+# view.
+BACKGROUND_IMAGE = "/Users/davabrams/Pictures/ucfN3bl.jpg"
+
 VIZ_ILQR = replace(
     VIZ,
     inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
     output=replace(VIZ.output, highlight_octopus=True, track_performance=True),
+    world=replace(VIZ.world, background_image=BACKGROUND_IMAGE,
+                  x_len=30, y_len=30),
     octopus=replace(
         VIZ.octopus,
         movement_mode=MovementMode.ILQR,   # body drifts by the arms' pull
@@ -178,6 +189,7 @@ def config_to_flat(cfg: Config) -> dict:
         'x_len': cfg.world.x_len,
         'y_len': cfg.world.y_len,
         'surface_grayscale': cfg.world.surface_grayscale,
+        'background_image': cfg.world.background_image,
         'rand_seed': cfg.run.rand_seed,
         'debug_mode': cfg.output.debug_mode,
         'log_forces': cfg.output.log_forces,
@@ -277,6 +289,7 @@ def config_from_flat(d: dict) -> Config:
             y_len=g('y_len', D.world.y_len),
             surface_grayscale=g('surface_grayscale',
                                 D.world.surface_grayscale),
+            background_image=g('background_image', D.world.background_image),
         ),
         agents=AgentConfig(
             count=g('agent_number_of_agents', D.agents.count),

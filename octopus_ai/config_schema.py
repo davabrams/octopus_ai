@@ -57,6 +57,9 @@ class WorldConfig:
     y_len: int = 15
     surface_grayscale: bool = True  # random grayscale values in [0, 1);
                                     # False for the classic binary 0/1 grid
+    background_image: Optional[str] = None  # path to an image file to use as
+                                            # the surface (grayscaled + resized
+                                            # to x_len x y_len); None = random
 
 
 # --------------------------------------------------------------- agents ---
