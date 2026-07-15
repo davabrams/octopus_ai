@@ -41,7 +41,7 @@ from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenien
     TrainingConfig,
     WorldConfig,
 )
-from simulator.simutil import MLMode, InferenceLocation, MovementMode
+from simulator.simutil import MLMode, MovementMode
 
 # Under `bazel run`, __file__ points into the sandboxed runfiles tree, so
 # artifact paths (datasets, saved models) would resolve there instead of the
@@ -167,6 +167,7 @@ def config_to_flat(cfg: Config) -> dict:
         'log_forces': cfg.output.log_forces,
         'show_forces': cfg.output.show_forces,
         'highlight_octopus': cfg.output.highlight_octopus,
+        'track_performance': cfg.output.track_performance,
         'save_images': cfg.output.save_images,
         'adjacency_radius': cfg.octopus.sucker.adjacency_radius,
         'inference_location': cfg.inference.location,
@@ -351,6 +352,8 @@ def config_from_flat(d: dict) -> Config:
             show_forces=g('show_forces', D.output.show_forces),
             highlight_octopus=g('highlight_octopus',
                                 D.output.highlight_octopus),
+            track_performance=g('track_performance',
+                                D.output.track_performance),
             log_forces=g('log_forces', D.output.log_forces),
             save_images=g('save_images', D.output.save_images),
             video_fps=g('video_fps', D.output.video_fps),

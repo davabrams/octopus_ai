@@ -17,6 +17,7 @@ from octopus_ai.config import (  # noqa: F401  (DEBUG/DEFAULT are profiles)
     VIZ,
     print_config,
 )
+from octopus_ai.perf import PerfTracker
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import (
@@ -60,7 +61,8 @@ from training.models.model_loader import ModelLoader
 CFG = replace(
     VIZ,
     inference=replace(VIZ.inference, mode=MLMode.NO_MODEL),
-    output=replace(VIZ.output, highlight_octopus=True),  # outline the camouflaged octopus
+    output=replace(VIZ.output, highlight_octopus=True,   # outline the camouflaged octopus
+                   track_performance=True),               # per-step timing + memory summary
     octopus=replace(
         VIZ.octopus,
         movement_mode=MovementMode.ILQR,   # body follows the arms' pull
@@ -108,6 +110,7 @@ force_logger = (ForceLogger(run_label="octo_viz", config=CFG)
                 if CFG.output.log_forces else None)
 frame_recorder = (FrameRecorder(fps=CFG.output.video_fps)
                   if CFG.output.save_images else None)
+perf = PerfTracker(enabled=CFG.output.track_performance, label="octo_viz")
 
 fig, ax = setup_display()
 fig.show()
@@ -122,11 +125,14 @@ while i != NUM_ITERATIONS:
     i += 1
 
     # 1) advance the simulation
-    ag.increment_all(octo)
-    octo.move(ag)
+    with perf.track("agents.increment"):
+        ag.increment_all(octo)
+    with perf.track("octopus.move"):
+        octo.move(ag)
 
     # 2) any prey touched by a sucker is caught and removed
-    captured = ag.remove_captured_prey(octo)
+    with perf.track("capture"):
+        captured = ag.remove_captured_prey(octo)
     if captured:
         print(f"  caught {captured} prey (total {ag.prey_captured})")
 
@@ -134,7 +140,8 @@ while i != NUM_ITERATIONS:
         force_logger.log_frame(i, octo)
 
     # 2) run inference / camouflage for the new positions
-    color_matrix = octo.find_color(surf, INFERENCE_MODE, model)
+    with perf.track("find_color"):
+        color_matrix = octo.find_color(surf, INFERENCE_MODE, model)
     assert isinstance(color_matrix, list)
     assert isinstance(color_matrix[0], list)
     assert isinstance(color_matrix[0][0], Color)
@@ -142,19 +149,23 @@ while i != NUM_ITERATIONS:
         l.force_color(color_matrix[ix])
 
     # 3) draw the updated state and flush it to the window
-    display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE,
-                    show_forces=SHOW_FORCES,
-                    highlight_octopus=HIGHLIGHT_OCTOPUS)
-    y.set_text(f"Visibility = {octo.visibility(surf):.4f}   "
-               f"Prey caught = {ag.prey_captured}")
+    with perf.track("render"):
+        display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE,
+                        show_forces=SHOW_FORCES,
+                        highlight_octopus=HIGHLIGHT_OCTOPUS)
+    with perf.track("visibility"):
+        y.set_text(f"Visibility = {octo.visibility(surf):.4f}   "
+                   f"Prey caught = {ag.prey_captured}")
 
     if frame_recorder is not None:
         frame_recorder.save_frame(fig)
 
     # plt.pause both renders the canvas and yields to the GUI event loop;
     # without it the window never repaints (this was the blank-window bug).
-    plt.pause(0.001)
+    with perf.track("gui.pause"):
+        plt.pause(0.001)
 
+    perf.end_frame()
     t_end: int = time.time_ns()
     print(
         f"Iteration: {i} complete with "
@@ -172,3 +183,5 @@ if frame_recorder is not None:
         print(f"Video written to {video_path} "
               f"({frame_recorder.frame_count} frames @ "
               f"{frame_recorder.fps} fps)")
+
+perf.print_summary()

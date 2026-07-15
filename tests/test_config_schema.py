@@ -142,7 +142,7 @@ class TestFlatViewParity(unittest.TestCase):
     must stay complete: a key that silently stops being emitted is a knob
     the UI can no longer set."""
 
-    EXPECTED_FLAT_KEYS = 56
+    EXPECTED_FLAT_KEYS = 57
 
     def test_flat_view_key_count(self):
         self.assertEqual(len(config_to_flat(DEFAULT)),

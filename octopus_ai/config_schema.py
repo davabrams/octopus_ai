@@ -62,7 +62,7 @@ class WorldConfig:
 # --------------------------------------------------------------- agents ---
 @dataclass(frozen=True)
 class AgentConfig:
-    count: int = 5  # was agent_number_of_agents
+    count: int = 5  # number of AGENTS in the world (ie prey and threat); 0 disables
     max_velocity: float = 0.2
     max_theta: float = 0.1
     movement_mode: MovementMode = MovementMode.RANDOM
@@ -198,6 +198,9 @@ class OutputConfig:
     log_forces: bool = False  # per-frame forces -> logs/forces.db
     save_images: bool = False  # per-frame PNGs -> stitched to MP4
     video_fps: int = 5  # playback rate of the stitched video
+    track_performance: bool = False  # time each sim step + report memory
+                                     # stats, printed as a summary at run end
+                                     # (octopus_ai/perf.PerfTracker)
 
 
 # -------------------------------------------------------------- datagen ---
