@@ -35,16 +35,14 @@ frontends.
 ## Project Structure (abridged — full map in ARCHITECTURE.md §2)
 
 ```
-octopus_ai/
-├── OctoConfig.py           # Profiles (DEFAULT/VIZ/DEBUG/TEST/DATAGEN/TRAINING)
-│                           #   + flat<->nested converters + path maps
-├── config_schema.py        # The typed Config dataclasses — source of truth
-├── octo_viz.py             # matplotlib visualizer entry point
-├── octo_datagen.py         # OctoDatagen class + standalone pickle-writing main
-├── octo_model.py           # datagen → train → save → inference/eval pipeline
-├── util.py                 # erase_all_logs, octo_norm + re-exports from training.data_utils
-├── websocket_server.py     # browser-viz backend (ws://localhost:8765)
-├── octopus-visualizer.html # frontend for the websocket server
+octopus_ai/                  # repo root
+├── octopus_ai/             # core package: config, profiles, shared utils, datagen/train entry points
+│   ├── config_schema.py    # The typed Config dataclasses — source of truth
+│   ├── config.py           # Profiles (DEFAULT/VIZ/DEBUG/TEST/DATAGEN/TRAINING) + flat<->nested converters + path maps
+│   ├── util.py             # erase_all_logs, octo_norm + re-exports from training.data_utils
+│   ├── datagen.py          # OctoDatagen class + standalone pickle-writing main
+│   └── model.py            # datagen → train → save → inference/eval pipeline
+├── visualizer/             # matplotlib viz (octo_viz.py) + browser viz (websocket_server.py, HTML/React frontends)
 ├── simulator/              # simutil (State/Agent/Color/enums), octopus/agent/surface generators, ilqr/
 ├── training/               # trainers (sucker, limb), losses, loaders, data_utils, saved .keras models
 ├── inference_server/       # Flask REST server (localhost:8080), job queue + watchdog
@@ -62,7 +60,7 @@ module-level mutable dicts `GameParameters` / `TrainingParameters` are
 **gone**; so is dict-style `params['x_len']` access. If you find a branch
 or a comment describing them as current, it predates the config reorg.
 
-`OctoConfig.py` builds the **profiles** — pick one, don't edit shared
+`config.py` builds the **profiles** — pick one, don't edit shared
 state:
 
 | Profile | For |
@@ -71,8 +69,8 @@ state:
 | `VIZ` | watching a run: force arrows on, disk quiet |
 | `DEBUG` | everything on: arrows + force DB + PNG/MP4 capture |
 | `TEST` | deterministic, side-effect free, needs no model on disk |
-| `TRAINING` | the training pipeline; `octo_model.py` selects it |
-| `DATAGEN` | data generation. Defined and tested, but nothing selects it yet — `octo_datagen.py`'s `__main__` still hand-builds a flat dict |
+| `TRAINING` | the training pipeline; `model.py` selects it |
+| `DATAGEN` | data generation. Defined and tested, but nothing selects it yet — `datagen.py`'s `__main__` still hand-builds a flat dict |
 
 Derive a variant with `dataclasses.replace()` — configs are frozen, so
 in-place mutation raises:
@@ -88,7 +86,7 @@ force-log snapshot, and test fixtures — and `as_config()` normalizes either
 form. Don't reach for them in new simulator or training code; take a
 `Config`.
 
-Path maps in `OctoConfig.py`, both `MLMode`-keyed and reachable as
+Path maps in `config.py`, both `MLMode`-keyed and reachable as
 `cfg.paths.model_paths` / `cfg.paths.dataset_paths`:
 - `default_models` — `MLMode` → absolute `.keras` path
   (`training/models/{sucker,limb}.keras`).
@@ -129,7 +127,7 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   (placeholder, no implementation).
 - **Trainer pattern:** `training/trainutil.Trainer` base; `SuckerTrainer`
   and `LimbTrainer` implement `datagen`, `data_format`, `train`,
-  `inference`. Orchestrated by `octo_model.py`, which selects the
+  `inference`. Orchestrated by `model.py`, which selects the
   `TRAINING` profile. Both trainers take a single `Config`.
 - **Loss:** `WeightedSumLoss = 0.95·ConstraintLoss + 0.05·MAE`. The
   constraint loss penalizes color changes beyond the 0.25 threshold and
@@ -147,19 +145,19 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
 
 ```bash
 # Visualizer (matplotlib; needs a GUI session; press a key in the window to start)
-python octo_viz.py            # or: bazel run octo_viz
+python visualizer/octo_viz.py            # or: bazel run //visualizer:octo_viz
 
 # Data generation (standalone; writes training/datagen/sucker.pkl)
-python octo_datagen.py        # or: bazel run octo_datagen
+python octopus_ai/datagen.py        # or: bazel run //octopus_ai:datagen
 
 # Training pipeline (behavior driven by the TRAINING profile; CFG at the top of the file)
-python octo_model.py          # or: bazel run octo_model
+python octopus_ai/model.py          # or: bazel run //octopus_ai:model
 
 # Inference server (must run from inside inference_server/ — it does sys.path tricks)
 cd inference_server && python server.py    # localhost:8080; API in ARCHITECTURE.md §7
 
-# WebSocket visualization server (then open octopus-visualizer.html in a browser)
-python websocket_server.py    # ws://localhost:8765; no bazel target
+# WebSocket visualization server (then open visualizer/octopus-visualizer.html in a browser)
+python visualizer/websocket_server.py    # ws://localhost:8765; no bazel target
 ```
 
 Always activate the venv first: `source .venv/bin/activate` (ARM-native
@@ -204,15 +202,17 @@ unused imports); clean opportunistically, don't let it block work.
 - Prefer `ValueError`/`TypeError` over bare `assert` for runtime validation
   (older code still asserts; migrate when touching it).
 - Entry scripts are mostly top-to-bottom module code (not `main()`-wrapped);
-  `websocket_server.py` and `simulator/ilqr/nodemesh.py` have proper
-  `main()` guards. Don't import `octo_model.py` from library code — it
-  executes the pipeline at import.
+  `visualizer/websocket_server.py` and `simulator/ilqr/nodemesh.py` have
+  proper `main()` guards. The two `visualizer/` Python entry points insert
+  the repo root onto `sys.path` so they run from the repo root despite
+  importing top-level modules. Don't import `model.py` from library
+  code — it executes the pipeline at import.
 
 ## Gotchas for future Claude instances
 
 1. `restore_data_from_disk` unpickles from `cfg.training_dataset_path`
    — make sure a dataset was actually
-   generated (e.g. `python octo_datagen.py`) and postdates July 2026
+   generated (e.g. `python octopus_ai/datagen.py`) and postdates July 2026
    (older pickles were generated with a bug that pinned sucker state at
    0.5 because the color feedback loop never ran).
 2. Inference server payload is `{"job_id": N, "data": {"c.r": x, "c_val.r": y}}` —

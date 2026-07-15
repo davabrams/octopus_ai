@@ -26,8 +26,8 @@ NB: these are deliberately NOT named test_*. Pytest collects any
 module-level test_* callable, so an imported `test_config` would be run
 as a (vacuously passing) test in every file that imported it.
 """
-from config_schema import Config
-from OctoConfig import TEST, config_from_flat, config_to_flat
+from octopus_ai.config_schema import Config
+from octopus_ai.config import TEST, config_from_flat, config_to_flat
 
 # The flat key surface, derived from the schema itself rather than
 # hand-listed, so it cannot drift.
@@ -50,7 +50,7 @@ def make_config(**overrides) -> Config:
         raise UnknownConfigKey(
             f"unknown config key(s): {sorted(unknown)}. "
             f"Valid keys are the flat config surface; see "
-            f"config_schema.py for the typed structure."
+            f"octopus_ai/config_schema.py for the typed structure."
         )
     flat = {**config_to_flat(TEST), **overrides}
     return config_from_flat(flat)

@@ -8,8 +8,8 @@ from dataclasses import FrozenInstanceError, replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from config_schema import Config, OutputConfig
-from OctoConfig import (
+from octopus_ai.config_schema import Config, OutputConfig
+from octopus_ai.config import (
     DATAGEN,
     DEBUG,
     DEFAULT,

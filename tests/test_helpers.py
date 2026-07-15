@@ -8,7 +8,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))  # so `helpers` is importable
 
-from config_schema import Config
+from octopus_ai.config_schema import Config
 from helpers import UnknownConfigKey, make_config, make_flat
 from simulator.simutil import MLMode, MovementMode
 

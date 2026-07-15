@@ -19,7 +19,7 @@ py_test(
         "//simulator:octopus_generator",
         "//simulator:simutil",
         "//simulator:surface_generator",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -29,7 +29,7 @@ py_test(
     visibility = ["//visibility:public"],
     imports = ["."],
     deps = [
-        "//:octo_util",
+        "//octopus_ai:octo_util",
         "//simulator:simutil",
     ]
 )
@@ -73,7 +73,7 @@ py_test(
     deps = [
         "//training:training",
         "//simulator:simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -87,8 +87,8 @@ py_test(
         "//simulator:octopus_generator",
         "//training:training",
         "//inference_server:model_inference",
-        "//:octo_util",
-        "//:octo_datagen",
+        "//octopus_ai:octo_util",
+        "//octopus_ai:datagen",
     ]
 )
 
@@ -101,7 +101,7 @@ py_test(
         "//simulator:octopus_generator",
         "//simulator:agent_generator",
         "//simulator:simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -111,7 +111,7 @@ py_test(
     visibility = ["//visibility:public"],
     imports = ["."],
     deps = [
-        "//:octo_util",
+        "//octopus_ai:octo_util",
         "//simulator:agent_generator",
         "//simulator:force_logger",
         "//simulator:octopus_generator",
@@ -125,7 +125,7 @@ py_test(
     visibility = ["//visibility:public"],
     imports = ["."],
     deps = [
-        "//:octo_util",
+        "//octopus_ai:octo_util",
         "//simulator:simutil",
     ]
 )
@@ -140,7 +140,7 @@ py_test(
         "//simulator:agent_generator",
         "//simulator:simutil",
         "//simulator:force_logger",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -160,7 +160,7 @@ py_test(
     visibility = ["//visibility:public"],
     imports = ["."],
     deps = [
-        "//:octo_util",
+        "//octopus_ai:octo_util",
         "//simulator:simutil",
     ]
 )
@@ -173,7 +173,7 @@ py_test(
     deps = [
         "//simulator:octopus_generator",
         "//simulator:simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -186,7 +186,7 @@ py_test(
         "//simulator:octopus_generator",
         "//simulator:agent_generator",
         "//simulator:simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -199,6 +199,6 @@ py_test(
         "//simulator:octopus_generator",
         "//simulator:simutil",
         "//simulator:spring_chain",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )

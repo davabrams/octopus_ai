@@ -11,7 +11,7 @@ from dataclasses import replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from OctoConfig import DEFAULT, config_to_flat
+from octopus_ai.config import DEFAULT, config_to_flat
 from simulator.agent_generator import AgentGenerator
 from simulator.force_logger import ForceLogger
 from simulator.octopus_generator import Octopus

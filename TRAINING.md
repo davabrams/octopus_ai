@@ -22,8 +22,8 @@ python -c "import tensorflow as tf; print(tf.__version__)"
 ## Training Pipeline
 
 Training has three stages: **data generation**, **model training**, and
-**model saving**. All stages are controlled by the profile `octo_model.py`
-selects (`CFG = TRAINING`, from `OctoConfig.py`) and executed by running it.
+**model saving**. All stages are controlled by the profile `model.py`
+selects (`CFG = TRAINING`, from `config.py`) and executed by running it.
 
 ### Quick Start
 
@@ -33,10 +33,10 @@ The `TRAINING` profile already enables datagen + training + model saving,
 so this is just:
 
 ```bash
-python octo_model.py
+python octopus_ai/model.py
 ```
 
-To vary it, edit `CFG` at the top of `octo_model.py` rather than a shared
+To vary it, edit `CFG` at the top of `model.py` rather than a shared
 dict — configs are frozen, so derive:
 
 ```python
@@ -51,7 +51,7 @@ This generates data in memory, trains the model, and saves it to
 ### With Bazel
 
 ```bash
-bazel run octo_model
+bazel run //octopus_ai:model
 ```
 
 ## Detailed Steps
@@ -63,15 +63,15 @@ pairs.
 
 **Generate data inline (no disk save):**
 ```bash
-# In OctoConfig.py set:
+# In config.py set:
 #   datagen_mode = True
 #   save_data_to_disk = False
 #   restore_data_from_disk = False
-python octo_model.py
+python octopus_ai/model.py
 ```
 
 **Save a dataset to disk / reuse a saved dataset:** the path comes from
-`cfg.training_dataset_path` (→ `default_datasets` in `OctoConfig.py`,
+`cfg.training_dataset_path` (→ `default_datasets` in `config.py`,
 resolving to `training/datagen/{sucker,limb}.pkl`).
 
 ```bash
@@ -82,13 +82,13 @@ resolving to `training/datagen/{sucker,limb}.pkl`).
 # Later, train from the saved pickle without re-running the simulator:
 #   datagen_mode = False
 #   restore_data_from_disk = True
-python octo_model.py
+python octopus_ai/model.py
 ```
 
 The standalone generator also works and pickles to the same sucker path:
 
 ```bash
-python octo_datagen.py
+python octopus_ai/datagen.py
 ```
 
 **⚠️ Regenerate old datasets.** Any pickle generated before July 2026 was
@@ -105,19 +105,19 @@ data points (default: 8 × 16 × 2 = 256 per iteration → 30,720 total).
 
 **Train sucker model (camouflage/color-change):**
 ```bash
-# OctoConfig.py:
+# config.py:
 #   ml_mode = MLMode.SUCKER
 #   run_training = True
-python octo_model.py
+python octopus_ai/model.py
 ```
 
 **Train limb model (movement/adjacency-aware color):**
 ```bash
-# OctoConfig.py:
+# config.py:
 #   ml_mode = MLMode.LIMB
 #   datagen.write_format = MLMode.LIMB   # so adjacents are captured
 #   run_training = True
-python octo_model.py
+python octopus_ai/model.py
 ```
 The limb pipeline is experimental: the saved `limb.keras` artifact dates
 from Apr 2024 and the RNN training loop hasn't been re-verified under
@@ -146,10 +146,10 @@ Optimizer: SGD, lr=1e-3, custom `GradientTape` loop (not `model.fit`).
 ### 4. TensorBoard
 
 ```bash
-# Enable in OctoConfig.py:
+# Enable in config.py:
 #   generate_tensorboard = True
 #   erase_old_tensorboard_logs = True  (optional, clears old runs)
-python octo_model.py
+python octopus_ai/model.py
 
 # Then view logs:
 tensorboard --logdir models/logs/sucker/fit/    # or models/logs/limb/fit/
@@ -173,15 +173,15 @@ a note-to-self; ignore it.)
 
 ```bash
 # Requires a trained model on disk
-# Set CFG at the top of octo_viz.py, e.g.
+# Set CFG at the top of visualizer/octo_viz.py, e.g.
 #   CFG = replace(VIZ, inference=replace(VIZ.inference,
 #                                        mode=MLMode.SUCKER,
 #                                        model=MLMode.SUCKER))
 #   mode  = how colors are computed; model = which .keras to load
 #   (resolved via CFG.inference_model_path)
-python octo_viz.py
+python visualizer/octo_viz.py
 # or
-bazel run octo_viz
+bazel run //visualizer:octo_viz
 ```
 Click into the matplotlib window and press a key to start the loop. The
 green number is the visibility score (mean squared color error; lower =
@@ -190,8 +190,8 @@ better camouflage).
 ### Browser (WebSocket visualizer)
 
 ```bash
-python websocket_server.py     # ws://localhost:8765
-# then open octopus-visualizer.html in a browser and click Connect
+python visualizer/websocket_server.py     # ws://localhost:8765
+# then open visualizer/octopus-visualizer.html in a browser and click Connect
 ```
 Uses the heuristic by default; set `inference.mode` on the server's
 profile to drive it with a trained model (falls back to the heuristic if the model
@@ -227,11 +227,11 @@ is a distinct enum value but nothing uses it yet).
 ### Standalone inference sweep
 
 ```bash
-# OctoConfig.py:
+# config.py:
 #   restore_model_from_disk = True
 #   run_inference = True
 #   run_training = False
-python octo_model.py
+python octopus_ai/model.py
 ```
 The sweep renders a 5×5 seaborn heatmap of predictions over (previous
 color, surface color); a healthy sucker model shows values stepping from

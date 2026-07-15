@@ -3,7 +3,7 @@ Regression tests for LIMB-model sucker adjacency.
 
 Limb.find_color used to pass agent_range_radius (how far an ARM senses
 AGENTS, 5.0) to find_adjacents, which builds the LIMB model's neighbour
-list. octo_datagen builds its training adjacents with adjacency_radius
+list. datagen builds its training adjacents with adjacency_radius
 (1.0). Two different parameters for two different concepts, so the model
 was trained on one neighbourhood and served another - and at 5.0 the
 filter is a no-op, returning the whole limb for every sucker.
@@ -23,7 +23,7 @@ from helpers import make_config
 
 
 class TestLimbAdjacencyRadius(unittest.TestCase):
-    ADJACENCY_RADIUS = 1.0   # what octo_datagen trains the LIMB model with
+    ADJACENCY_RADIUS = 1.0   # what datagen trains the LIMB model with
     SENSING_RADIUS = 5.0     # how far an arm senses AGENTS - a different job
 
     def setUp(self):
@@ -48,7 +48,7 @@ class TestLimbAdjacencyRadius(unittest.TestCase):
 
     def test_find_color_uses_adjacency_radius_not_agent_range(self):
         """The LIMB path must ask for neighbours at adjacency_radius, the
-        same radius octo_datagen trains with."""
+        same radius datagen trains with."""
         seen = []
         real = self.limb.find_adjacents
 

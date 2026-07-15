@@ -15,7 +15,7 @@ from simulator.simutil import (
     convert_adjacents_to_ragged_tensor
 )
 from simulator.spring_chain import solve_chain, base_reaction
-from OctoConfig import as_config
+from octopus_ai.config import as_config
 
 class Sucker:
     """
@@ -142,7 +142,7 @@ class Limb:
         self.chain_move_k = limb.chain.move_k
 
         # How close two suckers must be to count as neighbours for the LIMB
-        # model; octo_datagen builds its training adjacents with this.
+        # model; datagen builds its training adjacents with this.
         self.adjacency_radius = cfg.octopus.sucker.adjacency_radius
         # How far THIS ARM senses agents. Distinct from the agent's own
         # sensing radius, which it used to be forced to equal.

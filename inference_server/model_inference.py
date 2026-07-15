@@ -14,7 +14,7 @@ import numpy as np
 from tensorflow import keras
 
 sys.path.insert(1, '..')
-from OctoConfig import default_models, MLMode  # noqa: E402
+from octopus_ai.config import default_models, MLMode  # noqa: E402
 from training.losses import ConstraintLoss
 
 logging.basicConfig(level=logging.INFO)

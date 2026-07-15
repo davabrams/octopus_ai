@@ -1,7 +1,7 @@
 # %% Patterned Surface Generator
 import numpy as np
 
-from OctoConfig import as_config
+from octopus_ai.config import as_config
 
 class RandomSurface:
     """Generates a random surface of size (y_len, x_len).

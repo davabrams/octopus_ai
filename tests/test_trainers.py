@@ -18,7 +18,7 @@ from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
 from training.trainutil import Trainer
 from simulator.simutil import MLMode
-from config_schema import PathsConfig
+from octopus_ai.config_schema import PathsConfig
 from helpers import make_config
 
 

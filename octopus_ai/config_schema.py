@@ -1,6 +1,6 @@
 """Typed configuration schema for the octopus simulator.
 
-This is the source of truth for every tunable. OctoConfig.py builds the
+This is the source of truth for every tunable. config.py builds the
 concrete profiles from it and converts to/from the flat dict form that the
 browser, the force log, and the test fixtures speak.
 
@@ -34,7 +34,7 @@ class PathsConfig:
     """Where models and generated datasets live on disk.
 
     Keyed by MLMode because callers select a model by mode
-    (training/sucker.py, training/limb.py, octo_model.py all index these).
+    (training/sucker.py, training/limb.py, model.py all index these).
     """
     model_paths: Dict[MLMode, Optional[str]] = field(default_factory=dict)
     dataset_paths: Dict[MLMode, Optional[str]] = field(default_factory=dict)

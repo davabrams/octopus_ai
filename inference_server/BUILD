@@ -4,7 +4,7 @@ py_library(
     data = ["//training:saved_models"],
     visibility = ["//visibility:public"],
     deps = [
-        "//:octo_util",
+        "//octopus_ai:octo_util",
         "//simulator:simutil",
         "//training:losses",
     ],

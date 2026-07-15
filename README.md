@@ -33,15 +33,15 @@ python run_tests.py --coverage   # Coverage report
 See `tests/README.md` for detailed testing documentation.
 
 ## Configuration
-`OctoConfig.py`
+`config.py`
 Configuration settings
 
 ## Running
-`bazel run octo_viz`
+`bazel run //visualizer:octo_viz`
 octopus ai scenario synthesizer and visualizer
 
-`bazel run octo_datagen`
+`bazel run //octopus_ai:datagen`
 octopus ai data generator for training
 
-`bazel run octo_model`
+`bazel run //octopus_ai:model`
 octopus ai model trainer

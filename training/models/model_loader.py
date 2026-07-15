@@ -5,7 +5,7 @@ import pathlib
 import keras
 
 from training.models.base_loader import DefaultLoader
-from OctoConfig import default_models
+from octopus_ai.config import default_models
 
 # Importing losses runs the @keras.saving.register_keras_serializable
 # decorators for the custom objects baked into the saved models

@@ -1,8 +1,16 @@
 """Octopus Data Generation Class"""
+import os
 import pickle
+import sys
 import time as tm
 import getpass
 import socket
+
+# This module lives in the octopus_ai/ package but is also a runnable entry
+# point (`python octopus_ai/datagen.py`). Put the repo root on sys.path so the
+# `octopus_ai.*` and sibling-package imports resolve when run as a script.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
@@ -14,7 +22,7 @@ class OctoDatagen():
     """ Entry point for octopus datagen """
     def __init__(self, game_parameters):
         """Takes a Config or a legacy flat params dict."""
-        from OctoConfig import as_config
+        from octopus_ai.config import as_config
         cfg = as_config(game_parameters)
         assert cfg.run.num_iterations >= 0, (
             "Error, number of iterations configured in game parameters "
@@ -173,7 +181,7 @@ if __name__ == "__main__":
 
     datagen = OctoDatagen(default_params)
     synthetic_data = datagen.run_color_datagen()
-    from OctoConfig import default_datasets
+    from octopus_ai.config import default_datasets
     f_location = default_datasets[MLMode.SUCKER]
     print("Writing generated data to", f_location)
     with open(f_location, 'wb') as file:

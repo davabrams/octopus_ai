@@ -22,7 +22,7 @@ flat key/value pairs:
 import os
 from dataclasses import replace
 
-from config_schema import (  # noqa: F401  (re-exported for convenience)
+from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenience)
     AgentConfig,
     Config,
     DatagenConfig,
@@ -41,7 +41,9 @@ from config_schema import (  # noqa: F401  (re-exported for convenience)
 )
 from simulator.simutil import MLMode, InferenceLocation, MovementMode
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# This module lives in octopus_ai/; the repo root (where training/ lives) is
+# its parent, so walk up two levels from this file.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 default_models = {
     MLMode.SUCKER: os.path.join(ROOT_DIR, 'training/models/sucker.keras'),

@@ -72,7 +72,7 @@ py_library(
         "//visibility:public"
         ],
     deps=[
-        "//:octo_datagen",
+        "//octopus_ai:datagen",
         ":losses",
         ":trainutil",
         ":data_utils",

@@ -13,7 +13,7 @@ from typing import Optional, Union
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from util import (
+from octopus_ai.util import (
     train_test_split, train_test_split_multiple_state_vectors,
     octo_norm, convert_pytype_to_tf_dataset, erase_all_logs,
 )

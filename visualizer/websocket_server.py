@@ -29,15 +29,22 @@ import asyncio
 import http
 import json
 import logging
+import os
 import pathlib
+import sys
 import threading
 import time
+
+# This lives in visualizer/ but imports top-level project modules; put the repo
+# root on sys.path so `python visualizer/websocket_server.py` works from the
+# repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from OctoConfig import DEFAULT, config_from_flat, config_to_flat
+from octopus_ai.config import DEFAULT, config_from_flat, config_to_flat
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import AgentType, MLMode

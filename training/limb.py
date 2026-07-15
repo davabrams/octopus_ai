@@ -11,12 +11,12 @@ import seaborn as sn
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from training.losses import WeightedSumLoss
-from octo_datagen import OctoDatagen
+from octopus_ai.datagen import OctoDatagen
 from training.data_utils import (
     train_test_split_multiple_state_vectors,
 )
 from simulator.simutil import MLMode
-from OctoConfig import as_config
+from octopus_ai.config import as_config
 from .trainutil import Trainer
 
 

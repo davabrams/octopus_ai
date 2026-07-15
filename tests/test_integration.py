@@ -19,7 +19,7 @@ from simulator.simutil import State, MLMode, InferenceLocation, MovementMode, Ag
 from training.sucker import SuckerTrainer
 from training.limb import LimbTrainer
 from inference_server.model_inference import InferenceQueue, InferenceJob
-from OctoConfig import DEFAULT
+from octopus_ai.config import DEFAULT
 from helpers import make_config, make_flat
 
 
@@ -186,7 +186,7 @@ class TestDataGenerationIntegration(unittest.TestCase):
 
     def test_datagen_integration(self):
         """Test data generation integration with real components"""
-        from octo_datagen import OctoDatagen
+        from octopus_ai.datagen import OctoDatagen
 
         datagen = OctoDatagen(self.game_params)
         data = datagen.run_color_datagen()
@@ -210,7 +210,7 @@ class TestDataGenerationIntegration(unittest.TestCase):
         this path has to keep working. The snapshot in the payload is
         whatever the caller passed, not a normalized form.
         """
-        from octo_datagen import OctoDatagen
+        from octopus_ai.datagen import OctoDatagen
 
         flat = make_flat(**self._base)
         datagen = OctoDatagen(flat)

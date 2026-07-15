@@ -36,18 +36,18 @@ used as the signal and g/b are set equal to r.
 ## 2. Repository map
 
 ```
-octopus_ai/
-├── config_schema.py         # THE config: frozen Config dataclass tree (source of truth)
-├── OctoConfig.py            # Profiles built from it + flat<->nested converters
-│                            #   + default_models / default_datasets path maps
-├── octo_viz.py              # Entry point: matplotlib visualizer loop
-├── octo_datagen.py          # OctoDatagen class + standalone datagen entry point
-├── octo_model.py            # Entry point: datagen → train → save → (inference/eval)
-├── util.py                  # erase_all_logs, octo_norm; re-exports split fns from training.data_utils
-├── websocket_server.py      # WebSocket sim server for browser viz (ws://localhost:8765)
-├── websocket-integration.py # Example/scratch: how to adapt classes for WebSocket JSON
-├── octopus-visualizer.html  # Self-contained HTML/JS frontend
-├── octopus-ai-visualizer.tsx# React version of the same frontend
+octopus_ai/                   # repo root
+├── octopus_ai/              # core package (importable as octopus_ai.*)
+│   ├── config_schema.py     # THE config: frozen Config dataclass tree (source of truth)
+│   ├── config.py            # Profiles built from it + flat<->nested converters + path maps
+│   ├── util.py              # erase_all_logs, octo_norm; re-exports split fns from training.data_utils
+│   ├── datagen.py           # OctoDatagen class + standalone datagen entry point
+│   └── model.py             # Entry point: datagen → train → save → (inference/eval)
+├── visualizer/
+│   ├── octo_viz.py           # Entry point: matplotlib visualizer loop
+│   ├── websocket_server.py   # WebSocket sim server for browser viz (ws://localhost:8765)
+│   ├── octopus-visualizer.html  # Self-contained HTML/JS frontend
+│   └── octopus-ai-visualizer.tsx # React version of the same frontend
 ├── simulator/
 │   ├── simutil.py           # State, Agent, Color, enums, matplotlib display helpers
 │   ├── octopus_generator.py # Sucker, Limb, Octopus classes
@@ -76,14 +76,14 @@ octopus_ai/
 │   └── test_server.py       # unittest client/server tests (run from this dir)
 ├── tests/                   # pytest suite, ~2,400 lines / 136 tests across 8 files
 ├── models/logs/             # TensorBoard output (sucker/, limb/)
-├── BUILD, MODULE.bazel      # Bazel (Bzlmod) build defs
+├── MODULE.bazel             # Bazel (Bzlmod) module; BUILD files are per-package
 ├── Makefile, run_tests.py, test.sh   # Test/lint entry points
 └── pyproject.toml           # pip deps, ruff config, pytest config
 ```
 
 ---
 
-## 3. Configuration (`config_schema.py` + `OctoConfig.py`)
+## 3. Configuration (`config_schema.py` + `config.py`)
 
 A tree of **frozen dataclasses**, rooted at `Config` in
 `config_schema.py`. Nesting follows the concern, not the old key prefix:
@@ -103,7 +103,7 @@ A tree of **frozen dataclasses**, rooted at `Config` in
 The hyperparams under `cfg.training` used to be duplicated across both flat
 dicts with nothing keeping them in sync; there is one source now.
 
-`OctoConfig.py` builds the profiles — `DEFAULT`, `VIZ`, `DEBUG`, `TEST`,
+`config.py` builds the profiles — `DEFAULT`, `VIZ`, `DEBUG`, `TEST`,
 `DATAGEN`, `TRAINING` — with `dataclasses.replace()`, which is also how you
 derive an ad-hoc variant. Selecting a profile is what "experimenting" means;
 there is no shared dict to edit and forget to revert.
@@ -257,7 +257,7 @@ octopus does not use iLQR motion yet (that's the intent behind the TODO in
 
 ---
 
-## 5. Data generation (`octo_datagen.py`)
+## 5. Data generation (`datagen.py`)
 
 `OctoDatagen(game_parameters)`:
 
@@ -289,7 +289,7 @@ The `__main__` block uses its own hardcoded params (2 iterations,
 
 ## 6. Training
 
-### 6.1 Orchestration (`octo_model.py`)
+### 6.1 Orchestration (`model.py`)
 
 A script (module-level code, no `main()`) that selects the `TRAINING`
 profile (`CFG` at the top of the file) and runs stages in order:
@@ -376,7 +376,7 @@ so saved models can round-trip.
   resolves bare filenames relative to the subclass's directory, verifies
   existence, calls `_load`. `get_object()` returns the loaded thing.
 - `training/models/model_loader.py` — `ModelLoader`: `defaults =
-  default_models` from OctoConfig; `_load` calls `keras.models.load_model`,
+  default_models` from config; `_load` calls `keras.models.load_model`,
   passing `custom_objects` when provided as a keyword (e.g.
   `ModelLoader(path, custom_objects={"ConstraintLoss": ConstraintLoss})`).
 - `training/datagen/data_loader.py` — `DataLoader`: absolute defaults →
@@ -397,7 +397,7 @@ so saved models can round-trip.
 - `training/models/sucker.keras has pretty good results` — a stray backup
   file (Dec 2023) whose filename is a note-to-self. Safe to delete/rename.
 - `training/datagen/sucker.pkl` — pickled dataset. **If it predates July
-  2026, regenerate it** (`python octo_datagen.py`): older pickles were
+  2026, regenerate it** (`python octopus_ai/datagen.py`): older pickles were
   produced while `set_color` was a no-op, pinning sucker state
   at 0.5.
 
@@ -456,7 +456,12 @@ Nothing in the simulator automatically routes to this server yet;
 
 ## 8. Visualization
 
-### 8.1 Local matplotlib (`octo_viz.py`)
+All visualization code lives under `visualizer/`. The two Python entry
+points import top-level project modules, so each inserts the repo root onto
+`sys.path` and is meant to be run from the repo root
+(`python visualizer/octo_viz.py`).
+
+### 8.1 Local matplotlib (`visualizer/octo_viz.py`)
 
 Selects a profile (`CFG = DEFAULT` at the top; swap for `VIZ` or
 `DEBUG`), builds surface/agents/octopus, optionally loads a
@@ -469,7 +474,7 @@ Requires a GUI backend and an initial button press
 
 ### 8.2 WebSocket stack
 
-- `websocket_server.py` (rewritten July 2026) streams simulation
+- `visualizer/websocket_server.py` (rewritten July 2026) streams simulation
   state as JSON at ~10 FPS on `ws://localhost:8765`, with play/pause/reset
   and config-update messages. It drives the **real** simulator classes:
   a flat mirror for the wire and a typed `Config` rebuilt from it on every
@@ -480,16 +485,15 @@ Requires a GUI backend and an initial button press
   if the model can't load. Config updates are type-coerced to the existing
   value's type and rebuild the simulation. Handler uses the websockets ≥13
   single-argument API. Wire format is documented in the module docstring.
-  Run: `python websocket_server.py` (no Bazel target).
-- `octopus-visualizer.html` — self-contained browser frontend (canvas
-  rendering, config sliders, connect/play/pause/reset). Expects messages of
-  type `simulation_state` with `{background, octopus{head,limbs,suckers},
-  agents, metadata{iteration, visibility_score, fps}}`.
-- `octopus-ai-visualizer.tsx` — the same UI as a React component
+  Run: `python visualizer/websocket_server.py` (no Bazel target).
+- `visualizer/octopus-visualizer.html` — self-contained browser frontend
+  (canvas rendering, config sliders, connect/play/pause/reset). Expects
+  messages of type `simulation_state` with `{background,
+  octopus{head,limbs,suckers}, agents, metadata{iteration,
+  visibility_score, fps}}`. The server serves this file from next to
+  itself, so it must stay beside `websocket_server.py`.
+- `visualizer/octopus-ai-visualizer.tsx` — the same UI as a React component
   (lucide-react icons), for embedding elsewhere.
-- `websocket-integration.py` — not an entry point; historical example
-  adapter classes from before the server drove the real simulator. Kept
-  as reference; candidates for deletion.
 
 ---
 
@@ -498,7 +502,7 @@ Requires a GUI backend and an initial button press
 - **Environment**: Python ≥3.10 (venv here is 3.12, ARM-native — see
   TRAINING.md for Apple Silicon setup). `pip install -e ".[dev]"`.
 - **Bazel**: Bzlmod-era (`MODULE.bazel`, empty `WORKSPACE`). Targets:
-  `//:octo_viz`, `//:octo_datagen`, `//:octo_model`,
+  `//visualizer:octo_viz`, `//octopus_ai:datagen`, `//octopus_ai:model`,
   `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`.
   Bazel does not manage Python deps here — it relies on the ambient
   interpreter having tensorflow etc.
@@ -517,7 +521,7 @@ Requires a GUI backend and an initial button press
 ## 10. Data flow summary (sucker pipeline, the one that works end-to-end)
 
 ```
-OctoConfig.DEFAULT (a Config)
+config.DEFAULT (a Config)
         │
         ▼
 OctoDatagen.run_color_datagen()          # simulator rollout
@@ -535,8 +539,8 @@ SuckerTrainer.train()                    # MLP(2→5→5→5→1), SGD 1e-3
         ▼
 training/models/sucker.keras
         │
-        ├──▶ octo_viz.py                 # live camouflage w/ model (matplotlib)
-        ├──▶ websocket_server.py         # live camouflage in the browser
+        ├──▶ visualizer/octo_viz.py      # live camouflage w/ model (matplotlib)
+        ├──▶ visualizer/websocket_server.py  # live camouflage in the browser
         ├──▶ SuckerTrainer.inference()   # 5×5 heatmap sanity check
         └──▶ inference_server            # REST predictions
 ```

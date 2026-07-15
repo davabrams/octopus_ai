@@ -21,7 +21,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["simulator*", "training*", "inference_server*"]
+include = ["octopus_ai*", "simulator*", "training*", "inference_server*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

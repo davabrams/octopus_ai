@@ -166,7 +166,7 @@ class ForceLogger:
             SELECT json_extract(config_json, '$.octo_arm_stiffness')
             FROM runs;
         """
-        from OctoConfig import as_config, config_to_flat
+        from octopus_ai.config import as_config, config_to_flat
         flat = config_to_flat(as_config(config))
         return json.dumps(flat, default=_json_default, sort_keys=True)
 

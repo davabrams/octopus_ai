@@ -357,7 +357,7 @@ def plot_loss_functions(cl, mae, wsl, cfg, state_value,
 
 # Use this to generate the loss plots.
 if False:
-    from OctoConfig import DEFAULT
+    from octopus_ai.config import DEFAULT
     previous_value = 0.0
     target_value = 0.0
     plot_loss_functions(ConstraintLoss,

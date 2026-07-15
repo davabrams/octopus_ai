@@ -19,9 +19,9 @@ from training.data_utils import (
     convert_pytype_to_tf_dataset,
     train_test_split,
 )
-from octo_datagen import OctoDatagen
+from octopus_ai.datagen import OctoDatagen
 from simulator.simutil import MLMode
-from OctoConfig import as_config, default_datasets
+from octopus_ai.config import as_config, default_datasets
 
 
 class SuckerTrainer(Trainer):

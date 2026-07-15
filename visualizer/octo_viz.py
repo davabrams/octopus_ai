@@ -1,10 +1,16 @@
 """ Octopus visualizer """
+import os
+import sys
 import time
+
+# This lives in visualizer/ but imports top-level project modules; put the repo
+# root on sys.path so `python visualizer/octo_viz.py` works from the repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import matplotlib.pyplot as plt
 from tensorflow import keras
 
-from OctoConfig import DEBUG, DEFAULT, VIZ  # noqa: F401  (profiles)
+from octopus_ai.config import DEBUG, DEFAULT, VIZ  # noqa: F401  (profiles)
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
 from simulator.simutil import Color, MLMode, display_refresh, setup_display

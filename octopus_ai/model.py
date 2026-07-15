@@ -1,12 +1,18 @@
 """ Octopus model training """
 import os
 import pickle
+import sys
 import time as tm
+
+# This module lives in the octopus_ai/ package but is also a runnable entry
+# point (`python octopus_ai/model.py`). Put the repo root on sys.path so the
+# `octopus_ai.*` and sibling-package imports resolve when run as a script.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import tensorflow as tf
 
-from OctoConfig import TRAINING
+from octopus_ai.config import TRAINING
 from simulator.simutil import MLMode
 from training.limb import LimbTrainer
 from training.losses import (
@@ -16,7 +22,7 @@ from training.losses import (
 )
 from training.models.model_loader import ModelLoader
 from training.sucker import SuckerTrainer
-from util import erase_all_logs
+from octopus_ai.util import erase_all_logs
 
 np.set_printoptions(precision=4)
 tf.config.run_functions_eagerly(False)

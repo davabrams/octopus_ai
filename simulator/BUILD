@@ -11,7 +11,7 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         ":simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -25,7 +25,7 @@ py_library(
     name = "force_logger",
     srcs = ["force_logger.py"],
     visibility = ["//visibility:public"],
-    deps = ["//:octo_util"],
+    deps = ["//octopus_ai:octo_util"],
 )
 
 py_library(
@@ -42,7 +42,7 @@ py_library(
         ":simutil",
         ":surface_generator",
         ":spring_chain",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ]
 )
 
@@ -51,7 +51,7 @@ py_library(
     srcs = ["surface_generator.py"],
     deps = [
         ":simutil",
-        "//:octo_util",
+        "//octopus_ai:octo_util",
     ],
     visibility = ["//visibility:public"],
 )
@@ -60,5 +60,5 @@ py_library(
     name = "generators",
     srcs = glob(["*.py"]),
     visibility = ["//visibility:public"],
-    deps = ["//:octo_util"],
+    deps = ["//octopus_ai:octo_util"],
 )
