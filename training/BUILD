@@ -1,11 +1,42 @@
 py_library(
     name="losses",
-    srcs=["losses.py"]
+    srcs=["losses.py"],
+	visibility = [
+        "//visibility:public"
+        ],
 )
 
 py_library(
     name="trainutil",
-    srcs=["trainutil.py"]
+    srcs=["trainutil.py"],
+	visibility = [
+        "//visibility:public"
+        ],
+)
+
+filegroup(
+    name="saved_models",
+    srcs=glob(["models/*.keras"]),
+	visibility = [
+        "//visibility:public"
+        ],
+)
+
+py_library(
+    name="data_utils",
+    srcs=["data_utils.py"],
+	visibility = [
+        "//visibility:public"
+        ],
+)
+
+py_library(
+    name="base_loader",
+    srcs = ["models/base_loader.py"],
+	visibility = [
+        "//visibility:public"
+        ],
+    deps = ["//simulator:simutil"],
 )
 
 py_library(
@@ -14,6 +45,10 @@ py_library(
     data = glob(["models/*"]),
 	visibility = [
         "//visibility:public"
+        ],
+    deps = [
+        ":base_loader",
+        ":losses",
         ],
 )
 
@@ -24,6 +59,7 @@ py_library(
 	visibility = [
         "//visibility:public"
         ],
+    deps = [":base_loader"],
 )
 
 py_library(
@@ -39,6 +75,7 @@ py_library(
         "//:octo_datagen",
         ":losses",
         ":trainutil",
+        ":data_utils",
         ":model_loader",
         ":data_loader",
         ]

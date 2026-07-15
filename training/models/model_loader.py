@@ -7,6 +7,15 @@ import keras
 from training.models.base_loader import DefaultLoader
 from OctoConfig import default_models
 
+# Importing losses runs the @keras.saving.register_keras_serializable
+# decorators for the custom objects baked into the saved models
+# (DeltaColorLayer, WeightedSumLoss, ConstraintLoss, ClampedTargetLoss).
+# Loading a .keras model needs those registered first. Normally
+# training/__init__.py pulls them in, but that side effect is unreliable
+# under runners that synthesize empty package __init__.py files (e.g.
+# Bazel), so register them explicitly at the point of use.
+import training.losses  # noqa: F401
+
 local_folder = pathlib.Path(__file__).parent.resolve()
 
 all_models = [

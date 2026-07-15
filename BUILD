@@ -1,9 +1,10 @@
 py_library(
     name = "octo_util",
-    srcs = ["util.py", "OctoConfig.py"],
+    srcs = ["util.py", "OctoConfig.py", "config_schema.py"],
 	visibility = ["//visibility:public"],
     deps = [
-        "//simulator:simutil"
+        "//simulator:simutil",
+        "//training:data_utils",
         ]
 )
 
