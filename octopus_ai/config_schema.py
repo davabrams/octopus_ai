@@ -147,6 +147,15 @@ class ILQRConfig:
     w_reach_terminal: float = 6.0  # strong terminal tip pull (dominates)
     w_repel: float = 8.0         # threat avoidance strength
     repel_radius: float = 2.5    # threat keep-out radius
+    # Exploration (off by default): when an arm senses no prey, its tip seeks
+    # the least-explored cell within reach (cells are marked explored by the
+    # SUCKERS, not the body). A weak drive: w_explore << w_reach_terminal, and
+    # prey always preempts it, so exploration never outranks hunting/fleeing.
+    explore_enabled: bool = False
+    w_explore: float = 0.5       # gentle terminal tip pull toward unexplored
+                                 # (vs 6.0 for prey) - the "much less reward"
+    explore_decay: float = 1.0   # per-frame decay of visit counts; < 1.0 turns
+                                 # "least visited" into "least RECENTLY visited"
 
 
 # ---------------------------------------------------------------- limbs ---

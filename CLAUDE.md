@@ -124,6 +124,11 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   `theta` — so the arms fan out from distinct roots. The body integrates the
   arms' summed *torque* into `theta` (angular twin of the linear tension→drift),
   so the fan rotates. See BODY_ROTATION_PLAN.md.
+- **Exploration** (`octo_ilqr_explore_enabled`, off by default): cells are
+  marked explored by the **suckers** (`Octopus.visit_counts`); when an arm
+  senses no prey, its tip softly seeks the least-explored cell in reach
+  (`w_explore ≪ w_reach_terminal`). Prey preempts it; the threat repel always
+  dominates. See EXPLORATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
   constrained to change ≤ `octo_max_hue_change` (0.25) per step **per
   channel**. Full **RGB**: the surface grid is `(y, x, 3)` and each of

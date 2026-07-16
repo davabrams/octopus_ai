@@ -143,6 +143,12 @@ class Limb:
         self.chain_agent_k = limb.chain.agent_k
         self.chain_move_k = limb.chain.move_k
         self.ilqr_cfg = limb.ilqr
+        # Exploration: when this arm senses no prey, its tip softly reaches the
+        # least-explored cell within reach (exploration feature).
+        self.explore_enabled = limb.ilqr.explore_enabled
+        self.w_explore = limb.ilqr.w_explore
+        self.explore_locality = 0.3  # bias the explore target toward the tip so
+                                     # the arm sweeps smoothly rather than jumping
 
         # How close two suckers must be to count as neighbours for the LIMB
         # model; datagen builds its training adjacents with this.
@@ -235,7 +241,8 @@ class Limb:
 
     def move(self, x_octo: float, y_octo: float,
              agents: list = None, coordinated_influence=None,
-             body_theta: float = 0.0, body_dtheta: float = 0.0):
+             body_theta: float = 0.0, body_dtheta: float = 0.0,
+             visit_counts=None):
         """Move the limb, then refresh sucker locations.
 
         x_octo, y_octo: the (possibly just-moved) body position; the arm
@@ -259,7 +266,8 @@ class Limb:
         elif self.movement_mode == MovementMode.SPRING_CHAIN:
             self._move_spring_chain(x_octo, y_octo, agents)
         elif self.movement_mode == MovementMode.ILQR:
-            self._move_ilqr(x_octo, y_octo, agents, body_theta, body_dtheta)
+            self._move_ilqr(x_octo, y_octo, agents, body_theta, body_dtheta,
+                            visit_counts)
         else:
             assert False, "Unknown movement mode"
 
@@ -562,8 +570,39 @@ class Limb:
                 nearest = ag
         return [nearest.x, nearest.y] if nearest is not None else None
 
+    def _ilqr_explore_target(self, base_x, base_y, tip, visit_counts):
+        """Least-explored reachable cell as [x, y], or None.
+
+        Searches the cells this arm's tip can reach (within ~arm length of the
+        base) and returns the one that minimizes
+        ``visit_count + explore_locality * distance-to-current-tip`` - i.e. the
+        least-visited cell, biased toward the current tip so the arm sweeps
+        smoothly. The visit map is shared, so as one arm covers a region the
+        others are drawn elsewhere (emergent coverage, no direct coupling).
+        """
+        reach = (self.rows - 1) * self.max_sucker_distance
+        y_len, x_len = visit_counts.shape
+        x_lo = max(0, int(np.floor(base_x - reach)))
+        x_hi = min(x_len - 1, int(np.ceil(base_x + reach)))
+        y_lo = max(0, int(np.floor(base_y - reach)))
+        y_hi = min(y_len - 1, int(np.ceil(base_y + reach)))
+        best = None
+        best_score = None
+        reach_sq = reach * reach
+        for cy in range(y_lo, y_hi + 1):
+            for cx in range(x_lo, x_hi + 1):
+                if (cx - base_x) ** 2 + (cy - base_y) ** 2 > reach_sq:
+                    continue  # out of reach
+                d_tip = np.hypot(cx - tip.x, cy - tip.y)
+                score = visit_counts[cy, cx] + self.explore_locality * d_tip
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best = (cx, cy)
+        return [float(best[0]), float(best[1])] if best is not None else None
+
     def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None,
-                   body_theta: float = 0.0, body_dtheta: float = 0.0):
+                   body_theta: float = 0.0, body_dtheta: float = 0.0,
+                   visit_counts=None):
         """Per-limb iLQR reach, receding-horizon (MPC) style.
 
         Each frame the arm re-plans a short trajectory toward its target with
@@ -630,8 +669,26 @@ class Limb:
         tip = self.center_line[-1]
         prey = self._ilqr_target(tip, agents)      # [x, y] or None
         threat = self._ilqr_nearest_threat(agents)  # sensed from whole arm
-        # The arm reaches toward its prey; with none, it holds at the tip.
-        solve_target = prey if prey is not None else [tip.x, tip.y]
+        # Priority: reach PREY (strong) -> else EXPLORE the least-visited cell
+        # (gentle) -> else hold at the tip. Prey always preempts exploration, so
+        # exploration never outranks hunting; the threat repel is a separate,
+        # always-on term, so it always dominates too.
+        explore_pt = None
+        if prey is None and self.explore_enabled and visit_counts is not None:
+            explore_pt = self._ilqr_explore_target(base_x, base_y, tip,
+                                                   visit_counts)
+        if prey is not None:
+            solve_target = prey
+            reach_weight = None          # controller default (strong)
+            target_kind = "prey"
+        elif explore_pt is not None:
+            solve_target = explore_pt
+            reach_weight = self.w_explore  # gentle
+            target_kind = "explore"
+        else:
+            solve_target = [tip.x, tip.y]
+            reach_weight = None
+            target_kind = "hold"
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below
         # builds a fresh array, so this reference stays stable for recording.
@@ -640,7 +697,8 @@ class Limb:
         res = self._ilqr_controller.solve(
             base_xy=[base_x, base_y], target=solve_target, x0=x0,
             threat=threat, u_init=self._ilqr_u,
-            record_history=self.record_ilqr_history)
+            record_history=self.record_ilqr_history,
+            reach_weight=reach_weight)
 
         # Receding horizon: apply only the first planned step (x_traj[1]).
         new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
@@ -665,9 +723,9 @@ class Limb:
             self.last_ilqr_meta = {
                 "base_xy": (float(base_x), float(base_y)),
                 "target": (float(solve_target[0]), float(solve_target[1])),
-                # Without target_kind an idle frame (holding at its own tip)
-                # looks like the arm "reaching" its own tip.
-                "target_kind": "prey" if prey is not None else "hold",
+                # 'prey' | 'explore' | 'hold' - without it an idle/exploring
+                # frame looks like the arm "reaching" its own tip.
+                "target_kind": target_kind,
                 "threat": (None if threat is None
                            else (float(threat[0]), float(threat[1]))),
                 "threat_active": threat is not None,
@@ -802,6 +860,15 @@ class Octopus:
         self.max_body_angular_velocity = cfg.octopus.max_body_angular_velocity
         self.body_torque_gain = cfg.octopus.limb.ilqr.body_torque_gain
 
+        # Exploration memory (exploration feature). A per-cell visit count over
+        # the world grid, marked by the SUCKERS (not the body) each frame; each
+        # idle arm reaches its tip toward the least-explored cell in reach, so
+        # the suckers sweep unexplored areas. Grid is [y][x] like the surface.
+        self.explore_enabled = cfg.octopus.limb.ilqr.explore_enabled
+        self.explore_decay = cfg.octopus.limb.ilqr.explore_decay
+        self.visit_counts = np.zeros((cfg.world.y_len, cfg.world.x_len),
+                                     dtype=float)
+
         # Last-frame body force capture (populated by _move_lumped_spring):
         # last_body_force is the summed arm tension; last_body_drift is the
         # capped displacement actually applied to the body this frame.
@@ -852,7 +919,28 @@ class Octopus:
 
         for l in self.limbs:
             l.move(self.x, self.y, agents, coordinated_influence,
-                   body_theta=self.theta, body_dtheta=self.last_body_dtheta)
+                   body_theta=self.theta, body_dtheta=self.last_body_dtheta,
+                   visit_counts=self.visit_counts if self.explore_enabled
+                   else None)
+
+        # Mark where the SUCKERS are as explored (after they moved). The idle
+        # arms read last frame's map to seek the least-explored cells, so this
+        # runs after the moves - a one-frame lag, like the rest of the loop.
+        self._mark_explored()
+
+    def _mark_explored(self):
+        """Increment the visit count of every cell a sucker now occupies
+        (optionally decaying old counts first for a recency bias)."""
+        if not self.explore_enabled:
+            return
+        if self.explore_decay != 1.0:
+            self.visit_counts *= self.explore_decay
+        y_len, x_len = self.visit_counts.shape
+        for limb in self.limbs:
+            for s in limb.suckers:
+                cx = min(max(int(round(s.x)), 0), x_len - 1)
+                cy = min(max(int(round(s.y)), 0), y_len - 1)
+                self.visit_counts[cy, cx] += 1.0
 
     def _drift_body_by_tension(self):
         """Drift the body by the summed base tension of its arms.

@@ -1,5 +1,20 @@
 # Exploration Behavior — Design / To-Do
 
+> **STATUS: implemented (per-arm, sucker-seeking variant).** The build follows
+> this plan's memory + reward-hierarchy design, with one deliberate change the
+> user directed: exploration is **per-arm, not body-level**. Areas are marked
+> explored by the **suckers** (`Octopus.visit_counts`, incremented at each
+> sucker's cell each frame, `_mark_explored`). When an arm senses no prey, its
+> **tip reaches the least-explored cell within that arm's reach**
+> (`Limb._ilqr_explore_target`) at a gentle weight `w_explore` (a per-solve
+> terminal-reach weight in the arm's params tensor — one compiled controller,
+> no retrace). Arms coordinate implicitly through the shared map. Prey preempts
+> exploration; the threat repel is unchanged and always dominates. Config:
+> `octo_ilqr_explore_enabled` (default off), `octo_ilqr_w_explore` (0.5),
+> `octo_ilqr_explore_decay` (1.0). Tests: `tests/test_exploration.py`. The
+> §5 "single body-level target" below is superseded by the per-arm approach.
+
+
 Give the octopus a drive to **explore its environment**: track how much each grid
 cell has been visited and steer toward the cell (or region of cells) it has
 explored the least. Exploration is a **weak, lowest-priority** drive — it must
