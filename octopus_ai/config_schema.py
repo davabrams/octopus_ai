@@ -207,6 +207,9 @@ class OutputConfig:
     track_performance: bool = False  # time each sim step + report memory
                                      # stats, printed as a summary at run end
                                      # (octopus_ai/perf.PerfTracker)
+    record_run: bool = False  # write a DuckDB run file (SimRecorder)
+    record_ilqr_history: bool = False  # capture per-iteration iLQR history on
+                                       # each limb; off = zero overhead
 
 
 # -------------------------------------------------------------- datagen ---

@@ -1,30 +1,66 @@
 #!/usr/bin/env python3
+"""WebSocket server v2 for the Octopus AI record & replay analyzer.
+
+Two modes, one sim driver. The browser (`visualizer/analyzer.html`) either
+runs a fresh headless simulation and watches it record, or scrubs a saved run
+frame-by-frame (and iLQR iteration-by-iteration within a frame). The server
+never runs the simulation on its own event loop: a `simulate` hands off to
+`HeadlessRunner.run` on a worker thread (`asyncio.to_thread`) so socket I/O
+stays live during a multi-minute iLQR run, and playback queries go through a
+read-only `RunStore` (one `.duckdb` file per run, so completed runs read fine
+while another is being written).
+
+This replaces the v1 live-streaming protocol (D7): the old
+`config_update`/`simulation_control` messages now return `error code="gone"`.
+
+v2 WIRE PROTOCOL
+================
+Envelope both directions: ``{"type": str, "req_id": str?, "data": {...}}``.
+Every request gets exactly one terminal reply (its response or an ``error``),
+echoing ``req_id``. ``simulate_progress``/``simulate_complete`` are also
+broadcast to all clients. Floats are rounded to 4 decimals (D10). Enums
+serialize as their ``.name``.
+
+On connect::
+
+    {"type":"server_info","data":{"protocol":2,
+      "active_run": null | {"run_id":..,"frame":17,"num_frames":120},
+      "default_config": { config_to_flat(VIZ_ILQR) }}}
+
+Simulate::
+
+    -> {"type":"simulate","req_id":"a1","data":{
+         "num_frames":120, "config":{...flat overrides...},
+         "record_ilqr_history":true, "label":"baseline-120"}}
+    <- {"type":"simulate_started","req_id":"a1","data":{"run_id":..,
+         "num_frames":120,"config":{...merged...},"ignored_keys":[...],
+         "db_path":"logs/runs/<id>.duckdb"}}
+    <- {"type":"simulate_progress","data":{"run_id":..,"frame":17,
+         "num_frames":120,"visibility_score":..,"prey_captured":..,
+         "elapsed_s":..,"frame_ms":..}}                         (broadcast)
+    <- {"type":"simulate_complete","req_id":"a1","data":{"run_id":..,
+         "status":"complete|cancelled|failed","frames_recorded":121,
+         "elapsed_s":..,"error":null,"final_state":{...}}}      (broadcast)
+
+    -> {"type":"simulate_cancel","req_id":"a2","data":{}}
+    <- {"type":"simulate_cancel_ack","req_id":"a2","data":{"run_id":..}}
+
+Playback::
+
+    -> {"type":"list_runs"}          <- {"type":"runs_list","data":{"runs":[...]}}
+    -> {"type":"load_run","data":{"run_id":..}}
+                                     <- {"type":"run_meta","data":{...}}
+    -> {"type":"get_frame","data":{"run_id":..,"frame":42,"include_ilqr":true}}
+                                     <- {"type":"frame_data","data":{...}}
+    -> {"type":"get_frames","data":{"run_id":..,"start":0,"count":20}}
+                                     <- {"type":"frames_data","data":{...}}
+
+Errors (terminal reply for any failed request)::
+
+    {"type":"error","req_id":..,"data":{"code":..,"message":..,"detail":{}}}
+    codes: busy|not_running|unknown_run|run_in_progress|frame_out_of_range|
+           bad_request|sim_failed|gone|unknown_type
 """
-WebSocket server for Octopus AI visualization.
-
-Streams live simulation state as JSON to browser frontends
-(octopus-visualizer.html / octopus-ai-visualizer.tsx) at ~10 FPS on
-ws://localhost:8765, and accepts config-update and play/pause/reset
-control messages. The same port also serves the visualizer HTML page over
-plain HTTP, so opening http://localhost:8765/ in a browser loads the UI,
-which then upgrades to a WebSocket on the same port. No separate static
-file server is needed.
-
-Wire format (message type "simulation_state"):
-{
-  "background": [[0|1, ...], ...],              # y_len x x_len grid
-  "octopus": {
-    "head":    {"x": float, "y": float},
-    "limbs":   [[{"x": float, "y": float}, ...], ...],   # centerline points
-    "suckers": [{"x": float, "y": float,
-                 "color": float, "target_color": float}, ...],
-  },
-  "agents": [{"x": float, "y": float, "type": "prey"|"predator",
-              "velocity": float, "angle": float}, ...],
-  "metadata": {"iteration": int, "visibility_score": float, "fps": float},
-}
-"""
-
 import asyncio
 import http
 import json
@@ -33,426 +69,413 @@ import os
 import pathlib
 import sys
 import threading
-import time
+from dataclasses import replace
 
 # This lives in visualizer/ but imports top-level project modules; put the repo
-# root on sys.path so `python visualizer/websocket_server.py` works from the
-# repo root.
+# root on sys.path so `python visualizer/websocket_server.py` works.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from enum import Enum
 
 import websockets
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-from octopus_ai.config import (  # noqa: F401  (DEFAULT kept for convenience)
-    DEFAULT,
+from octopus_ai.config import (
     VIZ_ILQR,
     config_from_flat,
     config_to_flat,
+    json_default,
     print_config,
 )
-from simulator.agent_generator import AgentGenerator
-from simulator.octopus_generator import Octopus
-from simulator.simutil import AgentType, MLMode
-from simulator.surface_generator import RandomSurface
-from simulator.force_logger import ForceLogger
-from training.losses import (
-    ClampedTargetLoss,
-    ConstraintLoss,
-    DeltaColorLayer,
-)
-from training.models.model_loader import ModelLoader
+from simulator.headless_runner import HeadlessRunner
+from simulator.run_store import FrameOutOfRangeError, RunNotFoundError, RunStore
+from simulator.sim_recorder import DEFAULT_RUNS_DIR, new_run_id
+
+
+class BadRequestError(ValueError):
+    """A malformed request field; maps to error code 'bad_request'."""
+
+
+def merge_flat_overrides(flat: dict, overrides: dict):
+    """Apply browser overrides onto a flat config, coercing by baseline type.
+
+    Returns (merged, ignored_keys). Coercion mirrors the baseline value's type
+    INCLUDING Enum (member lookup by name, D14): a `{"octo_movement_mode":
+    "ILQR"}` override becomes MovementMode.ILQR, and an unknown member raises
+    BadRequestError rather than silently producing a Config holding the string.
+    Unknown keys are ignored (collected, not fatal).
+    """
+    merged = dict(flat)
+    ignored = []
+    for key, value in overrides.items():
+        if key not in flat:
+            ignored.append(key)
+            continue
+        current = flat[key]
+        try:
+            if isinstance(current, bool):
+                value = bool(value)
+            elif isinstance(current, Enum):
+                value = type(current)[value]  # by name; KeyError if unknown
+            elif isinstance(current, int):
+                value = int(value)
+            elif isinstance(current, float):
+                value = float(value)
+            # str / None: pass through unchanged
+        except (TypeError, ValueError, KeyError) as e:
+            raise BadRequestError(
+                f"bad value for {key!r}: {value!r}") from e
+        merged[key] = value
+    return merged, ignored
+
+
+class ActiveRun:
+    """In-flight simulate: cancel signal + progress mailbox + live frame."""
+
+    def __init__(self, run_id: str, num_frames: int):
+        self.run_id = run_id
+        self.num_frames = num_frames
+        self.frame = 0
+        self.cancel = threading.Event()
+        self.progress_q: asyncio.Queue = asyncio.Queue()
+        self.done = False
 
 
 class OctopusSimulationServer:
-    def __init__(self, port=8765):
+    # Factory seam: tests inject a fake runner without monkeypatching modules.
+    runner_factory = HeadlessRunner
+    HTML_PAGE = "analyzer.html"
+
+    def __init__(self, port=8765, runs_dir: str | None = None):
         self.port = port
         self.clients: set = set()
-        # The browser speaks a FLAT config (it sends {"x_len": 20, ...}), so
-        # keep a flat mirror for the wire protocol and a typed Config for
-        # everything internal. update_config() edits the mirror and rebuilds
-        # the Config from it.
-        #
-        # VIZ_ILQR is the same profile the matplotlib visualizer (octo_viz)
-        # uses, so both front ends show the same iLQR simulation.
         self.profile = VIZ_ILQR
-        self.config: dict = config_to_flat(self.profile)
-        self.cfg = self.profile
+        self.runs_dir = runs_dir or DEFAULT_RUNS_DIR
+        self.run_store = RunStore(self.runs_dir)
+        self._active: ActiveRun | None = None
+        self._dispatch = {
+            "simulate": self._h_simulate,
+            "simulate_cancel": self._h_simulate_cancel,
+            "list_runs": self._h_list_runs,
+            "load_run": self._h_load_run,
+            "get_frame": self._h_get_frame,
+            "get_frames": self._h_get_frames,
+        }
 
-        # Simulation state
-        self.is_running = False
-        self.iteration = 0
-        self.simulation_lock = threading.Lock()
+    # ---- send helpers ----------------------------------------------------
+    async def _send(self, ws, obj):
+        await ws.send(json.dumps(obj, default=json_default))
 
-        # Simulation components
-        self.surface = None
-        self.octopus = None
-        self.agent_generator = None
-        self.model = None
-        self.inference_mode = MLMode.NO_MODEL
-        self.visibility_score = 0.0
-        self.fps = 0.0
-
-        # Performance tracking
-        self.last_frame_time = time.time()
-
-        # Optional force logging (created lazily on first play so the run
-        # label reflects when it actually started). All DB access stays on
-        # the simulation-loop thread, matching SQLite's threading rules.
-        self.force_logger = None
-
-        self.setup_simulation()
-
-    def setup_simulation(self):
-        """Initialize the simulation with the current config."""
-        # Rebuild the typed config from the flat mirror the browser edits.
-        self.cfg = config_from_flat(self.config)
-
-        self.surface = RandomSurface(self.cfg)
-        self.octopus = Octopus(self.cfg)
-        self.agent_generator = AgentGenerator(self.cfg)
-        self.agent_generator.generate(num_agents=self.cfg.agents.count)
-
-        # Optional ML inference: fall back to the heuristic if no model
-        # can be loaded for the configured mode.
-        self.inference_mode = self.cfg.inference.mode
-        self.model = None
-        if self.inference_mode is not MLMode.NO_MODEL:
+    async def _broadcast(self, obj):
+        msg = json.dumps(obj, default=json_default)
+        dead = set()
+        for ws in self.clients:
             try:
-                self.model = ModelLoader(
-                    self.cfg.inference_model_path,
-                    custom_objects={
-                        "ConstraintLoss": ConstraintLoss,
-                        "ClampedTargetLoss": ClampedTargetLoss,
-                        "DeltaColorLayer": DeltaColorLayer,
-                    },
-                ).get_object()
-            except Exception as e:
-                logging.warning(
-                    "Could not load model for %s (%s); "
-                    "falling back to heuristic",
-                    self.inference_mode, e,
-                )
-                self.inference_mode = MLMode.NO_MODEL
+                await ws.send(msg)
+            except websockets.exceptions.ConnectionClosed:
+                dead.add(ws)
+        self.clients -= dead
 
-        # Initial camouflage pass so suckers start matched-ish
-        self.octopus.set_color(self.surface)
-        self.calculate_visibility_score()
+    async def _error(self, ws, req_id, code, message, detail=None):
+        await self._send(ws, {"type": "error", "req_id": req_id,
+                              "data": {"code": code, "message": message,
+                                       "detail": detail or {}}})
 
-    def calculate_visibility_score(self):
-        """Mean squared color error across all suckers (lower = hidden)."""
-        try:
-            self.visibility_score = float(
-                self.octopus.visibility(self.surface)
-            )
-        except Exception as e:
-            logging.error("Error calculating visibility score: %s", e)
-            self.visibility_score = 0.0
+    def _server_info(self):
+        active = None
+        if self._active is not None:
+            active = {"run_id": self._active.run_id,
+                      "frame": self._active.frame,
+                      "num_frames": self._active.num_frames}
+        return {"type": "server_info",
+                "data": {"protocol": 2, "active_run": active,
+                         "default_config": config_to_flat(self.profile)}}
 
-    def get_simulation_state(self):
-        """Get current simulation state as a JSON-serializable dict."""
-        try:
-            current_time = time.time()
-            frame_time = current_time - self.last_frame_time
-            self.fps = 1.0 / frame_time if frame_time > 0 else 0.0
-            self.last_frame_time = current_time
-
-            limbs = []
-            suckers = []
-            for limb in self.octopus.limbs:
-                limbs.append(
-                    [{"x": float(pt.x), "y": float(pt.y)}
-                     for pt in limb.center_line]
-                )
-                for s in limb.suckers:
-                    target = s.get_surf_color_at_this_sucker(self.surface)
-                    suckers.append({
-                        "x": float(s.x),
-                        "y": float(s.y),
-                        # RGB triples in [0, 1]; grayscale surfaces have r=g=b.
-                        "color": [float(s.c.r), float(s.c.g), float(s.c.b)],
-                        "target_color": [float(target.r), float(target.g),
-                                         float(target.b)],
-                    })
-
-            agents = [
-                {
-                    "x": float(agent.x),
-                    "y": float(agent.y),
-                    "type": (
-                        "prey"
-                        if agent.agent_type == AgentType.PREY
-                        else "predator"
-                    ),
-                    "velocity": float(agent.vx),
-                    "angle": float(agent.t),
-                }
-                for agent in self.agent_generator.agents
-            ]
-
-            return {
-                "background": self.surface.grid.tolist(),
-                "octopus": {
-                    "head": {
-                        "x": float(self.octopus.x),
-                        "y": float(self.octopus.y),
-                    },
-                    "limbs": limbs,
-                    "suckers": suckers,
-                },
-                "agents": agents,
-                "metadata": {
-                    "iteration": self.iteration,
-                    "visibility_score": float(self.visibility_score),
-                    "fps": float(self.fps),
-                    "prey_captured": int(
-                        self.agent_generator.prey_captured),
-                },
-            }
-        except Exception as e:
-            logging.error("Error getting simulation state: %s", e)
-            return {"error": str(e)}
-
-    def update_config(self, new_config):
-        """Update simulation configuration (dict keys) and rebuild."""
-        with self.simulation_lock:
-            for key, value in new_config.items():
-                if key not in self.config:
-                    logging.warning("Ignoring unknown config key: %s", key)
-                    continue
-                current = self.config[key]
-                # Coerce JSON numbers/bools to the existing value's type so
-                # e.g. x_len stays an int
-                try:
-                    if isinstance(current, bool):
-                        value = bool(value)
-                    elif isinstance(current, int):
-                        value = int(value)
-                    elif isinstance(current, float):
-                        value = float(value)
-                except (TypeError, ValueError):
-                    logging.warning(
-                        "Ignoring config value for %s: %r", key, value
-                    )
-                    continue
-                self.config[key] = value
-            self.setup_simulation()
-            self.iteration = 0
-
-    def simulation_step(self):
-        """Perform one simulation step."""
-        try:
-            with self.simulation_lock:
-                self.agent_generator.increment_all(self.octopus)
-                self.octopus.move(self.agent_generator)
-                self.agent_generator.remove_captured_prey(self.octopus)
-                self.octopus.set_color(
-                    self.surface, self.inference_mode, self.model
-                )
-                self.calculate_visibility_score()
-
-                self.iteration += 1
-
-                if self.cfg.output.log_forces:
-                    if self.force_logger is None:
-                        self.force_logger = ForceLogger(
-                            run_label="websocket_server", config=self.cfg)
-                    self.force_logger.log_frame(self.iteration, self.octopus)
-
-                max_iterations = self.cfg.run.num_iterations
-                if max_iterations > 0 and self.iteration >= max_iterations:
-                    self.is_running = False
-
-        except Exception as e:
-            logging.error("Error in simulation step: %s", e)
-
-    async def simulation_loop(self):
-        """Main simulation loop (runs regardless; steps only when playing)."""
-        while True:
-            if self.is_running:
-                self.simulation_step()
-
-                if self.clients:
-                    state = self.get_simulation_state()
-                    message = {"type": "simulation_state", "data": state}
-
-                    disconnected = set()
-                    for client in self.clients:
-                        try:
-                            await client.send(json.dumps(message))
-                        except websockets.exceptions.ConnectionClosed:
-                            disconnected.add(client)
-
-                    self.clients -= disconnected
-
-            await asyncio.sleep(0.1)  # 10 FPS
-
-    def start_simulation(self):
-        """Start the simulation."""
-        self.is_running = True
-
-    def stop_simulation(self):
-        """Stop the simulation."""
-        self.is_running = False
-
-    def reset_simulation(self):
-        """Reset the simulation."""
-        with self.simulation_lock:
-            self.iteration = 0
-            if self.force_logger is not None:
-                self.force_logger.close()
-                self.force_logger = None
-            self.setup_simulation()
-
+    # ---- connection ------------------------------------------------------
     async def handle_client(self, websocket):
-        """Handle a new WebSocket client connection.
-
-        websockets >= 13 passes only the connection object (no path arg).
-        """
         logging.info("Client connected: %s", websocket.remote_address)
         self.clients.add(websocket)
-
         try:
-            initial_state = self.get_simulation_state()
-            await websocket.send(
-                json.dumps({"type": "simulation_state", "data": initial_state})
-            )
-
+            await self._send(websocket, self._server_info())
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    await self.handle_message(websocket, data)
                 except json.JSONDecodeError:
                     logging.warning("Invalid JSON received: %s", message)
-                except Exception as e:
-                    logging.error("Error handling message: %s", e)
-
+                    continue
+                try:
+                    await self.handle_message(websocket, data)
+                except Exception as e:  # never let one message kill the socket
+                    logging.exception("Error handling message: %s", e)
         except websockets.exceptions.ConnectionClosed:
-            logging.info(
-                "Client disconnected: %s", websocket.remote_address
-            )
+            logging.info("Client disconnected: %s", websocket.remote_address)
         finally:
             self.clients.discard(websocket)
 
     async def handle_message(self, websocket, data):
-        """Handle incoming WebSocket messages."""
-        message_type = data.get("type")
-        message_data = data.get("data", {})
+        mtype = data.get("type")
+        req_id = data.get("req_id")
+        mdata = data.get("data", {}) or {}
+        if mtype in ("config_update", "simulation_control"):
+            await self._error(websocket, req_id, "gone",
+                              f"{mtype} was removed in protocol 2; use the "
+                              "simulate/playback messages instead")
+            return
+        handler = self._dispatch.get(mtype)
+        if handler is None:
+            await self._error(websocket, req_id, "unknown_type",
+                              f"unknown message type: {mtype!r}")
+            return
+        await handler(websocket, req_id, mdata)
 
-        if message_type == "config_update":
-            self.update_config(message_data)
-            await websocket.send(
-                json.dumps(
-                    {"type": "config_response", "data": {"status": "updated"}}
-                )
-            )
+    # ---- simulate --------------------------------------------------------
+    async def _h_simulate(self, ws, req_id, data):
+        if self._active is not None:
+            await self._error(ws, req_id, "busy",
+                              "a simulation is already running")
+            return
 
-        elif message_type == "simulation_control":
-            action = message_data.get("action")
+        num_frames = data.get("num_frames", self.profile.run.num_iterations)
+        if (not isinstance(num_frames, int) or isinstance(num_frames, bool)
+                or not (1 <= num_frames <= 10000)):
+            await self._error(ws, req_id, "bad_request",
+                              "num_frames must be an int in [1, 10000]")
+            return
 
-            if action == "play":
-                self.start_simulation()
-            elif action == "pause":
-                self.stop_simulation()
-            elif action == "reset":
-                self.reset_simulation()
+        try:
+            merged, ignored = merge_flat_overrides(
+                config_to_flat(self.profile), data.get("config", {}) or {})
+        except BadRequestError as e:
+            await self._error(ws, req_id, "bad_request", str(e))
+            return
 
-            await websocket.send(
-                json.dumps(
-                    {
-                        "type": "simulation_control_response",
-                        "data": {"action": action, "status": "completed"},
-                    }
-                )
-            )
+        cfg = config_from_flat(merged)
+        cfg = replace(
+            cfg,
+            run=replace(cfg.run, num_iterations=num_frames),
+            output=replace(cfg.output, record_run=True,
+                           record_ilqr_history=data.get(
+                               "record_ilqr_history", True)))
 
-        else:
-            logging.warning("Unknown message type: %s", message_type)
+        run_id = new_run_id()
+        label = str(data.get("label", ""))
+        db_path = os.path.join(self.runs_dir, f"{run_id}.duckdb")
+        runner = self.runner_factory(cfg, run_id=run_id, label=label,
+                                     db_path=db_path)
+        active = ActiveRun(run_id, num_frames)
+        self._active = active
 
-    # Path (relative to this file) of the browser UI served over HTTP.
-    HTML_PAGE = "octopus-visualizer.html"
+        # Echo the FINAL flat config (record_run forced on, num_iterations set)
+        # so the client sees exactly what will be recorded.
+        await self._send(ws, {
+            "type": "simulate_started", "req_id": req_id,
+            "data": {"run_id": run_id, "num_frames": num_frames,
+                     "config": config_to_flat(cfg), "ignored_keys": ignored,
+                     "db_path": db_path}})
 
+        loop = asyncio.get_running_loop()
+
+        def progress_cb(info):
+            loop.call_soon_threadsafe(active.progress_q.put_nowait, info)
+
+        drain = asyncio.create_task(self._drain_progress(active))
+        status, error, summary = "complete", None, None
+        try:
+            summary = await asyncio.to_thread(
+                runner.run, progress_cb, active.cancel.is_set)
+            status = summary.status
+        except Exception as e:
+            status = "failed"
+            error = str(e)
+            logging.exception("simulate run failed: %s", e)
+        finally:
+            active.done = True
+            await drain
+            self._active = None
+
+        frames_recorded = summary.frames_recorded if summary else 0
+        elapsed = summary.elapsed_s if summary else 0.0
+        final_state = {}
+        if status != "failed" and frames_recorded > 0:
+            try:
+                final_state = self.run_store.get_frame(
+                    run_id, frames_recorded - 1)["state"]
+            except Exception as e:  # read-back is best-effort
+                logging.warning("could not read final_state: %s", e)
+
+        await self._broadcast({
+            "type": "simulate_complete", "req_id": req_id,
+            "data": {"run_id": run_id, "status": status,
+                     "frames_recorded": frames_recorded,
+                     "elapsed_s": round(elapsed, 4), "error": error,
+                     "final_state": final_state}})
+
+    async def _drain_progress(self, active: ActiveRun):
+        """Broadcast progress, coalescing (latest wins) so a slow client can
+        never back-pressure the sim thread."""
+        while not (active.done and active.progress_q.empty()):
+            try:
+                info = await asyncio.wait_for(active.progress_q.get(),
+                                              timeout=0.02)
+            except asyncio.TimeoutError:
+                continue
+            while not active.progress_q.empty():  # coalesce
+                info = active.progress_q.get_nowait()
+            active.frame = int(info.get("frame", active.frame))
+            await self._broadcast({
+                "type": "simulate_progress",
+                "data": {"run_id": active.run_id,
+                         "frame": info["frame"],
+                         "num_frames": info["num_frames"],
+                         "visibility_score": round(
+                             info["visibility_score"], 4),
+                         "prey_captured": info["prey_captured"],
+                         "elapsed_s": round(info["elapsed_s"], 4),
+                         "frame_ms": round(info["frame_ms"], 4)}})
+
+    async def _h_simulate_cancel(self, ws, req_id, data):
+        if self._active is None:
+            await self._error(ws, req_id, "not_running",
+                              "no simulation is running")
+            return
+        self._active.cancel.set()
+        await self._send(ws, {"type": "simulate_cancel_ack", "req_id": req_id,
+                              "data": {"run_id": self._active.run_id}})
+
+    # ---- playback --------------------------------------------------------
+    async def _h_list_runs(self, ws, req_id, data):
+        active_id = self._active.run_id if self._active else None
+        runs = await asyncio.to_thread(self.run_store.list_runs, active_id)
+        if self._active is not None:  # synthesize the active row (file locked)
+            runs.insert(0, {
+                "run_id": self._active.run_id, "label": "",
+                "started_at": "", "status": "running",
+                "frames_recorded": self._active.frame + 1,
+                "has_ilqr_history": self.profile.output.record_ilqr_history,
+                "config_summary": {
+                    "x_len": self.profile.world.x_len,
+                    "y_len": self.profile.world.y_len,
+                    "octo_num_arms": self.profile.octopus.num_arms,
+                    "octo_movement_mode":
+                        self.profile.octopus.movement_mode.name,
+                    "inference_mode": self.profile.inference.mode.name}})
+        await self._send(ws, {"type": "runs_list", "req_id": req_id,
+                              "data": {"runs": runs}})
+
+    async def _h_load_run(self, ws, req_id, data):
+        run_id = data.get("run_id")
+        if self._active is not None and run_id == self._active.run_id:
+            await self._error(ws, req_id, "run_in_progress",
+                              "run is still being recorded")
+            return
+        try:
+            meta = await asyncio.to_thread(self.run_store.run_meta, run_id)
+        except RunNotFoundError:
+            await self._error(ws, req_id, "unknown_run",
+                              f"no such run: {run_id}")
+            return
+        await self._send(ws, {"type": "run_meta", "req_id": req_id,
+                              "data": meta})
+
+    async def _h_get_frame(self, ws, req_id, data):
+        run_id = data.get("run_id")
+        frame = data.get("frame")
+        include_ilqr = bool(data.get("include_ilqr", False))
+        if self._active is not None and run_id == self._active.run_id:
+            await self._error(ws, req_id, "run_in_progress",
+                              "run is still being recorded")
+            return
+        if not isinstance(frame, int) or isinstance(frame, bool):
+            await self._error(ws, req_id, "bad_request",
+                              "frame must be an int")
+            return
+        try:
+            result = await asyncio.to_thread(
+                self.run_store.get_frame, run_id, frame, include_ilqr)
+        except RunNotFoundError:
+            await self._error(ws, req_id, "unknown_run",
+                              f"no such run: {run_id}")
+            return
+        except FrameOutOfRangeError as e:
+            await self._error(ws, req_id, "frame_out_of_range",
+                              str(e), {"max_frame": e.max_frame})
+            return
+        await self._send(ws, {"type": "frame_data", "req_id": req_id,
+                              "data": result})
+
+    async def _h_get_frames(self, ws, req_id, data):
+        run_id = data.get("run_id")
+        start = data.get("start", 0)
+        count = data.get("count", 20)
+        if self._active is not None and run_id == self._active.run_id:
+            await self._error(ws, req_id, "run_in_progress",
+                              "run is still being recorded")
+            return
+        if (not isinstance(start, int) or isinstance(start, bool)
+                or not isinstance(count, int) or isinstance(count, bool)
+                or count < 1):
+            await self._error(ws, req_id, "bad_request",
+                              "start/count must be ints, count >= 1")
+            return
+        try:
+            result = await asyncio.to_thread(
+                self.run_store.get_frames, run_id, start, count)
+        except RunNotFoundError:
+            await self._error(ws, req_id, "unknown_run",
+                              f"no such run: {run_id}")
+            return
+        except FrameOutOfRangeError as e:
+            await self._error(ws, req_id, "frame_out_of_range",
+                              str(e), {"max_frame": e.max_frame})
+            return
+        await self._send(ws, {"type": "frames_data", "req_id": req_id,
+                              "data": result})
+
+    # ---- HTTP page serving (unchanged in P4; flip is P5) -----------------
     def _read_html_page(self):
-        """Return (body_bytes, content_type) for the visualizer page."""
         page_path = pathlib.Path(__file__).parent / self.HTML_PAGE
         try:
-            body = page_path.read_bytes()
-            return body, "text/html; charset=utf-8"
+            return page_path.read_bytes(), "text/html; charset=utf-8"
         except FileNotFoundError:
-            msg = (
-                f"Visualizer page not found: {self.HTML_PAGE}. "
-                "Expected it next to websocket_server.py."
-            ).encode()
+            msg = (f"Visualizer page not found: {self.HTML_PAGE}.").encode()
             return msg, "text/plain; charset=utf-8"
 
     def process_request(self, connection, request):
-        """Serve the UI over HTTP; let WebSocket upgrades pass through.
-
-        websockets calls this for every incoming request before the
-        handshake. Returning a Response short-circuits it (plain HTTP);
-        returning None lets the WebSocket upgrade proceed. We detect the
-        upgrade via the Connection/Upgrade headers so a normal browser
-        navigation to http://localhost:8765/ gets the page instead of the
-        "you need a WebSocket client" error.
-        """
         headers = request.headers
-        connection_hdr = headers.get("Upgrade", "")
-        if connection_hdr.lower() == "websocket":
+        if headers.get("Upgrade", "").lower() == "websocket":
             return None  # proceed with the WebSocket handshake
-
-        if request.path in ("/", "/index.html", "/" + self.HTML_PAGE):
+        if request.path in ("/", "/index.html", "/" + self.HTML_PAGE,
+                            "/octopus-visualizer.html"):
             body, content_type = self._read_html_page()
-            status = (
-                http.HTTPStatus.OK
-                if content_type.startswith("text/html")
-                else http.HTTPStatus.NOT_FOUND
-            )
+            status = (http.HTTPStatus.OK if content_type.startswith("text/html")
+                      else http.HTTPStatus.NOT_FOUND)
             resp_headers = Headers({
                 "Content-Type": content_type,
                 "Content-Length": str(len(body)),
-                "Cache-Control": "no-store",
-            })
+                "Cache-Control": "no-store"})
             return Response(status.value, status.phrase, resp_headers, body)
-
-        body = b"Not found. Open http://localhost:%d/ for the visualizer." \
-            % self.port
-        resp_headers = Headers({
-            "Content-Type": "text/plain; charset=utf-8",
-            "Content-Length": str(len(body)),
-        })
-        return Response(
-            http.HTTPStatus.NOT_FOUND.value,
-            http.HTTPStatus.NOT_FOUND.phrase,
-            resp_headers,
-            body,
-        )
+        body = (b"Not found. Open http://localhost:%d/ for the analyzer."
+                % self.port)
+        resp_headers = Headers({"Content-Type": "text/plain; charset=utf-8",
+                                "Content-Length": str(len(body))})
+        return Response(http.HTTPStatus.NOT_FOUND.value,
+                        http.HTTPStatus.NOT_FOUND.phrase, resp_headers, body)
 
     async def start_server(self):
-        """Start the WebSocket server."""
-        print(f"Starting Octopus AI WebSocket server on port {self.port}")
-        print_config(self.cfg, "websocket_server CONFIG")
-
-        asyncio.create_task(self.simulation_loop())
-
-        async with websockets.serve(
-            self.handle_client,
-            "localhost",
-            self.port,
-            process_request=self.process_request,
-        ):
-            print(
-                f"Open the visualizer at http://localhost:{self.port}/  "
-                f"(WebSocket on ws://localhost:{self.port})"
-            )
+        print(f"Starting Octopus AI analyzer server on port {self.port}")
+        print_config(self.profile, "websocket_server CONFIG")
+        async with websockets.serve(self.handle_client, "localhost",
+                                    self.port,
+                                    process_request=self.process_request):
+            print(f"Open the analyzer at http://localhost:{self.port}/  "
+                  f"(WebSocket on ws://localhost:{self.port})")
             await asyncio.Future()
 
 
 def main():
-    """Main entry point"""
     logging.basicConfig(level=logging.INFO)
-
     server = OctopusSimulationServer(port=8765)
-
     try:
         asyncio.run(server.start_server())
     except KeyboardInterrupt:

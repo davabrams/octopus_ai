@@ -8,13 +8,14 @@ from dataclasses import FrozenInstanceError, replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from octopus_ai.config_schema import Config, OutputConfig
 from octopus_ai.config import (
     DATAGEN,
     DEBUG,
     DEFAULT,
+    RECORD,
     TEST,
     VIZ,
+    config_from_flat,
     config_to_flat,
     default_models,
 )
@@ -142,7 +143,7 @@ class TestFlatViewParity(unittest.TestCase):
     must stay complete: a key that silently stops being emitted is a knob
     the UI can no longer set."""
 
-    EXPECTED_FLAT_KEYS = 58
+    EXPECTED_FLAT_KEYS = 60
 
     def test_flat_view_key_count(self):
         self.assertEqual(len(config_to_flat(DEFAULT)),
@@ -164,6 +165,42 @@ class TestFlatViewParity(unittest.TestCase):
         flat = config_to_flat(cfg)
         self.assertEqual(flat['octo_chain_spring_k'], 4.2)
         self.assertEqual(flat['octo_arm_stiffness'], 1.5)
+
+
+class TestRecordFlags(unittest.TestCase):
+    """The two record/replay flags (Phase 0 of the record & replay plan)."""
+
+    def test_default_and_test_keep_both_off(self):
+        for profile in (DEFAULT, TEST):
+            self.assertFalse(profile.output.record_run)
+            self.assertFalse(profile.output.record_ilqr_history)
+
+    def test_record_profile_turns_both_on(self):
+        self.assertTrue(RECORD.output.record_run)
+        self.assertTrue(RECORD.output.record_ilqr_history)
+        # Force arrows off — headless, no matplotlib window.
+        self.assertFalse(RECORD.output.show_forces)
+        # Inherits the iLQR simulation from VIZ_ILQR.
+        self.assertEqual(RECORD.octopus.movement_mode, MovementMode.ILQR)
+
+    def test_flat_round_trip_of_both_keys(self):
+        cfg = replace(
+            DEFAULT,
+            output=replace(DEFAULT.output, record_run=True,
+                           record_ilqr_history=True),
+        )
+        flat = config_to_flat(cfg)
+        self.assertTrue(flat['record_run'])
+        self.assertTrue(flat['record_ilqr_history'])
+        back = config_from_flat(flat)
+        self.assertTrue(back.output.record_run)
+        self.assertTrue(back.output.record_ilqr_history)
+
+    def test_make_config_accepts_record_keys(self):
+        from helpers import make_config
+        cfg = make_config(record_run=True, record_ilqr_history=True)
+        self.assertTrue(cfg.output.record_run)
+        self.assertTrue(cfg.output.record_ilqr_history)
 
 
 if __name__ == '__main__':

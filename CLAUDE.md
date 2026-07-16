@@ -30,7 +30,7 @@ frontends.
 - **Visualization:** matplotlib (local) and WebSocket server + HTML/React
   frontends
 - **Key Libraries:** numpy, tensorflow, matplotlib, seaborn, websockets (≥13
-  single-arg handler API), flask, networkx
+  single-arg handler API), flask, networkx, duckdb (record & replay storage)
 
 ## Project Structure (abridged — full map in ARCHITECTURE.md §2)
 
@@ -42,12 +42,22 @@ octopus_ai/                  # repo root
 │   ├── util.py             # erase_all_logs, octo_norm + re-exports from training.data_utils
 │   ├── datagen.py          # OctoDatagen class + standalone pickle-writing main
 │   └── model.py            # datagen → train → save → inference/eval pipeline
-├── visualizer/             # matplotlib viz (octo_viz.py) + browser viz (websocket_server.py, HTML/React frontends)
-├── simulator/              # simutil (State/Agent/Color/enums), octopus/agent/surface generators, ilqr/
+├── visualizer/             # matplotlib viz (octo_viz.py) + browser analyzer (websocket_server.py v2 protocol + analyzer.html)
+├── simulator/              # simutil, octopus/agent/surface generators, ilqr/, record & replay (sim_recorder/headless_runner/run_store)
 ├── training/               # trainers (sucker, limb), losses, loaders, data_utils, saved .keras models
 ├── inference_server/       # Flask REST server (localhost:8080), job queue + watchdog
-└── tests/                  # pytest suite (~2,400 lines; 136 tests)
+├── logs/runs/              # recorded runs, one <run_id>.duckdb per run (gitignored)
+└── tests/                  # pytest suite
 ```
+
+**Record & replay** (RECORD_REPLAY_PLAN.md): `simulator/headless_runner.py`
+steps a headless sim and writes one `logs/runs/<run_id>.duckdb` per run via
+`simulator/sim_recorder.py` (positions, before/after camouflage colors, iLQR
+costs, and full per-iteration iLQR trajectories). `simulator/run_store.py` is
+the read-only query layer. `visualizer/analyzer.html` is the browser analyzer
+(Simulate + Playback) served by the rewritten `websocket_server.py` (v2
+protocol; the old live-streaming `octopus-visualizer.html` is gone, its URL now
+serves the analyzer).
 
 ## Configuration — IMPORTANT
 
@@ -71,6 +81,7 @@ state:
 | `TEST` | deterministic, side-effect free, needs no model on disk |
 | `TRAINING` | the training pipeline; `model.py` selects it |
 | `DATAGEN` | data generation. Defined and tested, but nothing selects it yet — `datagen.py`'s `__main__` still hand-builds a flat dict |
+| `RECORD` | headless record & replay: VIZ_ILQR + `record_run` and `record_ilqr_history` on, force arrows off; `headless_runner.py` selects it |
 
 Derive a variant with `dataclasses.replace()` — configs are frozen, so
 in-place mutation raises:
@@ -160,7 +171,10 @@ python octopus_ai/model.py          # or: bazel run //octopus_ai:model
 # Inference server (localhost:8080; API in ARCHITECTURE.md §7)
 bazel run //inference_server:server        # or: cd inference_server && python server.py
 
-# WebSocket visualization server (then open visualizer/octopus-visualizer.html in a browser)
+# Headless record & replay: step N frames, write logs/runs/<run_id>.duckdb
+python simulator/headless_runner.py --frames 120   # or: bazel run //simulator:headless_runner_bin -- --frames 120
+
+# Analyzer server (Simulate + Playback), then open http://localhost:8765/ in a browser
 bazel run //visualizer:websocket_server  # or: python visualizer/websocket_server.py; ws://localhost:8765
 ```
 
@@ -255,3 +269,12 @@ unused imports); clean opportunistically, don't let it block work.
 8. `training/models/` contains a stray backup file literally named
    `sucker.keras has pretty good results` — it's a Dec 2023 model, not
    docs. Safe to delete or rename.
+9. Record & replay: `output.record_run` / `output.record_ilqr_history`
+   **default off** (a fresh checkout writes no databases). DuckDB is
+   single-writer-per-file, which is why there is one `.duckdb` per run — a
+   completed run stays readable (server playback and external `duckdb`/pandas)
+   while another run is being recorded. `run_store.py` opens each run
+   read-only; the server never opens the *active* run's file (it's write-locked
+   by the recorder), synthesizing that row from memory instead. Enabling
+   `record_ilqr_history` has zero overhead when off but is the bulk of a run's
+   disk (~20 MB at 120 frames vs ~2–3 MB without).

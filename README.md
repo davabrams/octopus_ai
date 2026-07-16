@@ -147,15 +147,21 @@ number is the **visibility score** (mean squared color error — lower =
 better camouflage). Pick the profile via `CFG` at the top of the file
 (`VIZ` for arrows, `DEBUG` to also record a video).
 
-### Visualize (browser)
+### Record & replay (browser analyzer)
 
 ```bash
+# 1) optionally record a run headlessly (writes logs/runs/<run_id>.duckdb)
+python simulator/headless_runner.py --frames 120
+
+# 2) launch the analyzer server, then open http://localhost:8765/ in a browser
 bazel run //visualizer:websocket_server    # or: python visualizer/websocket_server.py
-# then open visualizer/octopus-visualizer.html and click Connect  (ws://localhost:8765)
 ```
 
-The browser UI has live config sliders (it speaks the flat config form), so
-this is the easiest way to poke at parameters without editing code.
+The browser analyzer has two modes: **Simulate** runs a fresh headless sim and
+watches it record, and **Playback** scrubs a saved run frame-by-frame — and,
+for iLQR runs, iteration-by-iteration within a frame (ghost horizon poses, cost
+curves, before/after camouflage colors). Runs are stored one DuckDB file each
+under `logs/runs/` and are also queryable directly with `duckdb`/pandas.
 
 ### Generate training data
 
@@ -249,12 +255,14 @@ make format     # ruff format .
 
 ## Current limitations
 
-- Only `MovementMode.RANDOM` is implemented; the attract/repel / spring
-  movement modes are stubbed.
+- Four limb movement modes work (`RANDOM`, `LUMPED_SPRING`, `SPRING_CHAIN`,
+  `ILQR`); octopus/agent body movement is `RANDOM`/`REACTIVE` only.
 - The `LIMB` training pipeline is experimental; `SUCKER` is the solid path.
 - `MLMode.FULL` is a placeholder — no model, dataset, or trainer yet.
 - Inference always runs locally; the inference server exists but nothing
   routes the simulator to it automatically.
+- The analyzer frontend loads React/Babel/Tailwind from a CDN, so it needs
+  internet on first load; vendoring is a known follow-up.
 
 ## Going deeper
 

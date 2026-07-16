@@ -69,6 +69,23 @@ py_test(
 )
 
 py_test(
+    name = "test_ilqr",
+    srcs = [
+        "helpers.py",
+        "test_ilqr.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+        "//simulator/ilqr:arm",
+        "//simulator/ilqr:solver",
+    ],
+)
+
+py_test(
     name = "test_trainers",
     srcs = [
         "helpers.py",
@@ -133,7 +150,10 @@ py_test(
 
 py_test(
     name = "test_config_schema",
-    srcs = ["test_config_schema.py"],
+    srcs = [
+        "helpers.py",
+        "test_config_schema.py",
+    ],
     imports = ["."],
     visibility = ["//visibility:public"],
     deps = [
@@ -167,6 +187,79 @@ py_test(
     deps = [
         "//simulator:frame_recorder",
     ],
+)
+
+py_test(
+    name = "test_sim_recorder",
+    srcs = [
+        "helpers.py",
+        "test_sim_recorder.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:agent_generator",
+        "//simulator:octopus_generator",
+        "//simulator:sim_recorder",
+        "//simulator:simutil",
+        "//simulator:surface_generator",
+    ],
+)
+
+py_test(
+    name = "test_headless_runner",
+    srcs = [
+        "helpers.py",
+        "test_headless_runner.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:headless_runner",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+    ],
+)
+
+py_test(
+    name = "test_websocket_protocol",
+    srcs = ["test_websocket_protocol.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:headless_runner",
+        "//simulator:simutil",
+        "//visualizer:websocket_server_lib",
+    ],
+)
+
+py_test(
+    name = "test_record_playback",
+    srcs = [
+        "helpers.py",
+        "test_record_playback.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:headless_runner",
+        "//simulator:simutil",
+        "//visualizer:websocket_server_lib",
+    ],
+)
+
+# Node-based analyzer core-logic tests (node run skipped if node is missing in
+# the sandbox; the static HTML checks always run). analyzer.html is a data dep.
+py_test(
+    name = "test_analyzer_core",
+    srcs = ["test_analyzer_core.py"],
+    data = ["//visualizer:analyzer.html"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
 )
 
 py_test(

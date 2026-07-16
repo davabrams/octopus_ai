@@ -1,0 +1,783 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Octopus AI — Record &amp; Replay Analyzer</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { background: #0b0f14; color: #d7dee6; overflow-x: hidden; }
+  canvas { image-rendering: pixelcrisp; image-rendering: crisp-edges; }
+  .swatch { width: 18px; height: 18px; border: 1px solid #333; display: inline-block;
+            vertical-align: middle; border-radius: 3px; }
+  input[type=range] { accent-color: #38bdf8; }
+  kbd { background:#1e293b; border:1px solid #334155; border-radius:3px;
+        padding:0 4px; font-size:11px; }
+</style>
+
+<!-- ================================================================= -->
+<!-- Plain-JS core: pure functions, no JSX, no React. Attached to      -->
+<!-- window.AnalyzerCore so they can be unit-tested under node without  -->
+<!-- a JS toolchain (tests/test_analyzer_core.py).                      -->
+<!-- ================================================================= -->
+<script id="analyzer-core">
+(function () {
+  "use strict";
+
+  function to255(v) {
+    return Math.round(Math.max(0, Math.min(1, v)) * 255);
+  }
+
+  // A color may be an [r,g,b] triple or a scalar (grayscale). Normalize to a
+  // triple with tolerance for either form.
+  function asTriple(c) {
+    if (Array.isArray(c)) return [c[0], c[1], c[2]];
+    return [c, c, c];
+  }
+
+  // A tiny LRU keyed by any value. get() refreshes recency; set() evicts the
+  // least-recently-used once over capacity.
+  function makeLru(cap) {
+    const map = new Map();
+    return {
+      has: (k) => map.has(k),
+      get: (k) => {
+        if (!map.has(k)) return undefined;
+        const v = map.get(k);
+        map.delete(k);
+        map.set(k, v);
+        return v;
+      },
+      set: (k, v) => {
+        if (map.has(k)) map.delete(k);
+        map.set(k, v);
+        while (map.size > cap) map.delete(map.keys().next().value);
+      },
+      get size() { return map.size; },
+      keys: () => Array.from(map.keys()),
+    };
+  }
+
+  // Which frame indices to fetch around `current`, windowed and clamped to
+  // [0, maxFrame], skipping any the caller already has (hasFn). Ahead-heavy.
+  function prefetchPlan(current, maxFrame, ahead, behind, hasFn) {
+    const want = [];
+    for (let f = current - behind; f <= current + ahead; f++) {
+      if (f < 0 || f > maxFrame) continue;
+      if (hasFn && hasFn(f)) continue;
+      want.push(f);
+    }
+    // Nearest-first so the visible frame's neighbours load soonest.
+    want.sort((a, b) => Math.abs(a - current) - Math.abs(b - current));
+    return want;
+  }
+
+  // The server sends each iteration's trajectory as nested per-step free-node
+  // lists ([[[x,y],...nfree],...steps]); this ONLY prepends the base point to
+  // each step's chain (no pairing/reshape — RunStore already reshaped).
+  function chainsWithBase(trajectory, base) {
+    if (!trajectory) return [];
+    return trajectory.map((step) => {
+      const chain = [[base.x, base.y]];
+      for (const node of step) chain.push([node[0], node[1]]);
+      return chain;
+    });
+  }
+
+  // Index of the sucker nearest world-coords (wx, wy), or -1 if none.
+  function nearestSucker(suckers, wx, wy, maxDist) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < suckers.length; i++) {
+      const s = suckers[i];
+      const d = (s.x - wx) * (s.x - wx) + (s.y - wy) * (s.y - wy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (maxDist != null && bestD > maxDist * maxDist) return -1;
+    return best;
+  }
+
+  // Sum of squared per-channel deltas for a sucker (range [0, 3]).
+  function colorErrorStats(before, after, target) {
+    const b = asTriple(before), a = asTriple(after), t = asTriple(target);
+    const sq = (x, y) => (x - y) * (x - y);
+    return {
+      errBefore: sq(b[0], t[0]) + sq(b[1], t[1]) + sq(b[2], t[2]),
+      errAfter: sq(a[0], t[0]) + sq(a[1], t[1]) + sq(a[2], t[2]),
+    };
+  }
+
+  function clampIdx(i, n) {
+    if (n <= 0) return 0;
+    return Math.max(0, Math.min(n - 1, i));
+  }
+
+  // Next playback index. Advances by `step` (>=1), stops (returns maxFrame and
+  // playing=false) at the end unless looping.
+  function playbackAdvance(idx, maxFrame, step, loop) {
+    const next = idx + (step || 1);
+    if (next > maxFrame) {
+      return loop ? { idx: 0, playing: true }
+                  : { idx: maxFrame, playing: false };
+    }
+    return { idx: next, playing: true };
+  }
+
+  const AnalyzerCore = {
+    to255, asTriple, makeLru, prefetchPlan, chainsWithBase, nearestSucker,
+    colorErrorStats, clampIdx, playbackAdvance,
+  };
+  const root = (typeof window !== "undefined") ? window : globalThis;
+  root.AnalyzerCore = AnalyzerCore;
+  if (typeof module !== "undefined" && module.exports) module.exports = AnalyzerCore;
+})();
+</script>
+
+<div id="root"></div>
+
+<!-- ================================================================= -->
+<!-- React UI + canvas rendering.                                       -->
+<!-- ================================================================= -->
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+const C = window.AnalyzerCore;
+
+const WS_DEFAULT = `ws://${location.hostname || "localhost"}:${location.port || 8765}`;
+
+// ---------------------------------------------------------------- helpers ---
+function cellSizeFor(xLen, yLen, availW, availH) {
+  const s = Math.floor(Math.min(availW / xLen, availH / yLen));
+  return Math.max(12, Math.min(30, s || 12));
+}
+
+// Draw one frame's world into ctx. `view` carries the anatomy + cellSize +
+// overlay options. Reuses the old page's draw code, upgraded for RGB + iLQR.
+function drawWorld(ctx, background, state, view) {
+  const cs = view.cellSize;
+  const { xLen, yLen } = view;
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  if (view.showGrid !== false && background) {
+    background.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        const [r, g, b] = C.asTriple(cell);
+        ctx.fillStyle = `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})`;
+        ctx.fillRect(x * cs, y * cs, cs, cs);
+      });
+    });
+    ctx.strokeStyle = "#33415533";
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= xLen; x++) {
+      ctx.beginPath(); ctx.moveTo(x * cs, 0); ctx.lineTo(x * cs, yLen * cs); ctx.stroke();
+    }
+    for (let y = 0; y <= yLen; y++) {
+      ctx.beginPath(); ctx.moveTo(0, y * cs); ctx.lineTo(xLen * cs, y * cs); ctx.stroke();
+    }
+  }
+  if (!state) return;
+
+  // Entities at cell centres: shift by half a cell (commit 089a7ff). Do NOT
+  // drop this — suckers would otherwise draw a cell off the surface they match.
+  ctx.save();
+  ctx.translate(cs / 2, cs / 2);
+
+  // iLQR overlay (ghost horizon poses + tip path), drawn UNDER the applied
+  // pose so plan (ghost) vs applied (solid) reads correctly.
+  if (view.ilqr && view.ilqrOverlay) drawIlqrOverlay(ctx, view);
+
+  // Limb centerlines.
+  ctx.strokeStyle = "#ff4444";
+  ctx.lineWidth = 3;
+  state.octopus.limbs.forEach((limb) => {
+    if (limb.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
+      for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
+      ctx.stroke();
+    }
+  });
+
+  // Head.
+  ctx.fillStyle = "#ff6666";
+  ctx.beginPath();
+  ctx.arc(state.octopus.head.x * cs, state.octopus.head.y * cs, cs * 0.4, 0, 2 * Math.PI);
+  ctx.fill();
+
+  // Suckers, colored per the active color mode.
+  state.octopus.suckers.forEach((s) => {
+    let col = pickSuckerColor(s, view.colorMode);
+    ctx.fillStyle = col;
+    ctx.strokeStyle = "#222";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  // Highlighted sucker (inspector hover).
+  if (view.hoverSucker != null && state.octopus.suckers[view.hoverSucker]) {
+    const s = state.octopus.suckers[view.hoverSucker];
+    ctx.strokeStyle = "#facc15";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x * cs, s.y * cs, cs * 0.28, 0, 2 * Math.PI);
+    ctx.stroke();
+  }
+
+  // Agents.
+  state.agents.forEach((a) => {
+    ctx.fillStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
+    ctx.beginPath();
+    ctx.arc(a.x * cs, a.y * cs, cs * 0.2, 0, 2 * Math.PI);
+    ctx.fill();
+    if (view.showSensing) {
+      ctx.strokeStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.arc(a.x * cs, a.y * cs, (view.sensingRadius || 5) * cs, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  });
+
+  ctx.restore();
+}
+
+function pickSuckerColor(s, mode) {
+  if (mode === "before") { const [r, g, b] = C.asTriple(s.color_before); return `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})`; }
+  if (mode === "target") { const [r, g, b] = C.asTriple(s.target_color); return `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})`; }
+  if (mode === "error") {
+    const e = C.colorErrorStats(s.color_before, s.color, s.target_color).errAfter;
+    const t = Math.min(1, e / 1.0); // 0..1 heat
+    return `rgb(${C.to255(t)},${C.to255(1 - t)},0)`;
+  }
+  const [r, g, b] = C.asTriple(s.color); // "after" (default)
+  return `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})`;
+}
+
+function drawIlqrOverlay(ctx, view) {
+  const cs = view.cellSize;
+  const limbs = view.ilqrLimb === "all"
+    ? view.ilqr
+    : view.ilqr.filter((l) => l.limb === view.ilqrLimb);
+  limbs.forEach((limbData) => {
+    const iters = limbData.iterations || [];
+    if (!iters.length) return;
+    const iterIdx = C.clampIdx(view.ilqrIter, iters.length);
+    if (view.convergence) {
+      // Convergence mode: each iteration's terminal pose graded red->green.
+      iters.forEach((it, k) => {
+        const chains = C.chainsWithBase(it.trajectory, limbData.base);
+        if (!chains.length) return;
+        const terminal = chains[chains.length - 1];
+        const t = iters.length > 1 ? k / (iters.length - 1) : 1;
+        ctx.strokeStyle = `rgba(${C.to255(1 - t)},${C.to255(t)},80,0.8)`;
+        ctx.lineWidth = 1.5;
+        strokeChain(ctx, terminal, cs);
+      });
+      return;
+    }
+    const it = iters[iterIdx];
+    const chains = C.chainsWithBase(it.trajectory, limbData.base);
+    // Ghost horizon poses, alpha fading with t; t=0 dashed.
+    chains.forEach((chain, t) => {
+      const a = 0.15 + 0.65 * (t / Math.max(1, chains.length - 1));
+      ctx.strokeStyle = `rgba(251,191,36,${a})`;
+      ctx.lineWidth = 1.5;
+      if (t === 0) ctx.setLineDash([4, 3]); else ctx.setLineDash([]);
+      strokeChain(ctx, chain, cs);
+      ctx.setLineDash([]);
+    });
+    // Tip path: cyan polyline through each step's last node.
+    if (chains.length) {
+      ctx.strokeStyle = "#22d3ee";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      chains.forEach((chain, t) => {
+        const tip = chain[chain.length - 1];
+        if (t === 0) ctx.moveTo(tip[0] * cs, tip[1] * cs);
+        else ctx.lineTo(tip[0] * cs, tip[1] * cs);
+      });
+      ctx.stroke();
+      const last = chains[chains.length - 1];
+      const tip = last[last.length - 1];
+      ctx.fillStyle = "#22d3ee";
+      ctx.beginPath();
+      ctx.arc(tip[0] * cs, tip[1] * cs, cs * 0.12, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  });
+}
+
+function strokeChain(ctx, chain, cs) {
+  ctx.beginPath();
+  ctx.moveTo(chain[0][0] * cs, chain[0][1] * cs);
+  for (let i = 1; i < chain.length; i++) ctx.lineTo(chain[i][0] * cs, chain[i][1] * cs);
+  ctx.stroke();
+}
+
+// Inline SVG line chart. series: [{data:[...], color, dashed}]; cursor: frame.
+function LineChart({ series, cursor, onSeek, height, log }) {
+  const width = 340;
+  const n = Math.max(1, ...series.map((s) => s.data.length));
+  let max = 1e-9, min = 0;
+  series.forEach((s) => s.data.forEach((v) => { if (v != null && v > max) max = v; }));
+  const yv = (v) => {
+    if (log) { const lv = Math.log10(Math.max(v, 1e-6)); const lmin = -6, lmax = Math.log10(Math.max(max, 1e-5)); return height - ((lv - lmin) / (lmax - lmin)) * height; }
+    return height - ((v - min) / (max - min || 1)) * height;
+  };
+  const xv = (i) => (i / Math.max(1, n - 1)) * width;
+  return (
+    <svg width={width} height={height} style={{ cursor: onSeek ? "crosshair" : "default" }}
+         onClick={(e) => { if (!onSeek) return; const r = e.currentTarget.getBoundingClientRect();
+           onSeek(Math.round(((e.clientX - r.left) / width) * (n - 1))); }}>
+      {series.map((s, k) => (
+        <polyline key={k} fill="none" stroke={s.color} strokeWidth="1.5"
+          strokeDasharray={s.dashed ? "4,3" : ""}
+          points={s.data.map((v, i) => v == null ? "" : `${xv(i)},${yv(v)}`).filter(Boolean).join(" ")} />
+      ))}
+      {cursor != null && (
+        <line x1={xv(cursor)} y1="0" x2={xv(cursor)} y2={height} stroke="#94a3b8" strokeWidth="1" strokeDasharray="2,2" />
+      )}
+    </svg>
+  );
+}
+
+// ------------------------------------------------------------------- app ---
+function App() {
+  const [wsUrl, setWsUrl] = useState(WS_DEFAULT);
+  const [connected, setConnected] = useState(false);
+  const [tab, setTab] = useState("playback"); // "simulate" | "playback"
+  const [runs, setRuns] = useState([]);
+  const [meta, setMeta] = useState(null);      // run_meta
+  const [frameIdx, setFrameIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [status, setStatus] = useState("disconnected");
+  const [sim, setSim] = useState({ frames: 120, running: false, progress: null });
+  const [colorMode, setColorMode] = useState("after");
+  const [showGrid, setShowGrid] = useState(true);
+  const [showSensing, setShowSensing] = useState(false);
+  const [ilqrOverlay, setIlqrOverlay] = useState(false);
+  const [ilqrLimb, setIlqrLimb] = useState("all");
+  const [ilqrIter, setIlqrIter] = useState(0);
+  const [convergence, setConvergence] = useState(false);
+  const [hover, setHover] = useState(null); // {sucker, frame} inspector
+
+  const wsRef = useRef(null);
+  const canvasRef = useRef(null);
+  const frameCache = useRef(C.makeLru(400));
+  const ilqrCache = useRef(C.makeLru(40));
+  const dirtyRef = useRef(true);
+  const stateRef = useRef({}); // live-drawn refs (NOT React state churn)
+  const pendingReq = useRef(new Map());
+  const reqSeq = useRef(0);
+
+  // keep a live snapshot of the pieces the RAF draw loop reads
+  stateRef.current.meta = meta;
+  stateRef.current.frameIdx = frameIdx;
+  stateRef.current.colorMode = colorMode;
+  stateRef.current.showGrid = showGrid;
+  stateRef.current.showSensing = showSensing;
+  stateRef.current.ilqrOverlay = ilqrOverlay;
+  stateRef.current.ilqrLimb = ilqrLimb;
+  stateRef.current.ilqrIter = ilqrIter;
+  stateRef.current.convergence = convergence;
+  stateRef.current.hover = hover;
+
+  // ---- websocket ----
+  const send = useCallback((type, data, cb) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== 1) return;
+    const req_id = "r" + (reqSeq.current++);
+    if (cb) pendingReq.current.set(req_id, cb);
+    ws.send(JSON.stringify({ type, req_id, data: data || {} }));
+    return req_id;
+  }, []);
+
+  const connect = useCallback(() => {
+    if (wsRef.current) { try { wsRef.current.close(); } catch (e) {} }
+    let ws;
+    try { ws = new WebSocket(wsUrl); } catch (e) { setStatus("bad url"); return; }
+    wsRef.current = ws;
+    setStatus("connecting");
+    ws.onopen = () => { setConnected(true); setStatus("connected"); };
+    ws.onclose = () => { setConnected(false); setStatus("disconnected"); };
+    ws.onerror = () => setStatus("error");
+    ws.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      handleMessage(msg);
+    };
+  }, [wsUrl]);
+
+  const handleMessage = useCallback((msg) => {
+    const { type, req_id, data } = msg;
+    // resolve any request-specific callback first
+    if (req_id && pendingReq.current.has(req_id)) {
+      const cb = pendingReq.current.get(req_id);
+      pendingReq.current.delete(req_id);
+      cb(msg);
+    }
+    if (type === "server_info") {
+      send("list_runs", {});
+    } else if (type === "runs_list") {
+      setRuns(data.runs);
+    } else if (type === "simulate_progress") {
+      setSim((s) => ({ ...s, progress: data, running: true }));
+    } else if (type === "simulate_complete") {
+      setSim((s) => ({ ...s, running: false, progress: null }));
+      // draw final_state immediately, then auto-select in playback
+      if (data.final_state && data.final_state.octopus) {
+        stateRef.current.finalState = data.final_state;
+        dirtyRef.current = true;
+      }
+      send("list_runs", {});
+      setTab("playback");
+      loadRun(data.run_id);
+    } else if (type === "error") {
+      setStatus("error: " + data.code);
+      console.warn("server error", data);
+    } else if (type === "frame_data") {
+      frameCache.current.set(data.frame, data.state);
+      if (data.ilqr && data.ilqr.length) ilqrCache.current.set(data.frame, data.ilqr);
+      dirtyRef.current = true;
+    } else if (type === "frames_data") {
+      data.frames.forEach((st) => frameCache.current.set(st.metadata.iteration, st));
+      dirtyRef.current = true;
+    } else if (type === "run_meta") {
+      // handled via callback in loadRun
+    } else {
+      console.log("unhandled message", type, data);
+    }
+  }, [send]);
+
+  // ---- run loading ----
+  const loadRun = useCallback((runId) => {
+    frameCache.current = C.makeLru(400);
+    ilqrCache.current = C.makeLru(40);
+    setFrameIdx(0);
+    setPlaying(false);
+    send("load_run", { run_id: runId }, (msg) => {
+      if (msg.type !== "run_meta") return;
+      setMeta(msg.data);
+      stateRef.current.background = msg.data.background;
+      dirtyRef.current = true;
+      // frame 0 then bulk fill
+      send("get_frame", { run_id: runId, frame: 0 });
+      bulkFill(runId, msg.data.frames_recorded);
+    });
+  }, [send]);
+
+  const bulkFill = useCallback((runId, total) => {
+    // Chunked prefetch of state-only frames while under the memory budget.
+    const CHUNK = 20;
+    const cap = Math.min(total, Math.floor(25 * 1024 * 1024 / (50 * 1024))); // ~500
+    let start = 0;
+    const step = () => {
+      if (start >= Math.min(total, cap)) return;
+      send("get_frames", { run_id: runId, start, count: CHUNK });
+      start += CHUNK;
+      setTimeout(step, 30);
+    };
+    step();
+  }, [send]);
+
+  // ---- fetch a frame on demand + windowed prefetch ----
+  const ensureFrame = useCallback((runId, f, total) => {
+    if (!frameCache.current.has(f)) send("get_frame", { run_id: runId, frame: f });
+    const plan = C.prefetchPlan(f, total - 1, 15, 3, (k) => frameCache.current.has(k));
+    plan.slice(0, 6).forEach((k) => send("get_frame", { run_id: runId, frame: k }));
+  }, [send]);
+
+  const ensureIlqr = useCallback((runId, f) => {
+    if (!ilqrCache.current.has(f)) send("get_frame", { run_id: runId, frame: f, include_ilqr: true });
+  }, [send]);
+
+  // ---- effects: fetch current frame + iLQR when scrubbing ----
+  useEffect(() => {
+    if (!meta) return;
+    ensureFrame(meta.run_id, frameIdx, meta.frames_recorded);
+    dirtyRef.current = true;
+  }, [meta, frameIdx, ensureFrame]);
+
+  useEffect(() => {
+    if (!meta || !ilqrOverlay) return;
+    ensureIlqr(meta.run_id, frameIdx);
+    dirtyRef.current = true;
+  }, [meta, frameIdx, ilqrOverlay, ensureIlqr]);
+
+  // ---- play loop ----
+  useEffect(() => {
+    if (!playing || !meta) return;
+    const iv = setInterval(() => {
+      setFrameIdx((idx) => {
+        const r = C.playbackAdvance(idx, meta.frames_recorded - 1, 1, false);
+        if (!r.playing) setPlaying(false);
+        return r.idx;
+      });
+    }, 120 / speed);
+    return () => clearInterval(iv);
+  }, [playing, speed, meta]);
+
+  // ---- RAF draw loop (reads refs; no per-frame React state churn) ----
+  useEffect(() => {
+    let raf;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      if (!dirtyRef.current) return;
+      const cv = canvasRef.current;
+      const S = stateRef.current;
+      if (!cv || !S.meta) {
+        // simulate final_state fallback (no meta yet)
+        if (cv && S.finalState) drawSimFinal(cv, S);
+        dirtyRef.current = false;
+        return;
+      }
+      dirtyRef.current = false;
+      const m = S.meta;
+      const state = frameCache.current.get(S.frameIdx);
+      if (!state) return; // wait for fetch; buffering
+      const cs = cellSizeFor(m.config.x_len, m.config.y_len, cv.parentElement.clientWidth - 8, 560);
+      cv.width = m.config.x_len * cs;
+      cv.height = m.config.y_len * cs;
+      const ctx = cv.getContext("2d");
+      drawWorld(ctx, S.background, state, {
+        cellSize: cs, xLen: m.config.x_len, yLen: m.config.y_len,
+        colorMode: S.colorMode, showGrid: S.showGrid, showSensing: S.showSensing,
+        sensingRadius: m.config.agent_range_radius,
+        ilqr: ilqrCache.current.get(S.frameIdx), ilqrOverlay: S.ilqrOverlay,
+        ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, convergence: S.convergence,
+        hoverSucker: (S.hover && S.hover.frame === S.frameIdx) ? S.hover.sucker : null,
+      });
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  function drawSimFinal(cv, S) {
+    const fs = S.finalState;
+    const xLen = 30, yLen = 30;
+    const cs = cellSizeFor(xLen, yLen, cv.parentElement.clientWidth - 8, 560);
+    cv.width = xLen * cs; cv.height = yLen * cs;
+    drawWorld(cv.getContext("2d"), null, fs, { cellSize: cs, xLen, yLen, colorMode: "after", showGrid: false });
+  }
+
+  // ---- keyboard ----
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      const max = meta ? meta.frames_recorded - 1 : 0;
+      const k = e.key;
+      if (k === " ") { e.preventDefault(); setPlaying((p) => !p); }
+      else if (k === "ArrowRight") setFrameIdx((i) => C.clampIdx(i + (e.shiftKey ? 10 : 1), max + 1));
+      else if (k === "ArrowLeft") setFrameIdx((i) => C.clampIdx(i - (e.shiftKey ? 10 : 1), max + 1));
+      else if (k === "Home") setFrameIdx(0);
+      else if (k === "End") setFrameIdx(max);
+      else if (k === "[") setIlqrIter((i) => Math.max(0, i - 1));
+      else if (k === "]") setIlqrIter((i) => i + 1);
+      else if (k === "i" || k === "I") setIlqrOverlay((v) => !v);
+      else if (k === "l" || k === "L") setIlqrLimb((v) => v === "all" ? 0 : (v + 1 > 7 ? "all" : v + 1));
+      else if (k === "a" || k === "A") setIlqrLimb("all");
+      else if (k === "v" || k === "V") setConvergence((v) => !v);
+      else if (k === "c" || k === "C") setColorMode((m) => ({ after: "before", before: "target", target: "error", error: "after" }[m]));
+      else if (k === "g" || k === "G") setShowGrid((v) => !v);
+      else if (k === "d" || k === "D") setShowSensing((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [meta]);
+
+  // ---- simulate ----
+  const startSimulate = () => {
+    setSim((s) => ({ ...s, running: true, progress: null }));
+    send("simulate", { num_frames: sim.frames, record_ilqr_history: true, label: "" });
+  };
+  const cancelSimulate = () => send("simulate_cancel", {});
+
+  // ---- mouse hover for inspector ----
+  const onCanvasMove = (e) => {
+    if (!meta) return;
+    const state = frameCache.current.get(frameIdx);
+    if (!state) return;
+    const cv = canvasRef.current;
+    const rect = cv.getBoundingClientRect();
+    const cs = cv.width / meta.config.x_len;
+    const wx = (e.clientX - rect.left) / (rect.width / cv.width) / cs - 0.5;
+    const wy = (e.clientY - rect.top) / (rect.height / cv.height) / cs - 0.5;
+    const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
+    setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
+    dirtyRef.current = true;
+  };
+
+  const curFrame = meta ? frameCache.current.get(frameIdx) : null;
+  const curIlqr = meta ? ilqrCache.current.get(frameIdx) : null;
+  const maxFrame = meta ? meta.frames_recorded - 1 : 0;
+
+  // ---- render ----
+  return (
+    <div className="min-h-screen p-3" style={{ fontFamily: "ui-monospace, monospace" }}>
+      {/* top bar */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <span className="text-sky-400 font-bold">🐙 Octopus Analyzer</span>
+        <input className="bg-slate-800 px-2 py-1 rounded text-xs w-56" value={wsUrl}
+               onChange={(e) => setWsUrl(e.target.value)} />
+        <button className="bg-sky-700 px-3 py-1 rounded text-xs" onClick={connect}>
+          {connected ? "Reconnect" : "Connect"}</button>
+        <span className={"text-xs " + (connected ? "text-green-400" : "text-red-400")}>● {status}</span>
+        <div className="ml-4 flex gap-1">
+          {["simulate", "playback"].map((t) => (
+            <button key={t} onClick={() => setTab(t)}
+              className={"px-3 py-1 rounded text-xs " + (tab === t ? "bg-sky-600" : "bg-slate-700")}>{t}</button>
+          ))}
+        </div>
+        {meta && (
+          <span className="ml-4 text-xs text-slate-300">
+            run {meta.run_id.slice(-6)} · frame {frameIdx}/{maxFrame}
+            {curFrame && <> · vis {curFrame.metadata.visibility_score} · prey {curFrame.metadata.prey_captured}</>}
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-3">
+        {/* canvas + transport */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-black rounded p-1 inline-block max-w-full overflow-auto">
+            <canvas ref={canvasRef} onMouseMove={onCanvasMove} onMouseLeave={() => setHover(null)} />
+          </div>
+
+          {/* transport bar */}
+          {meta && (
+            <div className="flex items-center gap-2 mt-2">
+              <button className="bg-slate-700 px-2 py-1 rounded text-xs" onClick={() => setPlaying((p) => !p)}>
+                {playing ? "⏸" : "▶"}</button>
+              <button className="bg-slate-700 px-2 py-1 rounded text-xs" onClick={() => setFrameIdx((i) => C.clampIdx(i - 1, maxFrame + 1))}>◀</button>
+              <input type="range" min="0" max={maxFrame} value={frameIdx} className="flex-1"
+                     onChange={(e) => setFrameIdx(parseInt(e.target.value))} />
+              <button className="bg-slate-700 px-2 py-1 rounded text-xs" onClick={() => setFrameIdx((i) => C.clampIdx(i + 1, maxFrame + 1))}>▶</button>
+              <select className="bg-slate-800 text-xs rounded" value={speed} onChange={(e) => setSpeed(parseFloat(e.target.value))}>
+                {[0.5, 1, 2, 4].map((s) => <option key={s} value={s}>{s}×</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* iLQR strip */}
+          {meta && meta.has_ilqr_history && (
+            <div className="flex items-center gap-2 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
+              <label><input type="checkbox" checked={ilqrOverlay} onChange={(e) => setIlqrOverlay(e.target.checked)} /> iLQR overlay <kbd>I</kbd></label>
+              <label><input type="checkbox" checked={convergence} onChange={(e) => setConvergence(e.target.checked)} /> converge <kbd>V</kbd></label>
+              <span>limb:</span>
+              <select className="bg-slate-800" value={ilqrLimb} onChange={(e) => setIlqrLimb(e.target.value === "all" ? "all" : parseInt(e.target.value))}>
+                <option value="all">All</option>
+                {Array.from({ length: meta.anatomy.num_arms }, (_, i) => <option key={i} value={i}>{i}</option>)}
+              </select>
+              <span>iter:</span>
+              <input type="range" min="0" max={curIlqr && curIlqr[0] ? Math.max(0, curIlqr[0].iterations) : 0}
+                     value={ilqrIter} onChange={(e) => setIlqrIter(parseInt(e.target.value))} />
+              <span>{ilqrIter} <kbd>[</kbd><kbd>]</kbd></span>
+            </div>
+          )}
+
+          {/* charts */}
+          {meta && (
+            <div className="flex gap-4 mt-3 flex-wrap">
+              <div className="bg-slate-900 p-2 rounded">
+                <div className="text-xs mb-1 text-slate-400">visibility (before dashed, after solid) — click to seek</div>
+                <LineChart height={90} cursor={frameIdx} onSeek={(f) => setFrameIdx(C.clampIdx(f, maxFrame + 1))}
+                  series={[
+                    { data: meta.summary.visibility_before, color: "#f59e0b", dashed: true },
+                    { data: meta.summary.visibility_after, color: "#38bdf8" },
+                  ]} />
+              </div>
+              {curIlqr && (
+                <div className="bg-slate-900 p-2 rounded">
+                  <div className="text-xs mb-1 text-slate-400">iLQR cost vs iteration (this frame)</div>
+                  <LineChart height={90} cursor={ilqrIter}
+                    series={(ilqrLimb === "all" ? curIlqr : curIlqr.filter((l) => l.limb === ilqrLimb))
+                      .map((l, k) => ({ data: l.iterations.map((it) => it.cost), color: `hsl(${k * 45},70%,60%)` }))} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* sidebar */}
+        <div className="w-72 shrink-0 text-xs space-y-3">
+          {tab === "simulate" && (
+            <div className="bg-slate-900 p-3 rounded">
+              <div className="font-bold mb-2 text-sky-400">Simulate</div>
+              <label className="block mb-2">frames
+                <input type="number" min="1" max="10000" value={sim.frames} className="bg-slate-800 ml-2 w-20 px-1 rounded"
+                       onChange={(e) => setSim((s) => ({ ...s, frames: parseInt(e.target.value) || 0 }))} />
+              </label>
+              {(!sim.frames || sim.frames < 1) && <div className="text-red-400 mb-2">frames must be ≥ 1</div>}
+              {!sim.running
+                ? <button disabled={!connected || !sim.frames || sim.frames < 1}
+                    className="bg-green-700 disabled:opacity-40 px-3 py-1 rounded w-full" onClick={startSimulate}>Run</button>
+                : <button className="bg-red-700 px-3 py-1 rounded w-full" onClick={cancelSimulate}>Cancel</button>}
+              {sim.progress && (
+                <div className="mt-2">
+                  <div className="h-2 bg-slate-700 rounded overflow-hidden">
+                    <div className="h-2 bg-sky-500" style={{ width: `${100 * sim.progress.frame / sim.progress.num_frames}%` }} />
+                  </div>
+                  <div className="mt-1 text-slate-300">frame {sim.progress.frame}/{sim.progress.num_frames} · {Math.round(sim.progress.frame_ms)}ms · vis {sim.progress.visibility_score}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "playback" && (
+            <div className="bg-slate-900 p-3 rounded">
+              <div className="font-bold mb-2 text-sky-400">Runs</div>
+              {runs.length === 0 && <div className="text-slate-500">No runs recorded yet.</div>}
+              <div className="space-y-1 max-h-64 overflow-auto">
+                {runs.map((r) => (
+                  <button key={r.run_id} onClick={() => loadRun(r.run_id)}
+                    className={"block w-full text-left px-2 py-1 rounded " + (meta && meta.run_id === r.run_id ? "bg-sky-800" : "bg-slate-800 hover:bg-slate-700")}>
+                    <div className="flex justify-between">
+                      <span>{r.run_id.slice(-6)}</span>
+                      <span className="text-slate-400">{r.frames_recorded}f</span>
+                    </div>
+                    <div className="text-slate-500">{r.status}{r.has_ilqr_history ? " · iLQR" : ""} · {r.config_summary.octo_movement_mode}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* sucker inspector */}
+          {hover && curFrame && curFrame.octopus.suckers[hover.sucker] && (
+            <div className="bg-slate-900 p-3 rounded">
+              <div className="font-bold mb-2 text-sky-400">Sucker #{hover.sucker}</div>
+              {(() => {
+                const s = curFrame.octopus.suckers[hover.sucker];
+                const rows = [["before", s.color_before], ["after", s.color], ["target", s.target_color]];
+                return rows.map(([label, c]) => {
+                  const [r, g, b] = C.asTriple(c);
+                  return (
+                    <div key={label} className="flex items-center gap-2 mb-1">
+                      <span className="swatch" style={{ background: `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})` }}></span>
+                      <span className="w-14">{label}</span>
+                      <span className="text-slate-400">{r.toFixed(2)},{g.toFixed(2)},{b.toFixed(2)}</span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          )}
+
+          <div className="bg-slate-900 p-3 rounded text-slate-400">
+            <div className="font-bold mb-1 text-slate-300">keys</div>
+            <div><kbd>Space</kbd> play · <kbd>←/→</kbd> ±1 · <kbd>Shift+←/→</kbd> ±10</div>
+            <div><kbd>[</kbd><kbd>]</kbd> iLQR iter · <kbd>I</kbd> overlay · <kbd>L</kbd> limb · <kbd>A</kbd> all</div>
+            <div><kbd>V</kbd> converge · <kbd>C</kbd> color mode · <kbd>G</kbd> grid · <kbd>D</kbd> sensing</div>
+            <div className="mt-1">color mode: <span className="text-sky-400">{colorMode}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>

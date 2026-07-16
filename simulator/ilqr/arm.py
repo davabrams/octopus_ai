@@ -170,7 +170,8 @@ class ArmController:
               target,
               x0,
               threat=None,
-              u_init: tf.Tensor | None = None) -> ILQRResult:
+              u_init: tf.Tensor | None = None,
+              record_history: bool = False) -> ILQRResult:
         """Plan a trajectory for this arm.
 
         base_xy: (2,) current body-anchored base position.
@@ -180,6 +181,9 @@ class ArmController:
                  disables the repulsion term for this solve.
         u_init:  optional (horizon, 2*n_free) initial controls; zeros if None
                  (pass last frame's shifted solution to warm-start).
+        record_history: capture per-iteration solve history on the returned
+                 ILQRResult (off = zero overhead). A per-call flag, not a
+                 controller field, so one compiled controller serves both modes.
         """
         base_xy = tf.convert_to_tensor(base_xy, dtype=tf.float32)
         target = tf.convert_to_tensor(target, dtype=tf.float32)
@@ -194,4 +198,5 @@ class ArmController:
             [base_xy, target, threat_xy, [threat_w]], axis=0)  # (7,)
         if u_init is None:
             u_init = tf.zeros((self.horizon, 2 * self.n_free), dtype=tf.float32)
-        return self._solve(x0, params, u_init)
+        return self._solve(x0, params, u_init,
+                           record_history=record_history)

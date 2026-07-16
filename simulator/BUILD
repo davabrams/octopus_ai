@@ -34,6 +34,50 @@ py_library(
 )
 
 py_library(
+    name = "sim_recorder",
+    srcs = ["sim_recorder.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":simutil",
+        "//octopus_ai:octo_util",
+    ],
+)
+
+py_library(
+    name = "run_store",
+    srcs = ["run_store.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sim_recorder",
+    ],
+)
+
+# Importable form (tests, and the websocket server's simulate handler).
+py_library(
+    name = "headless_runner",
+    srcs = ["headless_runner.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":agent_generator",
+        ":octopus_generator",
+        ":sim_recorder",
+        ":simutil",
+        ":surface_generator",
+        "//octopus_ai:octo_util",
+        "//training:model_loader",
+    ],
+)
+
+# CLI entry point: `bazel run //simulator:headless_runner_bin -- --frames 120`.
+py_binary(
+    name = "headless_runner_bin",
+    srcs = ["headless_runner.py"],
+    main = "headless_runner.py",
+    visibility = ["//visibility:public"],
+    deps = [":headless_runner"],
+)
+
+py_library(
     name = "octopus_generator",
     srcs = ["octopus_generator.py"],
     visibility = ["//visibility:public"],
@@ -42,6 +86,7 @@ py_library(
         ":spring_chain",
         ":surface_generator",
         "//octopus_ai:octo_util",
+        "//simulator/ilqr:arm",
     ],
 )
 
@@ -66,6 +111,8 @@ py_library(
         ":force_logger",
         ":frame_recorder",
         ":octopus_generator",
+        ":run_store",
+        ":sim_recorder",
         ":simutil",
         ":spring_chain",
         ":surface_generator",

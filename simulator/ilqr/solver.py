@@ -33,9 +33,29 @@ loops over T), which is why this belongs on the CPU.
 from collections.abc import Callable
 from typing import NamedTuple
 
+import numpy as np
 import tensorflow as tf
 
 DT: float = 1.0  # sample time, matches the simulator's dt
+
+
+class ILQRIterationRecord(NamedTuple):
+    """One iteration of a solve, captured only when record_history=True.
+
+    Iteration 0 is the warm-start rollout (the plan the solve refines FROM);
+    iterations 1..N are the solver iterations. Failed iterations get a
+    status-only entry with x_traj=None so the analyzer scrubber does not show
+    unexplained duplicate poses.
+    """
+    iteration: int            # 0 = initial warm-start rollout; 1..N = solver iters
+    phase: str                # 'init' | 'accepted' | 'cholesky_fail' | 'linesearch_fail'
+    cost: float               # total cost in effect AFTER this iteration
+    alpha: "float | None"     # accepted line-search step; None for init/rejected
+    mu: float                 # regularization used in this iteration's backward
+                              # pass; the iter-0 'init' entry records mu_init
+    rel_improve: "float | None"  # None for init/rejected
+    x_traj: "np.ndarray | None"  # float32 (horizon+1, state_dim), UNCLAMPED solver
+                              # space; None for rejected iterations
 
 
 class ILQRResult(NamedTuple):
@@ -45,6 +65,8 @@ class ILQRResult(NamedTuple):
     cost: tf.Tensor        # scalar final total cost
     iterations: int        # iLQR iterations actually run
     converged: bool        # True if the relative cost improvement fell below tol
+    history: "list | None" = None  # list[ILQRIterationRecord] when recording;
+                                    # MUST stay the last field (see plan D-note)
 
 
 def make_solver(dynamics: Callable,
@@ -145,7 +167,7 @@ def make_solver(dynamics: Callable,
         cost = total_cost(x_cand, u_cand, params)
         return x_cand, u_cand, cost
 
-    def solve(x0, params, u_init) -> ILQRResult:
+    def solve(x0, params, u_init, record_history: bool = False) -> ILQRResult:
         x0 = tf.convert_to_tensor(x0, dtype=tf.float32)
         params = tf.convert_to_tensor(params, dtype=tf.float32)
         u_traj = tf.convert_to_tensor(u_init, dtype=tf.float32)
@@ -157,6 +179,14 @@ def make_solver(dynamics: Callable,
         mu = mu_init
         converged = False
         iters_run = 0
+
+        history = [] if record_history else None
+        if record_history:
+            # Iteration 0: the warm-start rollout the solve refines from.
+            # mu records mu_init, the value the FIRST backward pass will use.
+            history.append(ILQRIterationRecord(
+                iteration=0, phase="init", cost=float(cost), alpha=None,
+                mu=mu, rel_improve=None, x_traj=x_traj.numpy()))
 
         for iteration in range(max_iters):
             iters_run = iteration + 1
@@ -207,6 +237,11 @@ def make_solver(dynamics: Callable,
                 v_xx = 0.5 * (v_xx + tf.transpose(v_xx))
 
             if not backward_ok:
+                if record_history:
+                    history.append(ILQRIterationRecord(
+                        iteration=iteration + 1, phase="cholesky_fail",
+                        cost=float(cost), alpha=None, mu=mu,
+                        rel_improve=None, x_traj=None))
                 mu = min(mu * mu_factor, mu_max)
                 if mu >= mu_max:
                     break
@@ -229,10 +264,24 @@ def make_solver(dynamics: Callable,
                     break
 
             if not improved:
+                if record_history:
+                    history.append(ILQRIterationRecord(
+                        iteration=iteration + 1, phase="linesearch_fail",
+                        cost=float(cost), alpha=None, mu=mu,
+                        rel_improve=None, x_traj=None))
                 mu = min(mu * mu_factor, mu_max)
                 if mu >= mu_max:
                     break
                 continue
+
+            if record_history:
+                # Recorded BEFORE the mu relaxation below, so mu is the value
+                # used in this iteration's backward pass. cost/x_traj already
+                # hold the accepted candidate.
+                history.append(ILQRIterationRecord(
+                    iteration=iteration + 1, phase="accepted",
+                    cost=float(cost), alpha=float(alpha), mu=mu,
+                    rel_improve=float(rel_improve), x_traj=x_traj.numpy()))
 
             mu = max(mu / mu_factor, mu_min)
             if float(rel_improve) < tol:
@@ -240,6 +289,13 @@ def make_solver(dynamics: Callable,
                 break
 
         return ILQRResult(x_traj=x_traj, u_traj=u_traj, cost=cost,
-                          iterations=iters_run, converged=converged)
+                          iterations=iters_run, converged=converged,
+                          history=history)
+
+    # The compiled kernels are otherwise unreachable closure-locals; expose
+    # them as a plain attribute (no @tf.function signature change) so tests can
+    # assert that a recorded solve does not change their tracing counts.
+    solve._kernels = (rollout, total_cost, dyn_jac, quad_run, quad_term,
+                      forward)
 
     return solve

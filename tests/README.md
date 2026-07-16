@@ -54,6 +54,41 @@ This directory contains comprehensive unit tests for the octopus_ai project, cov
    - `TestDataGenerationIntegration` - Data generation workflows
    - `TestEndToEndWorkflow` - Complete system workflows
 
+9. **`test_sim_recorder.py`** - *Record & replay - DuckDB recorder*
+   - `TestConstruction` - Idempotent reopen, one file per run, run-id shape
+   - `TestRowCounts` - Per-table row invariants over a frame loop
+   - `TestColorMath` - before/after/target error + visibility parity
+   - `TestAgentIdentity` - Stable recorder id; respawn gets a new id
+   - `TestILQRCapture` - Per-iteration iLQR history end-to-end (flag on/off)
+   - `TestFlushAndCrash` - Partial flush visibility; aborted-on-exception
+   - `TestConfigAndSurfaceRoundTrip` - config_json + surface grid round-trip
+
+10. **`test_ilqr.py`** - *iLQR controller + per-iteration solve history*
+    - Reach/threat/rest behavior; `record_history` zero-overhead-when-off,
+      length/index invariants, accepted-cost monotonicity, rejected entries,
+      and the `Limb` integration that drains history/metadata.
+
+11. **`test_headless_runner.py`** - *Record & replay - headless runner*
+    - Loop call-counts + before/after seam (FakeRecorder), cancel/failure
+      finalization, `num_iterations<=0`, `serialize_state` golden keys,
+      on-disk determinism, a tiny-iLQR smoke, and CLI wiring.
+
+12. **`test_websocket_protocol.py`** - *Record & replay - v2 protocol*
+    - Socket-free `handle_message` tests: `merge_flat_overrides` (enum
+      coercion), simulate happy/busy/bad-frames/cancel/failure, progress
+      coalescing, v1 tombstones, playback error codes, and active-run listing.
+
+13. **`test_record_playback.py`** - *Record & replay - integration*
+    - Real runner+recorder through the simulate handler, then
+      list_runs/load_run/get_frame round-trip; asserts the D15 read-back
+      (`get_frame(last).state == simulate_complete.final_state`).
+
+14. **`test_analyzer_core.py`** - *Analyzer core-logic (node subprocess)*
+    - Regex-extracts the `analyzer-core` JS block and asserts to255/asTriple,
+      LRU eviction, prefetch windows, chainsWithBase, nearestSucker,
+      colorErrorStats, playbackAdvance; static checks on the HTML (half-cell
+      shift present, no `ReactDOM.render`, no fabricated data).
+
 ## Test Coverage
 
 ### High Priority Components (Fully Tested)

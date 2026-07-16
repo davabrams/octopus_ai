@@ -27,7 +27,6 @@ Usage:
 
 The DB path defaults to logs/forces.db (created if absent).
 """
-import enum
 import json
 import os
 import sqlite3
@@ -35,15 +34,7 @@ import time
 
 import numpy as np
 
-
-def _json_default(o):
-    """Serialize the odd types a config holds (enums, numpy scalars)."""
-    if isinstance(o, enum.Enum):
-        return o.name
-    if isinstance(o, np.generic):
-        return o.item()
-    return str(o)
-
+from octopus_ai.config import json_default as _json_default
 
 DEFAULT_DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

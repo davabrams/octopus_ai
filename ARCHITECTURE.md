@@ -45,17 +45,21 @@ octopus_ai/                   # repo root
 │   └── model.py             # Entry point: datagen → train → save → (inference/eval)
 ├── visualizer/
 │   ├── octo_viz.py           # Entry point: matplotlib visualizer loop
-│   ├── websocket_server.py   # WebSocket sim server for browser viz (ws://localhost:8765)
-│   ├── octopus-visualizer.html  # Self-contained HTML/JS frontend
-│   └── octopus-ai-visualizer.tsx # React version of the same frontend
+│   ├── websocket_server.py   # Analyzer server, v2 protocol (Simulate + Playback); ws://localhost:8765
+│   └── analyzer.html         # Self-contained record & replay analyzer (React 18 UMD, no build step)
 ├── simulator/
 │   ├── simutil.py           # State, Agent, Color, enums, matplotlib display helpers
 │   ├── octopus_generator.py # Sucker, Limb, Octopus classes
 │   ├── agent_generator.py   # AgentGenerator (prey/threat spawning + motion)
-│   ├── surface_generator.py # RandomSurface (binary grid)
+│   ├── surface_generator.py # RandomSurface (RGB grid)
+│   ├── sim_recorder.py      # Record & replay: per-frame DuckDB writer (one file per run)
+│   ├── headless_runner.py   # Record & replay: the ONE headless sim loop (CLI + server share it)
+│   ├── run_store.py         # Record & replay: read-only playback query layer over logs/runs/*.duckdb
 │   └── ilqr/
-│       ├── costs.py         # CostTemplate + ColocationRepeller/MaxDistanceRepeller/PointAttractor/AllCosts
-│       └── nodemesh.py      # Interactive node-graph octopus prototype (main()-guarded)
+│       ├── solver.py        # Generic Gauss-Newton iLQR optimizer (+ opt-in per-iteration history)
+│       ├── arm.py           # ArmController: single-limb model + compiled solver (the active iLQR path)
+│       ├── costs.py         # CostTemplate + repellers/attractor (superseded prototype)
+│       └── nodemesh.py      # Interactive node-graph octopus prototype (main()-guarded; superseded)
 ├── training/
 │   ├── trainutil.py         # Trainer base class (raises RuntimeError on unimplemented)
 │   ├── sucker.py            # SuckerTrainer: datagen/format/train/inference
@@ -255,8 +259,17 @@ The built-out, TensorFlow-native iLQR that drives `MovementMode.ILQR`:
   effort, tip attractor toward the target). It builds its compiled solver once
   and exposes `solve(base_xy, target, x0, u_init)`; `Limb._move_ilqr` calls it
   receding-horizon (MPC): plan, apply the first step, warm-start next frame.
+- **Per-iteration history (record & replay).** `solve(..., record_history=True)`
+  captures an `ILQRIterationRecord` per iteration (iter 0 = warm-start rollout;
+  then `accepted`/`cholesky_fail`/`linesearch_fail`, with the unclamped
+  `x_traj`), returned on `ILQRResult.history`; invariant `len(history) ==
+  iterations + 1`. It is a **per-call kwarg** (not a controller field) so one
+  compiled controller serves both modes, and it never reaches a `@tf.function`
+  — the loop is eager Python, so it is **zero-overhead when off**. `Limb`
+  drains `last_ilqr_history`/`last_ilqr_meta` for `SimRecorder` when
+  `output.record_ilqr_history` is set.
 - Tests: `tests/test_ilqr.py` (reach convergence, multi-target graph reuse,
-  effort-holds-still).
+  effort-holds-still, and the history capture invariants).
 
 Each limb owns its own `ArmController` and solves independently of the others
 (§11.4). The legacy prototype below predates this and is not used by the
@@ -504,30 +517,38 @@ model (validated as `keras.Model`), then loops: `display_refresh`, show
 Requires a GUI backend and an initial button press
 (`fig.waitforbuttonpress()`); run from a real display session.
 
-### 8.2 WebSocket stack
+### 8.2 WebSocket stack (record & replay analyzer)
 
-- `visualizer/websocket_server.py` (rewritten July 2026) streams simulation
-  state as JSON at ~10 FPS on `ws://localhost:8765`, with play/pause/reset
-  and config-update messages. It drives the **real** simulator classes:
-  a flat mirror for the wire and a typed `Config` rebuilt from it on every
-  update, real `Octopus` serialization (limb centerlines
-  as `limbs`, flat `suckers` list with `color`/`target_color`, agents as
-  `prey`/`predator`), visibility via `Octopus.visibility`, and optional ML
-  inference per `cfg.inference.mode` with heuristic fallback
-  if the model can't load. Config updates are type-coerced to the existing
-  value's type and rebuild the simulation. Handler uses the websockets ≥13
-  single-argument API. Wire format is documented in the module docstring.
-  Run: `bazel run //visualizer:websocket_server` (or `python
-  visualizer/websocket_server.py`). The `octopus-visualizer.html` page is a
-  `data` dep of the Bazel target so it ends up in the binary's runfiles.
-- `visualizer/octopus-visualizer.html` — self-contained browser frontend
-  (canvas rendering, config sliders, connect/play/pause/reset). Expects
-  messages of type `simulation_state` with `{background,
-  octopus{head,limbs,suckers}, agents, metadata{iteration,
-  visibility_score, fps}}`. The server serves this file from next to
-  itself, so it must stay beside `websocket_server.py`.
-- `visualizer/octopus-ai-visualizer.tsx` — the same UI as a React component
-  (lucide-react icons), for embedding elsewhere.
+The live-streaming v1 server was replaced (RECORD_REPLAY_PLAN.md) by a **v2
+record & replay** stack. There is no live free-running mode anymore.
+
+- `visualizer/websocket_server.py` — the analyzer server on
+  `ws://localhost:8765`. It **never runs the sim on the event loop**: a
+  `simulate` request hands off to `HeadlessRunner.run` on a worker thread
+  (`asyncio.to_thread`), coalesced `simulate_progress` broadcasts flow back, and
+  cancellation is a `threading.Event` polled once per frame. Playback requests
+  (`list_runs`/`load_run`/`get_frame`/`get_frames`) go through `RunStore` on
+  worker threads, each opening a run's `.duckdb` read-only. Exactly one simulate
+  runs at a time (`busy`); the active run's file is write-locked, so its list
+  row is synthesized in memory. The **v2 wire protocol is the module docstring**
+  (envelope `{type, req_id, data}`, floats rounded to 4 decimals, enums as
+  `.name`); v1 `config_update`/`simulation_control` now return
+  `error code="gone"`. Split into `websocket_server_lib` (importable, tested)
+  + a binary, mirroring `inference_server`.
+- `visualizer/analyzer.html` — the self-contained analyzer (React 18 UMD +
+  Babel + Tailwind CDN, no build step). Two modes: **Simulate** (run a fresh
+  headless sim, watch it record) and **Playback** (scrub a saved run
+  frame-by-frame, and iLQR iteration-by-iteration within a frame — ghost
+  horizon poses, tip path, cost curves, before/after/target sucker colors). Pure
+  logic lives in a `window.AnalyzerCore` block that is unit-tested under node.
+  The server serves it (and the old `/octopus-visualizer.html` URL aliases to
+  it) from next to itself, so it must stay beside `websocket_server.py`.
+
+Storage: `simulator/sim_recorder.py` writes one `logs/runs/<run_id>.duckdb` per
+run (schema in the module; DuckDB is single-writer-per-file, hence per-run
+files). `simulator/headless_runner.py` is the one headless loop shared by the
+CLI and the server. `simulator/run_store.py` is the read-only query layer and
+owns the iLQR trajectory reshape + carry-forward so no client reimplements it.
 
 ---
 
@@ -538,7 +559,11 @@ Requires a GUI backend and an initial button press
 - **Bazel**: Bzlmod-era (`MODULE.bazel`, no `WORKSPACE`). Runnable targets:
   `//visualizer:octo_viz`, `//visualizer:websocket_server`,
   `//octopus_ai:datagen`, `//octopus_ai:model`, `//inference_server:server`,
-  `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`.
+  `//simulator:headless_runner_bin` (record & replay CLI),
+  `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`. New
+  record & replay libraries: `//simulator:sim_recorder`, `//simulator:run_store`,
+  `//simulator:headless_runner`, `//simulator/ilqr:solver`, `//simulator/ilqr:arm`,
+  and `//visualizer:websocket_server_lib` (importable, socket-free-testable).
   Bazel does not manage Python deps here — it relies on the ambient
   interpreter having tensorflow etc. `config.py` reads
   `BUILD_WORKSPACE_DIRECTORY` (set by `bazel run`) so datagen/training write

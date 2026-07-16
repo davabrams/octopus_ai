@@ -23,6 +23,8 @@ import os
 from dataclasses import fields, is_dataclass, replace
 from enum import Enum
 
+import numpy as np
+
 from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenience)
     AgentConfig,
     Config,
@@ -73,6 +75,22 @@ DEFAULT_PATHS = PathsConfig(
     model_paths=default_models,
     dataset_paths=default_datasets,
 )
+
+
+def json_default(o):
+    """`default=` for json.dumps over a flat config.
+
+    config_to_flat holds raw types json can't serialize on its own: Enum
+    members (MovementMode, MLMode, ...) and numpy scalars. Enums serialize as
+    their .name (D14); numpy scalars unwrap to their Python value; anything
+    else falls back to str. Shared by force_logger and the record & replay
+    recorder so the on-disk config snapshot is one consistent format.
+    """
+    if isinstance(o, Enum):
+        return o.name
+    if isinstance(o, np.generic):
+        return o.item()
+    return str(o)
 
 
 # =========================================================== PROFILES ===
@@ -130,6 +148,15 @@ VIZ_ILQR = replace(
         movement_mode=MovementMode.ILQR,   # body drifts by the arms' pull
         limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
     ),
+)
+
+# Headless record-and-replay. Same simulation as VIZ_ILQR, but writes a
+# DuckDB run file with per-iteration iLQR history for the analyzer to play
+# back. Force arrows off (there is no live matplotlib window).
+RECORD = replace(
+    VIZ_ILQR,
+    output=replace(VIZ_ILQR.output, record_run=True,
+                   record_ilqr_history=True, show_forces=False),
 )
 
 # Deterministic and side-effect free. Nothing written to disk, no dependence
@@ -199,6 +226,8 @@ def config_to_flat(cfg: Config) -> dict:
         'highlight_octopus': cfg.output.highlight_octopus,
         'track_performance': cfg.output.track_performance,
         'save_images': cfg.output.save_images,
+        'record_run': cfg.output.record_run,
+        'record_ilqr_history': cfg.output.record_ilqr_history,
         'adjacency_radius': cfg.octopus.sucker.adjacency_radius,
         'inference_location': cfg.inference.location,
         'inference_mode': cfg.inference.mode,
@@ -388,6 +417,9 @@ def config_from_flat(d: dict) -> Config:
             log_forces=g('log_forces', D.output.log_forces),
             save_images=g('save_images', D.output.save_images),
             video_fps=g('video_fps', D.output.video_fps),
+            record_run=g('record_run', D.output.record_run),
+            record_ilqr_history=g('record_ilqr_history',
+                                  D.output.record_ilqr_history),
         ),
         datagen=DatagenConfig(
             write_format=g('datagen_data_write_format',

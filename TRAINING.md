@@ -10,7 +10,7 @@ Create an ARM-native Python venv (required on Apple Silicon):
 ```bash
 /opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # also installs duckdb (record & replay storage)
 ```
 
 Verify TensorFlow loads:
@@ -187,15 +187,16 @@ Click into the matplotlib window and press a key to start the loop. The
 green number is the visibility score (mean squared color error; lower =
 better camouflage).
 
-### Browser (WebSocket visualizer)
+### Browser (record & replay analyzer)
 
 ```bash
 python visualizer/websocket_server.py     # ws://localhost:8765
-# then open visualizer/octopus-visualizer.html in a browser and click Connect
+# then open http://localhost:8765/ in a browser
 ```
-Uses the heuristic by default; set `inference.mode` on the server's
-profile to drive it with a trained model (falls back to the heuristic if the model
-can't load).
+The analyzer has Simulate (run a fresh headless sim + watch it record) and
+Playback (scrub a saved `logs/runs/<run_id>.duckdb`). Uses the heuristic by
+default; set `inference.mode` on the server's profile to drive it with a
+trained model (falls back to the heuristic if the model can't load).
 
 ### Inference server
 

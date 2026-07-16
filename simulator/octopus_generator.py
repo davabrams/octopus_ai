@@ -173,6 +173,13 @@ class Limb:
         self.ilqr_body_stiffness = limb.ilqr.body_stiffness  # how hard this
         # arm's reach/flee tugs the body (feeds _drift_body_by_tension)
 
+        # Opt-in per-iteration iLQR recording (record & replay). When on, each
+        # _move_ilqr solve captures its solve history + per-solve metadata for
+        # the recorder to drain between frames; off = zero overhead.
+        self.record_ilqr_history = cfg.output.record_ilqr_history
+        self.last_ilqr_history = None  # list[ILQRIterationRecord] | None
+        self.last_ilqr_meta = None     # dict | None, per-solve metadata
+
         """" generate the initial sucker positions within the arm"""
         self._gen_centerline(x_octo, y_octo, init_angle)
         self._refresh_sucker_locations()
@@ -580,9 +587,14 @@ class Limb:
         # The arm reaches toward its prey; with none, it holds at the tip.
         solve_target = prey if prey is not None else [tip.x, tip.y]
 
+        # Snapshot the warm-start controls BEFORE the solve: the np.roll below
+        # builds a fresh array, so this reference stays stable for recording.
+        u_init = self._ilqr_u
+
         res = self._ilqr_controller.solve(
             base_xy=[x_octo, y_octo], target=solve_target, x0=x0,
-            threat=threat, u_init=self._ilqr_u)
+            threat=threat, u_init=self._ilqr_u,
+            record_history=self.record_ilqr_history)
 
         # Receding horizon: apply only the first planned step (x_traj[1]).
         new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
@@ -599,6 +611,26 @@ class Limb:
         u_np = res.u_traj.numpy()
         self._ilqr_u = np.roll(u_np, -1, axis=0)
         self._ilqr_u[-1] = 0.0
+
+        # Drain solve history + metadata for the recorder (rebound every frame;
+        # the recorder must read them between octo.move() and the next frame).
+        if self.record_ilqr_history:
+            self.last_ilqr_history = res.history
+            self.last_ilqr_meta = {
+                "base_xy": (float(x_octo), float(y_octo)),
+                "target": (float(solve_target[0]), float(solve_target[1])),
+                # Without target_kind an idle frame (holding at its own tip)
+                # looks like the arm "reaching" its own tip.
+                "target_kind": "prey" if prey is not None else "hold",
+                "threat": (None if threat is None
+                           else (float(threat[0]), float(threat[1]))),
+                "threat_active": threat is not None,
+                "x0": x0,                 # (2*n_free,) float32
+                "u_init": u_init,         # (horizon, 2*n_free) float32 | None
+                "iterations": res.iterations,
+                "converged": res.converged,
+                "final_cost": float(res.cost),
+            }
 
         # Base reaction: the ONLY thing the body feels is the tensile force in
         # the spring between the base (node 0, pinned to the body) and its
