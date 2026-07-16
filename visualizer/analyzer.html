@@ -452,6 +452,15 @@ function App() {
     }
   }, [send]);
 
+  // Auto-connect on mount (checklist item 1): connect once with the default
+  // ws url; cleanup closes the socket on unmount. Refs keep it out of the
+  // stale-closure reconnect trap the old page fell into.
+  useEffect(() => {
+    connect();
+    return () => { try { wsRef.current && wsRef.current.close(); } catch (e) {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---- run loading ----
   const loadRun = useCallback((runId) => {
     frameCache.current = C.makeLru(400);
