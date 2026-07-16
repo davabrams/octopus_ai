@@ -57,9 +57,8 @@ octopus_ai/                   # repo root
 │   ├── run_store.py         # Record & replay: read-only playback query layer over logs/runs/*.duckdb
 │   └── ilqr/
 │       ├── solver.py        # Generic Gauss-Newton iLQR optimizer (+ opt-in per-iteration history)
-│       ├── arm.py           # ArmController: single-limb model + compiled solver (the active iLQR path)
-│       ├── costs.py         # CostTemplate + repellers/attractor (superseded prototype)
-│       └── nodemesh.py      # Interactive node-graph octopus prototype (main()-guarded; superseded)
+│       ├── residuals.py     # Differentiable residual library (spring/bend/repel/reach/effort)
+│       └── arm.py           # ArmController: single-limb model + compiled solver (composes residuals.py)
 ├── training/
 │   ├── trainutil.py         # Trainer base class (raises RuntimeError on unimplemented)
 │   ├── sucker.py            # SuckerTrainer: datagen/format/train/inference
@@ -268,33 +267,28 @@ The built-out, TensorFlow-native iLQR that drives `MovementMode.ILQR`:
   — the loop is eager Python, so it is **zero-overhead when off**. `Limb`
   drains `last_ilqr_history`/`last_ilqr_meta` for `SimRecorder` when
   `output.record_ilqr_history` is set.
+- `residuals.py` — the **cost library**. Each cost term (spring, bend, threat
+  repel, tip reach, control effort) is a pure, differentiable TF function
+  returning a **residual vector**; the solver squares and sums them, and its
+  weight enters as `sqrt(w)` (so `‖√w·r‖² = w·‖r‖²`). `arm.py` composes these
+  into its `running_cost`/`terminal_cost`. This is the one home for cost terms —
+  a new drive (e.g. exploration) adds a residual here. Residuals must be
+  shape-stable (one-sided barriers use `relu`, not `if`) so the compiled graph
+  never retraces.
 - Tests: `tests/test_ilqr.py` (reach convergence, multi-target graph reuse,
   effort-holds-still, and the history capture invariants).
 
 Each limb owns its own `ArmController` and solves independently of the others
-(§11.4). The legacy prototype below predates this and is not used by the
-simulator.
+(§11.4).
 
-Legacy prototype (`costs.py` + `nodemesh.py`, standalone):
+> **Retired (July 2026):** an earlier standalone `costs.py` (`CostTemplate`/
+> `AllCosts` gradient-relaxation classes) + `nodemesh.py` (a networkx node-graph
+> animation) prototype was **deleted**. It emitted hand-written gradients rather
+> than autodiff'd residuals — a different, incompatible paradigm — and was never
+> wired into `Limb.move`. The active path is `solver.py` + `arm.py` +
+> `residuals.py`.
 
-- `costs.py` defines a small gradient-cost framework:
-  - `ColocationRepeller` — pushes nodes apart below `min_distance`;
-  - `MaxDistanceRepeller` — pulls neighbors together beyond `max_distance`;
-  - `PointAttractor` — exponential-falloff pull toward a point;
-  - `AllCosts` — composes the above over all nodes/neighbors/attractors and
-    implements a naive `line_search()` over candidate alphas, returning
-    `(best_alpha, best_cost, best_grad)`;
-  - `cost_heatmap()` / `plot_graph()` demo functions under `__main__`.
-- `nodemesh.py` builds a 4-limb × 4-sucker node graph (networkx) and
-  animates it with attractors (including mouse-following), applying
-  line-searched gradients per frame. The animation lives in a
-  `main()`-guarded entry point, so the module is safely
-  importable. Run it via `python simulator/ilqr/nodemesh.py` or
-  `bazel run //simulator/ilqr:nodemesh`.
-
-This legacy prototype shares `State` with the simulator but nothing else and
-is not wired into `Limb.move`; the active iLQR path is `solver.py` + `arm.py`
-above. iLQR is the **motor-control tier** of the compute hierarchy and is CPU
+iLQR is the **motor-control tier** of the compute hierarchy and is CPU
 work with each limb solving independently — see §11.4 for the placement
 rationale.
 
@@ -559,8 +553,8 @@ owns the iLQR trajectory reshape + carry-forward so no client reimplements it.
 - **Bazel**: Bzlmod-era (`MODULE.bazel`, no `WORKSPACE`). Runnable targets:
   `//visualizer:octo_viz`, `//visualizer:websocket_server`,
   `//octopus_ai:datagen`, `//octopus_ai:model`, `//inference_server:server`,
-  `//simulator:headless_runner_bin` (record & replay CLI),
-  `//simulator/ilqr:nodemesh`, plus `py_test` targets in `tests/BUILD`. New
+  `//simulator:headless_runner_bin` (record & replay CLI), plus `py_test`
+  targets in `tests/BUILD`. New
   record & replay libraries: `//simulator:sim_recorder`, `//simulator:run_store`,
   `//simulator:headless_runner`, `//simulator/ilqr:solver`, `//simulator/ilqr:arm`,
   and `//visualizer:websocket_server_lib` (importable, socket-free-testable).

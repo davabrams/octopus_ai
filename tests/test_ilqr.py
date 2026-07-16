@@ -10,22 +10,19 @@ from itertools import pairwise
 
 import numpy as np
 import tensorflow as tf
+from helpers import make_config
 
-from simulator.ilqr.arm import (
-    ArmController,
-    _chain_positions,
-    _segment_lengths,
-)
+from simulator.ilqr.arm import ArmController
+from simulator.ilqr.residuals import chain_positions, segment_lengths
 from simulator.ilqr.solver import make_solver
 from simulator.simutil import MovementMode
-from tests.helpers import make_config
 
 
 def _tip_and_segments(res, base):
     base_t = tf.constant(base, tf.float32)
-    chain = _chain_positions(res.x_traj[-1], base_t)
+    chain = chain_positions(res.x_traj[-1], base_t)
     tip = chain.numpy()[-1]
-    seg = _segment_lengths(chain).numpy()
+    seg = segment_lengths(chain).numpy()
     return tip, seg
 
 

@@ -37,21 +37,8 @@ from dataclasses import dataclass
 import numpy as np
 import tensorflow as tf
 
+from simulator.ilqr import residuals as res
 from simulator.ilqr.solver import DT, ILQRResult, make_solver
-
-_EPS = 1e-9  # guards sqrt at zero distance (norm gradient is undefined there)
-
-
-def _chain_positions(x: tf.Tensor, base_xy: tf.Tensor) -> tf.Tensor:
-    """(2*n_free,) free-node vector -> (n_free+1, 2) chain incl. the base."""
-    free = tf.reshape(x, (-1, 2))
-    return tf.concat([tf.expand_dims(base_xy, 0), free], axis=0)
-
-
-def _segment_lengths(chain: tf.Tensor) -> tf.Tensor:
-    """Euclidean length of each consecutive segment in the chain."""
-    deltas = chain[1:] - chain[:-1]
-    return tf.sqrt(tf.reduce_sum(tf.square(deltas), axis=1) + _EPS)
 
 
 @dataclass
@@ -95,44 +82,21 @@ class ArmController:
         def dynamics(x, u):
             return x + u * DT
 
-        def _spring_residual(x, base_xy):
-            chain = _chain_positions(x, base_xy)
-            return sw_spring * (_segment_lengths(chain) - rest)
-
-        def _bending_residual(x, base_xy):
-            # Discrete curvature at each interior node: the second difference
-            # p_{i-1} - 2 p_i + p_{i+1}. Zero for a straight chain, so this
-            # pulls the arm toward straightness (it can still curve toward a
-            # target, just not fold back on itself). Includes the base so the
-            # arm leaves the body smoothly.
-            chain = _chain_positions(x, base_xy)  # (n_free+1, 2)
-            curv = chain[2:] - 2.0 * chain[1:-1] + chain[:-2]  # (n_free-1, 2)
-            return sw_bend * tf.reshape(curv, [-1])
-
-        def _repel_residual(x, threat, threat_w):
-            # One-sided barrier: every free node pays threat_w * (r_safe - dist)
-            # while within r_safe of the threat, zero beyond it. threat_w is the
-            # sqrt-weight, 0 when no threat is in range (so this term vanishes
-            # without changing the residual's shape - no retrace). Pushes the
-            # whole arm out of the keep-out zone.
-            free = tf.reshape(x, (-1, 2))  # (n_free, 2)
-            d = tf.sqrt(tf.reduce_sum(tf.square(free - threat), axis=1) + _EPS)
-            return threat_w * tf.nn.relu(r_safe - d)  # (n_free,)
-
-        def _tip(x):
-            return tf.reshape(x, (-1, 2))[-1]
-
+        # Costs are composed from the shared residual library (residuals.py);
+        # each term returns a residual vector the solver squares and sums, with
+        # its weight folded in as sqrt(w). params = [base_xy, target, threat,
+        # threat_w] (see solve()).
         def running_cost(x, u, params):
             base_xy = params[0:2]
             target = params[2:4]
             threat = params[4:6]
             threat_w = params[6]
             return tf.concat([
-                sw_effort * u,
-                _spring_residual(x, base_xy),
-                _bending_residual(x, base_xy),
-                _repel_residual(x, threat, threat_w),
-                sw_reach_run * (_tip(x) - target),
+                res.effort_residual(u, sw_effort),
+                res.spring_residual(x, base_xy, rest, sw_spring),
+                res.bending_residual(x, base_xy, sw_bend),
+                res.repel_residual(x, threat, threat_w, r_safe),
+                res.reach_residual(x, target, sw_reach_run),
             ], axis=0)
 
         def terminal_cost(x, params):
@@ -141,10 +105,10 @@ class ArmController:
             threat = params[4:6]
             threat_w = params[6]
             return tf.concat([
-                sw_reach_terminal * (_tip(x) - target),
-                _spring_residual(x, base_xy),
-                _bending_residual(x, base_xy),
-                _repel_residual(x, threat, threat_w),
+                res.reach_residual(x, target, sw_reach_terminal),
+                res.spring_residual(x, base_xy, rest, sw_spring),
+                res.bending_residual(x, base_xy, sw_bend),
+                res.repel_residual(x, threat, threat_w, r_safe),
             ], axis=0)
 
         self._dynamics = dynamics

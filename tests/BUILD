@@ -64,7 +64,6 @@ py_test(
     visibility = ["//visibility:public"],
     deps = [
         "//simulator:simutil",
-        "//simulator/ilqr:costs",
     ],
 )
 
@@ -81,6 +80,7 @@ py_test(
         "//simulator:octopus_generator",
         "//simulator:simutil",
         "//simulator/ilqr:arm",
+        "//simulator/ilqr:residuals",
         "//simulator/ilqr:solver",
     ],
 )

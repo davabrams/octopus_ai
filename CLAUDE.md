@@ -234,7 +234,7 @@ unused imports); clean opportunistically, don't let it block work.
 - Prefer `ValueError`/`TypeError` over bare `assert` for runtime validation
   (older code still asserts; migrate when touching it).
 - Entry scripts are mostly top-to-bottom module code (not `main()`-wrapped);
-  `visualizer/websocket_server.py` and `simulator/ilqr/nodemesh.py` have
+  `visualizer/websocket_server.py` and `simulator/headless_runner.py` have
   proper `main()` guards. The two `visualizer/` Python entry points insert
   the repo root onto `sys.path` so they run from the repo root despite
   importing top-level modules. Don't import `model.py` from library
@@ -254,9 +254,10 @@ unused imports); clean opportunistically, don't let it block work.
 4. `MovementMode` has four working limb modes: `RANDOM`, `LUMPED_SPRING`,
    `SPRING_CHAIN`, and `ILQR` (per-limb TensorFlow iLQR reach; each limb owns
    its own compiled `ArmController`, `simulator/ilqr/` + `Limb._move_ilqr`,
-   MPC-style). Agents only implement `RANDOM`/`REACTIVE`. The old
-   `simulator/ilqr/nodemesh.py` + `costs.py` gradient-relaxation prototype is
-   superseded by `solver.py` + `arm.py` and is not wired in. See
+   MPC-style). Agents only implement `RANDOM`/`REACTIVE`. The active iLQR path
+   is `solver.py` + `arm.py` + `residuals.py` (the cost library — new cost terms
+   go there). The old `nodemesh.py` + `costs.py` gradient-relaxation prototype
+   was **deleted** July 2026 (incompatible paradigm, never wired in). See
    ARCHITECTURE.md §4.5 and §11 for the compute-placement rationale.
 5. `InferenceLocation.REMOTE` exists but nothing routes inference to the
    server yet — wiring it up means giving `Sucker.find_color` (or a layer
