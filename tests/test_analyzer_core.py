@@ -146,6 +146,21 @@ class TestStaticChecks(unittest.TestCase):
         # No random-surface / random-agent generator in the analyzer.
         self.assertNotIn("Math.random() > 0.5 ? 'predator'", html)
 
+    def test_jsx_uses_classic_runtime_not_autorun_babel(self):
+        """Regression guard: the JSX must be transformed with the CLASSIC JSX
+        runtime and NOT auto-run as text/babel.
+
+        @babel/standalone auto-processes text/babel (and text/jsx) with the
+        AUTOMATIC runtime, which injects `import {jsx} from "react/jsx-runtime"`
+        — an ES-module import a classic <script> can't run, so the page mounts
+        nothing (blank). We keep the source as text/plain and transform it once
+        with runtime:"classic"."""
+        with open(ANALYZER, encoding="utf-8") as f:
+            html = f.read()
+        self.assertNotIn('type="text/babel"', html)
+        self.assertIn('id="app-src"', html)
+        self.assertRegex(html, r'runtime:\s*"classic"')
+
 
 if __name__ == "__main__":
     unittest.main()

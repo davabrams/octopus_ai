@@ -137,7 +137,14 @@
 <!-- ================================================================= -->
 <!-- React UI + canvas rendering.                                       -->
 <!-- ================================================================= -->
-<script type="text/babel" data-presets="react">
+<!-- The JSX source, as type="text/plain" so the browser never runs it AND
+     @babel/standalone's auto-runner never touches it (it auto-processes BOTH
+     text/babel and text/jsx, either of which would (a) default preset-react to
+     the AUTOMATIC JSX runtime — injecting an ES-module `import` a classic
+     <script> can't run, "Cannot use import statement outside a module" — and
+     (b) double-execute this block. The bootstrap below is the ONLY thing that
+     transforms it, with the CLASSIC runtime (JSX -> React.createElement). -->
+<script type="text/plain" id="app-src">
 const { useState, useEffect, useRef, useCallback } = React;
 const C = window.AnalyzerCore;
 
@@ -789,4 +796,28 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<!-- Bootstrap: transform the JSX above with the classic runtime and run it.
+     Runs after React/ReactDOM/Babel have loaded (they're blocking scripts in
+     the head) and after #app-src is in the DOM. -->
+<script>
+(function () {
+  try {
+    var src = document.getElementById("app-src").textContent;
+    var out = Babel.transform(src, {
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    var s = document.createElement("script");
+    s.textContent = out;
+    document.body.appendChild(s);
+  } catch (e) {
+    document.getElementById("root").innerHTML =
+      '<pre style="color:#f87171;padding:16px;white-space:pre-wrap">' +
+      "Analyzer failed to start:\n" + (e && e.stack || e) +
+      "\n\n(If this mentions a CDN/import, the page needs internet for " +
+      "React/Babel/Tailwind — see RECORD_REPLAY_PLAN.md D9.)</pre>";
+    console.error(e);
+  }
+})();
 </script>
