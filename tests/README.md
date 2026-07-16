@@ -83,6 +83,13 @@ This directory contains comprehensive unit tests for the octopus_ai project, cov
       list_runs/load_run/get_frame round-trip; asserts the D15 read-back
       (`get_frame(last).state == simulate_complete.final_state`).
 
+15. **`test_body_rotation.py`** - *Base ring + body rotation*
+    - `TestBaseRing` - limb bases stay equally spaced on a radius-R ring every
+      frame (no collapse); `R = 0` reproduces the legacy single-point base.
+    - `TestBodyRotation` - body rotates under asymmetric strain, no spin under
+      symmetric hold, rotation cap enforced.
+    - `TestLimbsRemainIndependent` - distinct controllers + fixed angular slots.
+
 14. **`test_analyzer_core.py`** - *Analyzer core-logic (node subprocess)*
     - Regex-extracts the `analyzer-core` JS block and asserts to255/asTriple,
       LRU eviction, prefetch windows, chainsWithBase, nearestSucker,

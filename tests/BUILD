@@ -308,6 +308,22 @@ py_test(
 )
 
 py_test(
+    name = "test_body_rotation",
+    srcs = [
+        "helpers.py",
+        "test_body_rotation.py",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//octopus_ai:octo_util",
+        "//simulator:agent_generator",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+    ],
+)
+
+py_test(
     name = "test_spring_chain",
     srcs = [
         "helpers.py",

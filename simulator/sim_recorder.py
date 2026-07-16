@@ -79,6 +79,7 @@ _DDL = [
     CREATE TABLE IF NOT EXISTS frames (
         run_id VARCHAR NOT NULL, frame INTEGER NOT NULL,
         head_x FLOAT NOT NULL, head_y FLOAT NOT NULL,
+        head_theta FLOAT NOT NULL DEFAULT 0,
         body_force_x FLOAT, body_force_y FLOAT,
         body_drift_x FLOAT, body_drift_y FLOAT,
         prey_captured_frame INTEGER NOT NULL,
@@ -157,7 +158,7 @@ _DDL = [
 # INSERT templates keyed by table; column order matches the DDL above.
 _INSERTS = {
     "surface": "INSERT INTO surface VALUES (?,?,?,?,?,?)",
-    "frames": "INSERT INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "frames": "INSERT INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "limb_nodes": "INSERT INTO limb_nodes VALUES (?,?,?,?,?,?,?)",
     "suckers": "INSERT INTO suckers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "agents": "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -299,6 +300,7 @@ class SimRecorder:
 
         # Head + body forces.
         st["head"] = (float(octo.x), float(octo.y))
+        st["head_theta"] = float(getattr(octo, "theta", 0.0))
         bf = np.asarray(octo.last_body_force, dtype=float)
         bd = np.asarray(octo.last_body_drift, dtype=float)
         st["body_force"] = (float(bf[0]), float(bf[1]))
@@ -474,6 +476,7 @@ class SimRecorder:
                 frame,
                 head[0],
                 head[1],
+                st["head_theta"],
                 bf[0],
                 bf[1],
                 bd[0],

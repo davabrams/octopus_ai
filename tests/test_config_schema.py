@@ -143,7 +143,7 @@ class TestFlatViewParity(unittest.TestCase):
     must stay complete: a key that silently stops being emitted is a knob
     the UI can no longer set."""
 
-    EXPECTED_FLAT_KEYS = 60
+    EXPECTED_FLAT_KEYS = 63
 
     def test_flat_view_key_count(self):
         self.assertEqual(len(config_to_flat(DEFAULT)),
@@ -201,6 +201,33 @@ class TestRecordFlags(unittest.TestCase):
         cfg = make_config(record_run=True, record_ilqr_history=True)
         self.assertTrue(cfg.output.record_run)
         self.assertTrue(cfg.output.record_ilqr_history)
+
+
+class TestBodyRotationFlags(unittest.TestCase):
+    """Base-ring + body-rotation knobs (body rotation plan)."""
+
+    def test_defaults_and_flat_round_trip(self):
+        flat = config_to_flat(DEFAULT)
+        self.assertEqual(flat['octo_ring_radius'], DEFAULT.octopus.ring_radius)
+        self.assertEqual(flat['octo_max_body_angular_velocity'],
+                         DEFAULT.octopus.max_body_angular_velocity)
+        self.assertEqual(flat['octo_ilqr_body_torque_gain'],
+                         DEFAULT.octopus.limb.ilqr.body_torque_gain)
+        back = config_from_flat(flat)
+        self.assertEqual(back.octopus.ring_radius, DEFAULT.octopus.ring_radius)
+        self.assertEqual(back.octopus.max_body_angular_velocity,
+                         DEFAULT.octopus.max_body_angular_velocity)
+        self.assertEqual(back.octopus.limb.ilqr.body_torque_gain,
+                         DEFAULT.octopus.limb.ilqr.body_torque_gain)
+
+    def test_ring_radius_is_non_negative(self):
+        # A negative ring radius is meaningless (radius is a distance).
+        self.assertGreaterEqual(DEFAULT.octopus.ring_radius, 0.0)
+
+    def test_ring_radius_zero_reproduces_legacy_single_point_base(self):
+        cfg = replace(DEFAULT,
+                      octopus=replace(DEFAULT.octopus, ring_radius=0.0))
+        self.assertEqual(cfg.octopus.ring_radius, 0.0)
 
 
 if __name__ == '__main__':

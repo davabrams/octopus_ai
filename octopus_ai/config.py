@@ -264,7 +264,11 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_w_reach_terminal': cfg.octopus.limb.ilqr.w_reach_terminal,
         'octo_ilqr_w_repel': cfg.octopus.limb.ilqr.w_repel,
         'octo_ilqr_repel_radius': cfg.octopus.limb.ilqr.repel_radius,
+        'octo_ilqr_body_torque_gain': cfg.octopus.limb.ilqr.body_torque_gain,
         'octo_num_arms': cfg.octopus.num_arms,
+        'octo_ring_radius': cfg.octopus.ring_radius,
+        'octo_max_body_angular_velocity':
+            cfg.octopus.max_body_angular_velocity,
         'octo_max_sucker_distance': cfg.octopus.limb.max_sucker_distance,
         'octo_min_sucker_distance': cfg.octopus.limb.min_sucker_distance,
         'octo_movement_mode': cfg.octopus.movement_mode,
@@ -339,6 +343,9 @@ def config_from_flat(d: dict) -> Config:
                                 D.octopus.max_body_velocity),
             movement_mode=g('octo_movement_mode', D.octopus.movement_mode),
             sensing_radius=sensing,  # see docstring
+            ring_radius=g('octo_ring_radius', D.octopus.ring_radius),
+            max_body_angular_velocity=g('octo_max_body_angular_velocity',
+                                        D.octopus.max_body_angular_velocity),
             limb=LimbConfig(
                 rows=g('limb_rows', D.octopus.limb.rows),
                 cols=g('limb_cols', D.octopus.limb.cols),
@@ -380,6 +387,8 @@ def config_from_flat(d: dict) -> Config:
                                 D.octopus.limb.ilqr.max_iters),
                     body_stiffness=g('octo_ilqr_body_stiffness',
                                      D.octopus.limb.ilqr.body_stiffness),
+                    body_torque_gain=g('octo_ilqr_body_torque_gain',
+                                       D.octopus.limb.ilqr.body_torque_gain),
                     w_spring=g('octo_ilqr_w_spring',
                                D.octopus.limb.ilqr.w_spring),
                     w_bend=g('octo_ilqr_w_bend', D.octopus.limb.ilqr.w_bend),

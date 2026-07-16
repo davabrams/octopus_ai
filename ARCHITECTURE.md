@@ -281,6 +281,19 @@ The built-out, TensorFlow-native iLQR that drives `MovementMode.ILQR`:
 Each limb owns its own `ArmController` and solves independently of the others
 (§11.4).
 
+**Base ring + body rotation (BODY_ROTATION_PLAN.md).** Each limb's base (node 0)
+is pinned not to the body center but to its own point on a ring of radius
+`octo_ring_radius` around the body, at a fixed angular slot `2π·i/N` rotated by
+the body's orientation `theta`: `base_i = body + R·[cos(theta+φ_i),
+sin(theta+φ_i)]`. So the arms fan out from *distinct* roots and can't collapse
+into one line (the limbs stay independent — only the geometry changed).
+`Octopus` gains an orientation `theta` (the angular twin of `x, y`):
+`_drift_body_by_tension` integrates the summed arm *torque* (`Σ r_i × F_i`, each
+arm's base reaction at its ring point) into `theta`, capped by
+`octo_max_body_angular_velocity`, just as it integrates the linear tension sum
+into position. The ring is the prerequisite for rotation — a center-pinned base
+has no moment arm. `R = 0` reproduces the legacy single-point base.
+
 > **Retired (July 2026):** an earlier standalone `costs.py` (`CostTemplate`/
 > `AllCosts` gradient-relaxation classes) + `nodemesh.py` (a networkx node-graph
 > animation) prototype was **deleted**. It emitted hand-written gradients rather

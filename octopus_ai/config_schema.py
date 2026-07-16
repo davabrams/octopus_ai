@@ -136,6 +136,10 @@ class ILQRConfig:
                                  # tension to the body's drift (the body only
                                  # ever moves via this tension - never sensing
                                  # agents directly)
+    body_torque_gain: float = 3.0  # gain from each arm's base reaction (applied
+                                   # at its ring point) to the body's ROTATION.
+                                   # Torque and linear tension share the same
+                                   # base-reaction source, so they live together.
     w_spring: float = 2.0        # segment spacing toward rest length
     w_bend: float = 1.0          # straightness (anti-crumple)
     w_effort: float = 0.1        # control-magnitude penalty
@@ -177,6 +181,15 @@ class OctopusConfig:
     sensing_radius: float = 5.0  # how far an ARM senses agents. Split from
                                  # the agent's own sensing radius, which it
                                  # was accidentally forced to equal.
+    ring_radius: float = 1.0  # each limb's base is pinned to a point on a ring
+                              # of this radius around the body center (at the
+                              # limb's fixed angular slot, rotated by the body's
+                              # orientation) - so arms fan out from DISTINCT
+                              # roots instead of all sharing the body center.
+                              # 0.0 reproduces the legacy single-point base.
+    max_body_angular_velocity: float = 0.1  # per-frame cap on body rotation
+                                            # (rad); the angular twin of
+                                            # max_body_velocity.
     limb: LimbConfig = field(default_factory=LimbConfig)
     sucker: SuckerConfig = field(default_factory=SuckerConfig)
 

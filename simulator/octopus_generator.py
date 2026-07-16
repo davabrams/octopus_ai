@@ -173,6 +173,16 @@ class Limb:
         self.ilqr_body_stiffness = limb.ilqr.body_stiffness  # how hard this
         # arm's reach/flee tugs the body (feeds _drift_body_by_tension)
 
+        # Base-ring geometry (body rotation plan). Each limb's base is pinned to
+        # a fixed angular slot on a ring around the body, so the arms fan out
+        # from DISTINCT roots (never collocating at the center). base_angle is
+        # the limb's fixed offset; the body's orientation rotates the whole ring.
+        self.base_angle = float(init_angle)
+        self.ring_radius = cfg.octopus.ring_radius
+        # Offset of this arm's base from the body center last frame (the moment
+        # arm the body integrates into torque); rebound each _move_ilqr.
+        self.last_base_offset = np.zeros(2, dtype=float)
+
         # Opt-in per-iteration iLQR recording (record & replay). When on, each
         # _move_ilqr solve captures its solve history + per-solve metadata for
         # the recorder to drain between frames; off = zero overhead.
@@ -224,11 +234,17 @@ class Limb:
                 self.suckers[row + self.rows * col].set_loc(x_prime, y_prime)
 
     def move(self, x_octo: float, y_octo: float,
-             agents: list = None, coordinated_influence=None):
+             agents: list = None, coordinated_influence=None,
+             body_theta: float = 0.0, body_dtheta: float = 0.0):
         """Move the limb, then refresh sucker locations.
 
         x_octo, y_octo: the (possibly just-moved) body position; the arm
             base is anchored here.
+        body_theta: the body's orientation, which rotates this arm's base
+            around the ring (ILQR mode; see _move_ilqr).
+        body_dtheta: how much the body just rotated this frame; the arm is
+            carried rigidly with it (its free nodes rotate about the body
+            center by this) so rotation adds no spurious strain (ILQR mode).
         agents: list of Agent objects the arm may sense (LUMPED_SPRING).
         coordinated_influence: optional (dx, dy) supplied by the Octopus in
             full-body mode so arms share a target rather than each chasing
@@ -243,7 +259,7 @@ class Limb:
         elif self.movement_mode == MovementMode.SPRING_CHAIN:
             self._move_spring_chain(x_octo, y_octo, agents)
         elif self.movement_mode == MovementMode.ILQR:
-            self._move_ilqr(x_octo, y_octo, agents)
+            self._move_ilqr(x_octo, y_octo, agents, body_theta, body_dtheta)
         else:
             assert False, "Unknown movement mode"
 
@@ -542,16 +558,20 @@ class Limb:
                 nearest = ag
         return [nearest.x, nearest.y] if nearest is not None else None
 
-    def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None):
+    def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None,
+                   body_theta: float = 0.0, body_dtheta: float = 0.0):
         """Per-limb iLQR reach, receding-horizon (MPC) style.
 
         Each frame the arm re-plans a short trajectory toward its target with
         its own compiled iLQR controller (ARCHITECTURE.md §11.4), applies just
         the first planned step, and warm-starts next frame from the shifted
-        plan. The base (centerline node 0) is pinned to the body; the free
-        centerline nodes are the optimizer's decision variables. Springs hold
-        the chain near its rest spacing, an effort cost keeps motion economical,
-        and a tip attractor pulls toward nearby prey.
+        plan. The base (centerline node 0) is pinned to this arm's point on the
+        BODY RING - a fixed angular slot (base_angle) rotated by body_theta,
+        ring_radius out from the body center - so the arms fan out from distinct
+        roots instead of all sharing the center. The free centerline nodes are
+        the optimizer's decision variables. Springs hold the chain near its rest
+        spacing, an effort cost keeps motion economical, and a tip attractor
+        pulls toward nearby prey.
         """
         n_free = self.rows - 1
         if n_free < 1:
@@ -573,10 +593,32 @@ class Limb:
                 repel_radius=ic.repel_radius,
             )
 
-        # Pin the base; collect current free-node positions as the warm start.
+        # Carry the arm rigidly with the body's rotation this frame: rotate the
+        # free nodes about the body center by body_dtheta BEFORE warm-starting.
+        # Without this, rotating theta moves each base tangentially while the
+        # warm start stays in world coords - a spurious strain that feeds back
+        # into more torque and spins the body away (a runaway limit cycle).
+        # Carried rigidly, rotation adds no strain, so the body only rotates
+        # from genuine off-axis reaching (rotate-to-face, then settle).
+        if body_dtheta != 0.0:
+            cos_d, sin_d = np.cos(body_dtheta), np.sin(body_dtheta)
+            for i in range(1, self.rows):
+                px = self.center_line[i].x - x_octo
+                py = self.center_line[i].y - y_octo
+                self.center_line[i].x = x_octo + cos_d * px - sin_d * py
+                self.center_line[i].y = y_octo + sin_d * px + cos_d * py
+
+        # Pin the base to this arm's point on the body ring: a fixed angular
+        # slot (base_angle) rotated by the body's orientation, ring_radius out
+        # from the body center. R=0 reproduces the legacy single-point base.
+        psi = self.base_angle + body_theta
+        base_x = x_octo + self.ring_radius * np.cos(psi)
+        base_y = y_octo + self.ring_radius * np.sin(psi)
+        self.last_base_offset = np.array([base_x - x_octo, base_y - y_octo],
+                                         dtype=float)
         base = self.center_line[0]
-        base.x = x_octo
-        base.y = y_octo
+        base.x = base_x
+        base.y = base_y
         x0 = np.array([[self.center_line[i].x, self.center_line[i].y]
                        for i in range(1, self.rows)],
                       dtype=np.float32).reshape(-1)
@@ -592,7 +634,7 @@ class Limb:
         u_init = self._ilqr_u
 
         res = self._ilqr_controller.solve(
-            base_xy=[x_octo, y_octo], target=solve_target, x0=x0,
+            base_xy=[base_x, base_y], target=solve_target, x0=x0,
             threat=threat, u_init=self._ilqr_u,
             record_history=self.record_ilqr_history)
 
@@ -617,7 +659,7 @@ class Limb:
         if self.record_ilqr_history:
             self.last_ilqr_history = res.history
             self.last_ilqr_meta = {
-                "base_xy": (float(x_octo), float(y_octo)),
+                "base_xy": (float(base_x), float(base_y)),
                 "target": (float(solve_target[0]), float(solve_target[1])),
                 # Without target_kind an idle frame (holding at its own tip)
                 # looks like the arm "reaching" its own tip.
@@ -653,7 +695,7 @@ class Limb:
         # wander. Clamping to tension (stretch > 0) leaves an idle octopus
         # still, and only a genuinely straining arm moves the body.
         node1 = self.center_line[1]
-        dx, dy = node1.x - x_octo, node1.y - y_octo
+        dx, dy = node1.x - base_x, node1.y - base_y  # base<->node1 (ring base)
         seg_len = float(np.hypot(dx, dy))
         rest = self.max_sucker_distance  # the iLQR segment rest length
         stretch = seg_len - rest
@@ -733,11 +775,21 @@ class Octopus:
         self.model = None
         self.threading = cfg.run.threading
 
+        # Body ORIENTATION (body rotation plan): the angular twin of (x, y).
+        # The base ring rotates with theta, and theta integrates the summed arm
+        # torque so the fan can turn (the "top" limb is not always on top).
+        self.theta = 0.0
+        self.ring_radius = cfg.octopus.ring_radius
+        self.max_body_angular_velocity = cfg.octopus.max_body_angular_velocity
+        self.body_torque_gain = cfg.octopus.limb.ilqr.body_torque_gain
+
         # Last-frame body force capture (populated by _move_lumped_spring):
         # last_body_force is the summed arm tension; last_body_drift is the
         # capped displacement actually applied to the body this frame.
         self.last_body_force = np.zeros(2, dtype=float)
         self.last_body_drift = np.zeros(2, dtype=float)
+        self.last_body_torque = 0.0   # summed arm torque last frame
+        self.last_body_dtheta = 0.0   # capped rotation actually applied
 
         num_arms = cfg.octopus.num_arms
         self.limbs = [
@@ -780,7 +832,8 @@ class Octopus:
             assert False, "Unknown movement mode"
 
         for l in self.limbs:
-            l.move(self.x, self.y, agents, coordinated_influence)
+            l.move(self.x, self.y, agents, coordinated_influence,
+                   body_theta=self.theta, body_dtheta=self.last_body_dtheta)
 
     def _drift_body_by_tension(self):
         """Drift the body by the summed base tension of its arms.
@@ -805,12 +858,21 @@ class Octopus:
         """
         stored_tension_modes = (MovementMode.SPRING_CHAIN, MovementMode.ILQR)
         total = np.zeros(2, dtype=float)
+        torque = 0.0
         for limb in self.limbs:
             if self.movement_mode in stored_tension_modes:
-                total += np.asarray(limb.last_tension, dtype=float)
+                f = np.asarray(limb.last_tension, dtype=float)
             else:
-                total += limb.tension_vector()
+                f = np.asarray(limb.tension_vector(), dtype=float)
+            total += f
+            # Torque about the body center: the tangential component of each
+            # arm's base reaction applied at its ring point (moment arm r_i).
+            # r_i is zero for modes that don't sit on the ring, so they add no
+            # rotation. This is the ANGULAR twin of the linear tension sum.
+            r = np.asarray(limb.last_base_offset, dtype=float)
+            torque += float(r[0] * f[1] - r[1] * f[0])
 
+        # Linear: ease the body along the summed tension, capped.
         drift = np.zeros(2, dtype=float)
         mag = float(np.hypot(total[0], total[1]))
         if mag > 1e-9:
@@ -819,8 +881,18 @@ class Octopus:
             self.x += drift[0]
             self.y += drift[1]
 
+        # Angular: rotate the body by the summed torque, capped. As theta turns,
+        # the whole base ring rotates, so the fan re-orients (the top limb is
+        # not permanently on top).
+        dtheta = self.body_torque_gain * torque
+        cap = self.max_body_angular_velocity
+        dtheta = max(-cap, min(cap, dtheta))
+        self.theta = float((self.theta + dtheta) % (2.0 * np.pi))
+
         self.last_body_force = total.copy()
         self.last_body_drift = drift.copy()
+        self.last_body_torque = float(torque)
+        self.last_body_dtheta = float(dtheta)
         return None
 
     def find_color(

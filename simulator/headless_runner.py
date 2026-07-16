@@ -139,7 +139,8 @@ def serialize_state(
 
     return {
         "octopus": {
-            "head": {"x": float(octo.x), "y": float(octo.y)},
+            "head": {"x": float(octo.x), "y": float(octo.y),
+                     "theta": float(getattr(octo, "theta", 0.0))},
             "limbs": limbs,
             "suckers": suckers,
         },
@@ -251,7 +252,7 @@ class HeadlessRunner:
                 return vis_after, wall_ms
 
             # Frame 0: initial post-setup state, same seam, no movement (D11).
-            do_camouflage(0, 0, time.perf_counter())
+            vis_prev, _ = do_camouflage(0, 0, time.perf_counter())
 
             # Frames 1..N.
             for frame in range(1, num_frames + 1):
@@ -259,10 +260,11 @@ class HeadlessRunner:
                     status = "cancelled"
                     break
                 f_start = time.perf_counter()
-                ag.increment_all(octo)
+                ag.increment_all(octo, visibility=vis_prev)
                 octo.move(ag)
                 captured = ag.remove_captured_prey(octo)
                 vis_after, frame_ms = do_camouflage(frame, captured, f_start)
+                vis_prev = vis_after
                 if progress_cb is not None:
                     progress_cb(
                         {

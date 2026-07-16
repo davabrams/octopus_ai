@@ -117,8 +117,13 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
 - **State:** 6-DOF kinematic primitive `[x, y, θ, vx, vy, ω]` stored as a
   TensorFlow variable (`simulator/simutil.py`). Angles in radians, wrapped
   to [0, 2π). `dt = 1.0`.
-- **Octopus model:** head at (x, y) → 8 `Limb`s → each limb has
-  `limb_rows × limb_cols` `Sucker`s (default 16×2 = 32; 256 total).
+- **Octopus model:** head at (x, y) with an orientation `theta` → 8 `Limb`s →
+  each limb has `limb_rows × limb_cols` `Sucker`s (default 16×2 = 32; 256
+  total). In `ILQR` mode each limb's base is pinned to its own point on a ring
+  (`octo_ring_radius`) around the body — a fixed angular slot rotated by
+  `theta` — so the arms fan out from distinct roots. The body integrates the
+  arms' summed *torque* into `theta` (angular twin of the linear tension→drift),
+  so the fan rotates. See BODY_ROTATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
   constrained to change ≤ `octo_max_hue_change` (0.25) per step **per
   channel**. Full **RGB**: the surface grid is `(y, x, 3)` and each of

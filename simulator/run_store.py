@@ -42,6 +42,16 @@ def _r4(v):
     return None if v is None else round(float(v), 4)
 
 
+def _frames_has_theta(con) -> bool:
+    """Whether the frames table carries head_theta (runs recorded before the
+    body-rotation change lack it; they read back as theta = 0)."""
+    rows = con.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'frames' AND column_name = 'head_theta'"
+    ).fetchall()
+    return bool(rows)
+
+
 def _connect_ro(path):
     """Open a run file read-only, replaying a crashed run's WAL if needed.
 
@@ -223,7 +233,8 @@ class RunStore:
             if frame < 0 or frame >= frames_recorded:
                 raise FrameOutOfRangeError(frame, frames_recorded - 1)
             n_free = max(meta[2] - 1, 0)
-            state = self._build_state(con, run_id, frame)
+            state = self._build_state(con, run_id, frame,
+                                      _frames_has_theta(con))
             ilqr = (
                 self._build_ilqr(con, run_id, frame, meta[3], n_free)
                 if include_ilqr
@@ -243,21 +254,25 @@ class RunStore:
             if start < 0 or start >= max(frames_recorded, 1):
                 raise FrameOutOfRangeError(start, frames_recorded - 1)
             end = min(start + count, frames_recorded)
-            states = [self._build_state(con, run_id, f) for f in range(start, end)]
+            has_theta = _frames_has_theta(con)
+            states = [self._build_state(con, run_id, f, has_theta)
+                      for f in range(start, end)]
         finally:
             con.close()
         return {"run_id": run_id, "start": start, "frames": states}
 
     # ---- builders --------------------------------------------------------
-    def _build_state(self, con, run_id, frame) -> dict:
+    def _build_state(self, con, run_id, frame, has_theta=True) -> dict:
+        theta_col = ", head_theta" if has_theta else ""
         fr = con.execute(
             "SELECT head_x, head_y, visibility_before, visibility_after, "
-            "prey_captured_total, prey_captured_frame FROM frames "
+            f"prey_captured_total, prey_captured_frame{theta_col} FROM frames "
             "WHERE frame = ?",
             [frame],
         ).fetchone()
         if fr is None:
             raise FrameOutOfRangeError(frame, None)
+        head_theta = _r4(fr[6]) if has_theta else 0.0
 
         # Limb centerlines, grouped by limb in node order.
         node_rows = con.execute(
@@ -272,18 +287,19 @@ class RunStore:
 
         # Suckers, flat in (limb, sucker) order.
         suck_rows = con.execute(
-            "SELECT x, y, r_after, g_after, b_after, r_before, g_before, "
-            "b_before, r_target, g_target, b_target FROM suckers "
+            "SELECT limb_ix, x, y, r_after, g_after, b_after, r_before, "
+            "g_before, b_before, r_target, g_target, b_target FROM suckers "
             "WHERE frame = ? ORDER BY limb_ix, sucker_ix",
             [frame],
         ).fetchall()
         suckers = [
             {
-                "x": _r4(s[0]),
-                "y": _r4(s[1]),
-                "color": [_r4(s[2]), _r4(s[3]), _r4(s[4])],
-                "color_before": [_r4(s[5]), _r4(s[6]), _r4(s[7])],
-                "target_color": [_r4(s[8]), _r4(s[9]), _r4(s[10])],
+                "limb": int(s[0]),
+                "x": _r4(s[1]),
+                "y": _r4(s[2]),
+                "color": [_r4(s[3]), _r4(s[4]), _r4(s[5])],
+                "color_before": [_r4(s[6]), _r4(s[7]), _r4(s[8])],
+                "target_color": [_r4(s[9]), _r4(s[10]), _r4(s[11])],
             }
             for s in suck_rows
         ]
@@ -308,7 +324,7 @@ class RunStore:
 
         return {
             "octopus": {
-                "head": {"x": _r4(fr[0]), "y": _r4(fr[1])},
+                "head": {"x": _r4(fr[0]), "y": _r4(fr[1]), "theta": head_theta},
                 "limbs": limb_list,
                 "suckers": suckers,
             },
