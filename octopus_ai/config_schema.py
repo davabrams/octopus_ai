@@ -181,7 +181,7 @@ class OctopusConfig:
     sensing_radius: float = 5.0  # how far an ARM senses agents. Split from
                                  # the agent's own sensing radius, which it
                                  # was accidentally forced to equal.
-    ring_radius: float = 1.0  # each limb's base is pinned to a point on a ring
+    ring_radius: float = 0.5  # each limb's base is pinned to a point on a ring
                               # of this radius around the body center (at the
                               # limb's fixed angular slot, rotated by the body's
                               # orientation) - so arms fan out from DISTINCT

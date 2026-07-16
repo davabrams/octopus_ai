@@ -139,6 +139,67 @@ class TestBodyRotation(unittest.TestCase):
             self.assertLessEqual(abs(octo.last_body_dtheta), 0.05 + 1e-9)
 
 
+class TestThreatResponse(unittest.TestCase):
+    """The body-drift response to prey/threats (two-sided base spring gated on
+    a sensed threat, + whole-arm threat sensing)."""
+
+    def _fixed_agent(self, kind, dx, dy):
+        """Run with one FROZEN agent offset (dx, dy) from the start; return the
+        body's net displacement vector."""
+        from simulator.simutil import Agent, AgentType
+        octo, ag = _ilqr_octo(agents=1)
+        cx, cy = octo.x, octo.y
+        at = AgentType.PREY if kind == "prey" else AgentType.THREAT
+        agent = Agent(x=cx + dx, y=cy + dy, agent_type=at)
+        ag.agents = [agent]
+        x0, y0 = octo.x, octo.y
+        for _ in range(20):
+            agent.x, agent.y = cx + dx, cy + dy  # freeze the stimulus
+            octo.move(ag)
+        return octo.x - x0, octo.y - y0
+
+    def test_idle_body_does_not_wander(self):
+        """No agents => rope-like base tension => the body stays put (no idle
+        jitter from the two-sided spring)."""
+        octo, ag = _ilqr_octo(agents=0)
+        x0, y0 = octo.x, octo.y
+        for _ in range(20):
+            octo.move(ag)
+        self.assertLess(math.hypot(octo.x - x0, octo.y - y0), 0.05)
+
+    def test_body_pursues_prey(self):
+        """A fixed prey to the east pulls the body toward it (+x)."""
+        ddx, _ = self._fixed_agent("prey", 5.0, 0.0)
+        self.assertGreater(ddx, 0.02)
+
+    def test_body_flees_threat(self):
+        """A fixed threat to the east pushes the body away (-x) — the two-sided
+        base spring pushing when the arm recoils."""
+        ddx, _ = self._fixed_agent("threat", 1.5, 0.0)
+        self.assertLess(ddx, -0.1)
+
+    def test_threat_sensed_from_whole_arm_not_just_tip(self):
+        """A threat near an arm's MIDDLE (out of the tip's range) is still
+        sensed — whole-arm sensing catches what tip-only would miss."""
+        from simulator.simutil import Agent, AgentType
+        octo, ag = _ilqr_octo(agents=0)
+        limb = octo.limbs[0]
+        # Lay the arm out straight along +x so mid and tip are well separated.
+        for i, cp in enumerate(limb.center_line):
+            cp.x = octo.x + i * 0.5
+            cp.y = octo.y
+        limb.agent_range_radius = 0.5  # small range: tip-only would miss
+        mid = limb.center_line[len(limb.center_line) // 2]
+        tip = limb.center_line[-1]
+        threat = Agent(x=mid.x + 0.2, y=mid.y, agent_type=AgentType.THREAT)
+
+        # Within range of the middle node => sensed by whole-arm sensing...
+        self.assertIsNotNone(limb._ilqr_nearest_threat([threat]))
+        # ...but out of the tip's range (tip-only would have returned None).
+        self.assertGreater(math.hypot(threat.x - tip.x, threat.y - tip.y),
+                           limb.agent_range_radius)
+
+
 class TestLimbsRemainIndependent(unittest.TestCase):
     def test_each_limb_has_its_own_controller_and_base_angle(self):
         """No cross-limb coupling: distinct controllers, distinct fixed angular

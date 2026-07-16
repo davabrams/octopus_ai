@@ -538,10 +538,13 @@ class Limb:
                 nearest = ag
         return [nearest.x, nearest.y] if nearest is not None else None
 
-    def _ilqr_nearest_threat(self, tip, agents):
+    def _ilqr_nearest_threat(self, agents):
         """Nearest sensed THREAT within the arm's range as [x, y], or None.
 
-        Fed to the iLQR repulsion cost so the arm bends away from it.
+        Sensed from the WHOLE arm (the nearest centerline node), not just the
+        tip: a threat near the arm's middle or base must be avoided too, and the
+        repulsion barrier already pushes every node away from it. (Prey is still
+        sensed from the tip - reaching is a tip act; avoiding is a body-wide one.)
         """
         if not agents:
             return None
@@ -550,7 +553,8 @@ class Limb:
         for ag in agents:
             if ag.agent_type != AgentType.THREAT:
                 continue
-            d = np.hypot(ag.x - tip.x, ag.y - tip.y)
+            d = min(np.hypot(ag.x - n.x, ag.y - n.y)
+                    for n in self.center_line)
             if d > self.agent_range_radius:
                 continue
             if nearest_d is None or d < nearest_d:
@@ -625,7 +629,7 @@ class Limb:
 
         tip = self.center_line[-1]
         prey = self._ilqr_target(tip, agents)      # [x, y] or None
-        threat = self._ilqr_nearest_threat(tip, agents)
+        threat = self._ilqr_nearest_threat(agents)  # sensed from whole arm
         # The arm reaches toward its prey; with none, it holds at the tip.
         solve_target = prey if prey is not None else [tip.x, tip.y]
 
@@ -699,7 +703,15 @@ class Limb:
         seg_len = float(np.hypot(dx, dy))
         rest = self.max_sucker_distance  # the iLQR segment rest length
         stretch = seg_len - rest
-        if seg_len > 1e-9 and stretch > 0.0:
+        # A STRETCHED segment always pulls the body toward node1 (reaching prey).
+        # A COMPRESSED segment pushes the body away from node1 - but ONLY while
+        # this arm is recoiling from a sensed threat, so the body actually flees.
+        # With no threat we stay rope-like (tension >= 0): idle arms settle a
+        # hair compressed and asymmetrically, and a two-sided idle spring would
+        # jitter the body at max speed. Gating the push on a real threat gives
+        # the flee without the idle wander.
+        pushing = threat is not None
+        if seg_len > 1e-9 and (stretch > 0.0 or pushing):
             self.last_tension = self.ilqr_body_stiffness * stretch \
                 * np.array([dx / seg_len, dy / seg_len])
         else:

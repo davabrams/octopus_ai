@@ -225,14 +225,17 @@ green.**
   by `body_dtheta` before warm-starting), so rotation adds no strain and the
   body only turns from genuine off-axis reaching, then settles. Guarded by
   `test_rotation_settles_no_runaway`.
-- **Threat avoidance via body drift is weak (PRE-EXISTING, not caused by this
-  change).** The body only moves via *tensile* arm base reactions; a threat
-  makes the nearby arm recoil, which *compresses* the base segment → the
-  rope-clamp zeroes its tension → the body barely flees (legacy `ring=0` threat
-  response measured ≈ 0). The base ring slightly improves it. Making the octopus
-  actively flee is a separate body-dynamics change (e.g. let a compressed base
-  segment push, or give the body a direct threat-repulsion term) — out of scope
-  here.
+- **Threat avoidance via body drift — ADDRESSED (follow-up to this plan).**
+  Originally the body only felt *tensile* arm reactions, so a recoiling arm
+  (which compresses its base segment) produced no flee (legacy `ring=0` threat
+  response ≈ 0). Now the base segment is **two-sided (rod, not rope) while the
+  arm is recoiling from a sensed threat**: a compressed segment then *pushes*
+  the body away, so it flees (fixed-threat response ≈ −1.3 vs 0 before). The
+  push is **gated on a sensed threat** — with no threat we stay rope-like,
+  because idle arms settle a hair compressed *asymmetrically* and an ungated
+  two-sided spring jitters the body at max speed. Threats are also **sensed from
+  the whole arm** (nearest centerline node), not just the tip, so a threat near
+  an arm's middle is avoided. Guarded by `TestThreatResponse`.
 - **Base ring for non-iLQR modes:** the collapse is an iLQR artifact, but the
   base ring + `θ` are generally sensible. Scope P2–P3 to `MovementMode.ILQR`
   first; `_drift_body_by_tension` is shared, so LUMPED_SPRING/SPRING_CHAIN could
