@@ -11,4 +11,5 @@
 # (<workspace>/.venv/bin/python3), so nothing machine-specific is committed.
 venv_python = use_extension("//python_toolchain:venv_interpreter.bzl", "venv_python")
 use_repo(venv_python, "venv_python")
+
 register_toolchains("@venv_python//:venv_python_toolchain")

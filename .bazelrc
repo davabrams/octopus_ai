@@ -1,0 +1,24 @@
+# Project Bazel settings. Keep this small and portable — no machine-specific
+# paths (the venv interpreter is resolved at build time; see
+# python_toolchain/venv_interpreter.bzl).
+
+# --- test ergonomics ---
+# Show stdout/stderr only for tests that FAIL, instead of hiding it in a log
+# file under bazel-out/. Makes `bazel test //tests/...` as useful as pytest.
+test --test_output=errors
+test --test_summary=detailed
+test --test_verbose_timeout_warnings
+
+# Stream a single test's output live:
+#   bazel test --config=debug //tests:test_kinematics
+test:debug --test_output=streamed
+
+# Don't leave .pyc files in the source tree during tests.
+test --test_env=PYTHONDONTWRITEBYTECODE=1
+
+# --- build ---
+# Lets you add build:macos / build:linux stanzas later without extra flags.
+common --enable_platform_specific_config
+
+# --- quality of life ---
+common --curses=yes --color=yes

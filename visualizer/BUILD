@@ -1,12 +1,12 @@
 py_binary(
     name = "octo_viz",
     srcs = ["octo_viz.py"],
-	visibility = ["//visibility:public"],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
-        "//training:training",
-        "//simulator:generators"
-        ]
+        "//simulator:generators",
+        "//training",
+    ],
 )
 
 py_binary(
@@ -15,10 +15,10 @@ py_binary(
     # The server serves this HTML page from next to itself, so it must be in
     # the binary's runfiles.
     data = ["octopus-visualizer.html"],
-	visibility = ["//visibility:public"],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
-        "//training:training",
-        "//simulator:generators"
-        ]
+        "//simulator:generators",
+        "//training",
+    ],
 )

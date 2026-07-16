@@ -177,6 +177,21 @@ python run_tests.py --test test_kinematics.py
 make test / make test-kinematics / make test-training / ...
 ```
 
+Hermetic alternative via Bazel (uses the `.bazelrc` defaults — failing tests
+print their output instead of hiding it in a log file):
+
+```bash
+bazel test //...                              # all test targets
+bazel test //tests:test_kinematics            # one target
+bazel test --config=debug //tests:test_kinematics   # stream output live
+```
+
+`//inference_server:test_server` is a real integration test — it boots the
+Flask app and talks to `localhost:8080`, so it is tagged `local` (runs
+unsandboxed to bind the port). It has a pre-existing logic failure
+(`test_communications`) that reproduces under plain pytest too; it is not a
+Bazel wiring issue.
+
 ## Linting & Formatting
 
 ```bash

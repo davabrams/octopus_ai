@@ -1,8 +1,7 @@
-
 py_library(
     name = "simutil",
     srcs = ["simutil.py"],
-	visibility = ["//visibility:public"],
+    visibility = ["//visibility:public"],
 )
 
 py_library(
@@ -12,7 +11,7 @@ py_library(
     deps = [
         ":simutil",
         "//octopus_ai:octo_util",
-    ]
+    ],
 )
 
 py_library(
@@ -40,25 +39,35 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         ":simutil",
-        ":surface_generator",
         ":spring_chain",
+        ":surface_generator",
         "//octopus_ai:octo_util",
-    ]
+    ],
 )
 
 py_library(
     name = "surface_generator",
     srcs = ["surface_generator.py"],
+    visibility = ["//visibility:public"],
     deps = [
         ":simutil",
         "//octopus_ai:octo_util",
     ],
-    visibility = ["//visibility:public"],
 )
 
+# Convenience aggregator: pulls in every simulator library so callers can
+# depend on the whole package with one label. No srcs of its own — each module
+# is owned by its dedicated target above.
 py_library(
     name = "generators",
-    srcs = glob(["*.py"]),
     visibility = ["//visibility:public"],
-    deps = ["//octopus_ai:octo_util"],
+    deps = [
+        ":agent_generator",
+        ":force_logger",
+        ":frame_recorder",
+        ":octopus_generator",
+        ":simutil",
+        ":spring_chain",
+        ":surface_generator",
+    ],
 )

@@ -16,7 +16,24 @@ import threading
 import multiprocessing as mp
 from model_inference import InferenceJob, InferenceQueue
 
-TIMEOUT = 0.1
+TIMEOUT = 5.0
+
+
+def wait_for_server(timeout=30.0):
+    """Block until the server is accepting connections.
+
+    setUpClass starts Flask in a background thread; without waiting for it to
+    bind the port, the first request races startup and fails with a connection
+    error (especially under Bazel, where importing TensorFlow adds latency).
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            requests.get('http://localhost:8080/list_jobs', timeout=1.0)
+            return
+        except requests.exceptions.RequestException:
+            time.sleep(0.05)
+    raise RuntimeError(f"Server did not start within {timeout}s")
 
 
 def decode_response(r):
@@ -41,7 +58,9 @@ def list_jobs():
 def job_by_id(item_id):
     response = requests.get(
         f'http://localhost:8080/jobs/{item_id}', timeout=TIMEOUT)
-    if response.status_code == 200:
+    # The server returns 200 for a pending job and 201 for a completed one
+    # (see server.get_item); both carry the job JSON.
+    if response.status_code in (200, 201):
         return response.json()
     else:
         return {"error": "Item not found"}
@@ -103,6 +122,7 @@ class TestClientServer(unittest.TestCase):
             name="REST Server")
         t1.daemon = True
         t1.start()
+        wait_for_server()
 
     @classmethod
     def tearDownClass(cls):
@@ -129,9 +149,14 @@ class TestClientServer(unittest.TestCase):
         # let the jobs complete, then clear them
         time.sleep(.5)
         item = job_by_id(3)
-        self.assertDictEqual(item, {
-            "job_id": "3", "result": "0.74155515",
-            "status": "Complete"})
+        # Assert the job completed and produced a valid colour value rather than
+        # a hard-coded inference output, which drifts every time the model is
+        # retrained.
+        self.assertEqual(item["job_id"], "3")
+        self.assertEqual(item["status"], "Complete")
+        result = float(item["result"])
+        self.assertGreaterEqual(result, 0.0)
+        self.assertLessEqual(result, 1.0)
         collect_and_clear()
         res = list_jobs()
         self.assertListEqual(res, [])

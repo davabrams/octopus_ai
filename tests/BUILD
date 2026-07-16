@@ -1,204 +1,231 @@
 py_test(
     name = "test_simulator",
     srcs = ["test_simulator.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
+        "//simulator:agent_generator",
         "//simulator:simutil",
         "//simulator:surface_generator",
-        "//simulator:agent_generator",
-    ]
+    ],
 )
 
 py_test(
     name = "test_octopus_generator",
-    srcs = ["test_octopus_generator.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_octopus_generator.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
+        "//octopus_ai:octo_util",
         "//simulator:octopus_generator",
         "//simulator:simutil",
         "//simulator:surface_generator",
-        "//octopus_ai:octo_util",
-    ]
+    ],
 )
 
 py_test(
     name = "test_utilities",
     srcs = ["test_utilities.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
         "//simulator:simutil",
-    ]
+    ],
 )
 
 py_test(
     name = "test_training_losses",
     srcs = ["test_training_losses.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//training:losses",
-    ]
+    ],
 )
 
 py_test(
     name = "test_inference_server",
     srcs = ["test_inference_server.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//inference_server:model_inference",
-    ]
+    ],
 )
 
 py_test(
     name = "test_kinematics",
     srcs = ["test_kinematics.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//simulator:simutil",
         "//simulator/ilqr:costs",
-    ]
+    ],
 )
 
 py_test(
     name = "test_trainers",
-    srcs = ["test_trainers.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_trainers.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
-        "//training:training",
-        "//simulator:simutil",
         "//octopus_ai:octo_util",
-    ]
+        "//simulator:simutil",
+        "//training",
+    ],
 )
 
 py_test(
     name = "test_integration",
-    srcs = ["test_integration.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_integration.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
+        "//inference_server:model_inference",
+        "//octopus_ai:datagen_lib",
+        "//octopus_ai:octo_util",
         "//simulator:generators",
         "//simulator:octopus_generator",
-        "//training:training",
-        "//inference_server:model_inference",
-        "//octopus_ai:octo_util",
-        "//octopus_ai:datagen",
-    ]
+        "//training",
+    ],
 )
 
 py_test(
     name = "test_agent_movement",
-    srcs = ["test_agent_movement.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_agent_movement.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
-        "//simulator:octopus_generator",
-        "//simulator:agent_generator",
-        "//simulator:simutil",
         "//octopus_ai:octo_util",
-    ]
+        "//simulator:agent_generator",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+    ],
 )
 
 py_test(
     name = "test_config_provenance",
     srcs = ["test_config_provenance.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
         "//simulator:agent_generator",
         "//simulator:force_logger",
         "//simulator:octopus_generator",
         "//simulator:simutil",
-    ]
+    ],
 )
 
 py_test(
     name = "test_config_schema",
     srcs = ["test_config_schema.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
         "//simulator:simutil",
-    ]
+    ],
 )
 
 py_test(
     name = "test_force_logger",
-    srcs = ["test_force_logger.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_force_logger.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
-        "//simulator:octopus_generator",
-        "//simulator:agent_generator",
-        "//simulator:simutil",
-        "//simulator:force_logger",
         "//octopus_ai:octo_util",
-    ]
+        "//simulator:agent_generator",
+        "//simulator:force_logger",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+    ],
 )
 
 py_test(
     name = "test_frame_recorder",
     srcs = ["test_frame_recorder.py"],
-    visibility = ["//visibility:public"],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//simulator:frame_recorder",
-    ]
+    ],
 )
 
 py_test(
     name = "test_helpers",
-    srcs = ["test_helpers.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_helpers.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
         "//octopus_ai:octo_util",
         "//simulator:simutil",
-    ]
+    ],
 )
 
 py_test(
     name = "test_limb_adjacency",
-    srcs = ["test_limb_adjacency.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_limb_adjacency.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
+        "//octopus_ai:octo_util",
         "//simulator:octopus_generator",
         "//simulator:simutil",
-        "//octopus_ai:octo_util",
-    ]
+    ],
 )
 
 py_test(
     name = "test_prey_capture",
-    srcs = ["test_prey_capture.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_prey_capture.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
-        "//simulator:octopus_generator",
-        "//simulator:agent_generator",
-        "//simulator:simutil",
         "//octopus_ai:octo_util",
-    ]
+        "//simulator:agent_generator",
+        "//simulator:octopus_generator",
+        "//simulator:simutil",
+    ],
 )
 
 py_test(
     name = "test_spring_chain",
-    srcs = ["test_spring_chain.py", "helpers.py"],
-    visibility = ["//visibility:public"],
+    srcs = [
+        "helpers.py",
+        "test_spring_chain.py",
+    ],
     imports = ["."],
+    visibility = ["//visibility:public"],
     deps = [
+        "//octopus_ai:octo_util",
         "//simulator:octopus_generator",
         "//simulator:simutil",
         "//simulator:spring_chain",
-        "//octopus_ai:octo_util",
-    ]
+    ],
 )
