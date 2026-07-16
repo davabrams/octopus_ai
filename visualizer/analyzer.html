@@ -153,7 +153,7 @@ const WS_DEFAULT = `ws://${location.hostname || "localhost"}:${location.port || 
 // ---------------------------------------------------------------- helpers ---
 function cellSizeFor(xLen, yLen, availW, availH) {
   const s = Math.floor(Math.min(availW / xLen, availH / yLen));
-  return Math.max(12, Math.min(30, s || 12));
+  return Math.max(12, Math.min(40, s || 12));
 }
 
 // Draw one frame's world into ctx. `view` carries the anatomy + cellSize +
@@ -162,6 +162,13 @@ function drawWorld(ctx, background, state, view) {
   const cs = view.cellSize;
   const { xLen, yLen } = view;
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  // Apply zoom/pan transform.
+  ctx.save();
+  const zm = view.zoom || 1;
+  const panX = view.panX || 0, panY = view.panY || 0;
+  ctx.translate(panX, panY);
+  ctx.scale(zm, zm);
 
   if (view.showGrid !== false && background) {
     background.forEach((row, y) => {
@@ -180,75 +187,103 @@ function drawWorld(ctx, background, state, view) {
       ctx.beginPath(); ctx.moveTo(0, y * cs); ctx.lineTo(xLen * cs, y * cs); ctx.stroke();
     }
   }
-  if (!state) return;
+  if (!state) { ctx.restore(); return; }
 
   // Entities at cell centres: shift by half a cell (commit 089a7ff). Do NOT
   // drop this — suckers would otherwise draw a cell off the surface they match.
   ctx.save();
   ctx.translate(cs / 2, cs / 2);
 
+  const selLimb = view.selectedLimb; // number or "all"
+  const hasSelection = selLimb !== "all" && selLimb != null;
+
   // iLQR overlay (ghost horizon poses + tip path), drawn UNDER the applied
   // pose so plan (ghost) vs applied (solid) reads correctly.
   if (view.ilqr && view.ilqrOverlay) drawIlqrOverlay(ctx, view);
 
   // Limb centerlines.
-  ctx.strokeStyle = "#ff4444";
-  ctx.lineWidth = 3;
-  state.octopus.limbs.forEach((limb) => {
-    if (limb.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
-      for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
-      ctx.stroke();
-    }
-  });
+  if (view.showCenterlines !== false) {
+    ctx.lineWidth = 3;
+    state.octopus.limbs.forEach((limb, limbIdx) => {
+      ctx.strokeStyle = hasSelection && limbIdx !== selLimb ? "rgba(255,68,68,0.2)" : "#ff4444";
+      if (limb.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
+        for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
+        ctx.stroke();
+      }
+    });
+  }
 
   // Head.
-  ctx.fillStyle = "#ff6666";
-  ctx.beginPath();
-  ctx.arc(state.octopus.head.x * cs, state.octopus.head.y * cs, cs * 0.4, 0, 2 * Math.PI);
-  ctx.fill();
+  if (view.showHead !== false) {
+    const hx = state.octopus.head.x * cs, hy = state.octopus.head.y * cs;
+    ctx.fillStyle = hasSelection ? "rgba(255,102,102,0.25)" : "#ff6666";
+    ctx.beginPath();
+    ctx.arc(hx, hy, cs * 0.4, 0, 2 * Math.PI);
+    ctx.fill();
+    if (typeof state.octopus.head.theta === "number") {
+      const th = state.octopus.head.theta;
+      ctx.strokeStyle = hasSelection ? "rgba(255,230,120,0.4)" : "#ffe678";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(hx + Math.cos(th) * cs * 0.9, hy + Math.sin(th) * cs * 0.9);
+      ctx.stroke();
+    }
+  }
 
   // Suckers, colored per the active color mode.
-  state.octopus.suckers.forEach((s) => {
-    let col = pickSuckerColor(s, view.colorMode);
-    ctx.fillStyle = col;
-    ctx.strokeStyle = "#222";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.stroke();
-  });
+  if (view.showSuckers !== false) {
+    state.octopus.suckers.forEach((s) => {
+      const dimmed = hasSelection && s.limb != null && s.limb !== selLimb;
+      let col = pickSuckerColor(s, view.colorMode);
+      if (dimmed) {
+        col = col.replace("rgb(", "rgba(").replace(")", ",0.15)");
+      }
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
+      ctx.fill();
+      if (view.showOutlines) {
+        ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)" : "#222";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    });
 
-  // Highlighted sucker (inspector hover).
-  if (view.hoverSucker != null && state.octopus.suckers[view.hoverSucker]) {
-    const s = state.octopus.suckers[view.hoverSucker];
-    ctx.strokeStyle = "#facc15";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(s.x * cs, s.y * cs, cs * 0.28, 0, 2 * Math.PI);
-    ctx.stroke();
+    // Highlighted sucker (inspector hover).
+    if (view.hoverSucker != null && state.octopus.suckers[view.hoverSucker]) {
+      const s = state.octopus.suckers[view.hoverSucker];
+      ctx.strokeStyle = "#facc15";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x * cs, s.y * cs, cs * 0.28, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
   }
 
   // Agents.
-  state.agents.forEach((a) => {
-    ctx.fillStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
-    ctx.beginPath();
-    ctx.arc(a.x * cs, a.y * cs, cs * 0.2, 0, 2 * Math.PI);
-    ctx.fill();
-    if (view.showSensing) {
-      ctx.strokeStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([5, 5]);
+  if (view.showAgents !== false) {
+    state.agents.forEach((a) => {
+      ctx.fillStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
       ctx.beginPath();
-      ctx.arc(a.x * cs, a.y * cs, (view.sensingRadius || 5) * cs, 0, 2 * Math.PI);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  });
+      ctx.arc(a.x * cs, a.y * cs, cs * 0.2, 0, 2 * Math.PI);
+      ctx.fill();
+      if (view.showSensing) {
+        ctx.strokeStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(a.x * cs, a.y * cs, (view.sensingRadius || 5) * cs, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    });
+  }
 
-  ctx.restore();
+  ctx.restore(); // cell-centre shift
+  ctx.restore(); // zoom/pan transform
 }
 
 function pickSuckerColor(s, mode) {
@@ -265,6 +300,7 @@ function pickSuckerColor(s, mode) {
 
 function drawIlqrOverlay(ctx, view) {
   const cs = view.cellSize;
+  const selStep = view.ilqrStep; // null = show all, number = highlight one
   const limbs = view.ilqrLimb === "all"
     ? view.ilqr
     : view.ilqr.filter((l) => l.limb === view.ilqrLimb);
@@ -273,7 +309,6 @@ function drawIlqrOverlay(ctx, view) {
     if (!iters.length) return;
     const iterIdx = C.clampIdx(view.ilqrIter, iters.length);
     if (view.convergence) {
-      // Convergence mode: each iteration's terminal pose graded red->green.
       iters.forEach((it, k) => {
         const chains = C.chainsWithBase(it.trajectory, limbData.base);
         if (!chains.length) return;
@@ -287,16 +322,27 @@ function drawIlqrOverlay(ctx, view) {
     }
     const it = iters[iterIdx];
     const chains = C.chainsWithBase(it.trajectory, limbData.base);
-    // Ghost horizon poses, alpha fading with t; t=0 dashed.
+    // Ghost horizon poses.
     chains.forEach((chain, t) => {
-      const a = 0.15 + 0.65 * (t / Math.max(1, chains.length - 1));
-      ctx.strokeStyle = `rgba(251,191,36,${a})`;
-      ctx.lineWidth = 1.5;
-      if (t === 0) ctx.setLineDash([4, 3]); else ctx.setLineDash([]);
+      const selected = selStep != null && t === selStep;
+      const dimmed = selStep != null && !selected;
+      const a = dimmed ? 0.08 : 0.15 + 0.65 * (t / Math.max(1, chains.length - 1));
+      ctx.strokeStyle = selected ? `rgba(56,189,248,0.95)` : `rgba(251,191,36,${a})`;
+      ctx.lineWidth = selected ? 3 : 1.5;
+      if (t === 0 && !selected) ctx.setLineDash([4, 3]); else ctx.setLineDash([]);
       strokeChain(ctx, chain, cs);
       ctx.setLineDash([]);
+      // Draw node dots on selected step.
+      if (selected) {
+        chain.forEach((pt) => {
+          ctx.fillStyle = "#38bdf8";
+          ctx.beginPath();
+          ctx.arc(pt[0] * cs, pt[1] * cs, cs * 0.1, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+      }
     });
-    // Tip path: cyan polyline through each step's last node.
+    // Tip path.
     if (chains.length) {
       ctx.strokeStyle = "#22d3ee";
       ctx.lineWidth = 1.5;
@@ -315,6 +361,40 @@ function drawIlqrOverlay(ctx, view) {
       ctx.fill();
     }
   });
+}
+
+// Compute per-node iLQR cost breakdown for a chain at a given step.
+// chain is [[x,y], ...] including base; cfg has the weights/rest_length.
+function nodeCosts(chain, nodeIdx, cfg, isTerminal) {
+  const dist = (a, b) => Math.sqrt((a[0]-b[0])*(a[0]-b[0]) + (a[1]-b[1])*(a[1]-b[1]));
+  const out = {};
+  // Spring: deviation from rest length to previous node.
+  if (nodeIdx > 0) {
+    const d = dist(chain[nodeIdx], chain[nodeIdx - 1]);
+    const dev = d - cfg.restLength;
+    out.spring = cfg.wSpring * dev * dev;
+  }
+  // Bending: discrete curvature at interior nodes.
+  if (nodeIdx > 0 && nodeIdx < chain.length - 1) {
+    const dx = chain[nodeIdx-1][0] - 2*chain[nodeIdx][0] + chain[nodeIdx+1][0];
+    const dy = chain[nodeIdx-1][1] - 2*chain[nodeIdx][1] + chain[nodeIdx+1][1];
+    out.bending = cfg.wBend * (dx*dx + dy*dy);
+  }
+  // Reach: only tip, and stronger at terminal step.
+  if (nodeIdx === chain.length - 1 && cfg.target) {
+    const d = dist(chain[nodeIdx], cfg.target);
+    const w = isTerminal ? cfg.wReachTerminal : cfg.wReachRun;
+    out.reach = w * d * d;
+  }
+  // Repel: every free node (nodeIdx > 0).
+  if (nodeIdx > 0 && cfg.threat) {
+    const d = dist(chain[nodeIdx], cfg.threat);
+    if (d < cfg.repelRadius) {
+      const pen = cfg.repelRadius - d;
+      out.repel = cfg.wRepel * pen * pen;
+    }
+  }
+  return out;
 }
 
 function strokeChain(ctx, chain, cs) {
@@ -362,17 +442,37 @@ function App() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [status, setStatus] = useState("disconnected");
-  const [sim, setSim] = useState({ frames: 120, running: false, progress: null });
+  const [sim, setSim] = useState({ frames: 120, running: false, progress: null, label: "" });
   const [colorMode, setColorMode] = useState("after");
   const [showGrid, setShowGrid] = useState(true);
   const [showSensing, setShowSensing] = useState(false);
   const [ilqrOverlay, setIlqrOverlay] = useState(false);
   const [ilqrLimb, setIlqrLimb] = useState("all");
   const [ilqrIter, setIlqrIter] = useState(0);
+  const [ilqrStep, setIlqrStep] = useState(null); // null = show all, number = highlight one
   const [convergence, setConvergence] = useState(false);
   const [hover, setHover] = useState(null); // {sucker, frame} inspector
+  const [ilqrTick, setIlqrTick] = useState(0); // bump to force re-render when iLQR data arrives
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [showOutlines, setShowOutlines] = useState(true);
+  const [showCenterlines, setShowCenterlines] = useState(true);
+  const [showHead, setShowHead] = useState(true);
+  const [showSuckers, setShowSuckers] = useState(true);
+  const [showAgents, setShowAgents] = useState(true);
+  const [ctxMenu, setCtxMenu] = useState(null); // {x, y} or null
+  const dragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   const wsRef = useRef(null);
+  // ---- setup state (simulate tab) ----
+  const [setupGrid, setSetupGrid] = useState({ x: 30, y: 30 });
+  const [setupBgImage, setSetupBgImage] = useState(null); // {path, dataUrl}
+  const [setupOctoStart, setSetupOctoStart] = useState(null); // {x, y}
+  const [setupAgents, setSetupAgents] = useState([]); // [{x, y, type}, ...]
+  const [placementTool, setPlacementTool] = useState(null); // "octopus"|"prey"|"predator"
+  const bgImgRef = useRef(null); // decoded Image element for preview
+
   const canvasRef = useRef(null);
   const frameCache = useRef(C.makeLru(400));
   const ilqrCache = useRef(C.makeLru(40));
@@ -390,8 +490,21 @@ function App() {
   stateRef.current.ilqrOverlay = ilqrOverlay;
   stateRef.current.ilqrLimb = ilqrLimb;
   stateRef.current.ilqrIter = ilqrIter;
+  stateRef.current.ilqrStep = ilqrStep;
   stateRef.current.convergence = convergence;
   stateRef.current.hover = hover;
+  stateRef.current.zoom = zoom;
+  stateRef.current.pan = pan;
+  stateRef.current.showOutlines = showOutlines;
+  stateRef.current.showCenterlines = showCenterlines;
+  stateRef.current.showHead = showHead;
+  stateRef.current.showSuckers = showSuckers;
+  stateRef.current.showAgents = showAgents;
+  stateRef.current.tab = tab;
+  stateRef.current.setupGrid = setupGrid;
+  stateRef.current.setupOctoStart = setupOctoStart;
+  stateRef.current.setupAgents = setupAgents;
+  stateRef.current.placementTool = placementTool;
 
   // ---- websocket ----
   const send = useCallback((type, data, cb) => {
@@ -447,13 +560,22 @@ function App() {
       console.warn("server error", data);
     } else if (type === "frame_data") {
       frameCache.current.set(data.frame, data.state);
-      if (data.ilqr && data.ilqr.length) ilqrCache.current.set(data.frame, data.ilqr);
+      if (data.ilqr && data.ilqr.length) {
+        ilqrCache.current.set(data.frame, data.ilqr);
+        setIlqrTick((t) => t + 1); // force React re-render so UI picks up iLQR data
+      }
       dirtyRef.current = true;
     } else if (type === "frames_data") {
       data.frames.forEach((st) => frameCache.current.set(st.metadata.iteration, st));
       dirtyRef.current = true;
     } else if (type === "run_meta") {
       // handled via callback in loadRun
+    } else if (type === "run_renamed") {
+      setRuns((prev) => prev.map((r) =>
+        r.run_id === data.run_id ? { ...r, label: data.label } : r));
+    } else if (type === "image_uploaded" || type === "simulate_started"
+               || type === "simulate_cancel_ack") {
+      // handled via per-request callbacks
     } else {
       console.log("unhandled message", type, data);
     }
@@ -523,6 +645,13 @@ function App() {
     dirtyRef.current = true;
   }, [meta, frameIdx, ilqrOverlay, ensureIlqr]);
 
+  // Mark dirty when ANY visual toggle changes so the RAF loop redraws.
+  useEffect(() => { dirtyRef.current = true; },
+    [colorMode, showGrid, showSensing, ilqrOverlay, ilqrLimb, ilqrIter,
+     ilqrStep, convergence, zoom, pan, showOutlines, showCenterlines,
+     showHead, showSuckers, showAgents, tab, setupGrid, setupOctoStart,
+     setupAgents, placementTool]);
+
   // ---- play loop ----
   useEffect(() => {
     if (!playing || !meta) return;
@@ -544,9 +673,65 @@ function App() {
       if (!dirtyRef.current) return;
       const cv = canvasRef.current;
       const S = stateRef.current;
-      if (!cv || !S.meta) {
-        // simulate final_state fallback (no meta yet)
-        if (cv && S.finalState) drawSimFinal(cv, S);
+      if (!cv) { dirtyRef.current = false; return; }
+      // Setup preview when on simulate tab with no run loaded
+      if (S.tab === "simulate" && !S.meta) {
+        dirtyRef.current = false;
+        const g = S.setupGrid || { x: 30, y: 30 };
+        const availH = Math.min(window.innerHeight * 0.55, 500);
+        const cs = cellSizeFor(g.x, g.y, cv.parentElement.clientWidth - 8, availH);
+        cv.width = g.x * cs; cv.height = g.y * cs;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#1e293b";
+        ctx.fillRect(0, 0, cv.width, cv.height);
+        if (bgImgRef.current) {
+          ctx.globalAlpha = 0.7;
+          ctx.drawImage(bgImgRef.current, 0, 0, cv.width, cv.height);
+          ctx.globalAlpha = 1.0;
+        }
+        // Grid lines
+        ctx.strokeStyle = "#33415544";
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x <= g.x; x++) { ctx.beginPath(); ctx.moveTo(x * cs, 0); ctx.lineTo(x * cs, g.y * cs); ctx.stroke(); }
+        for (let y = 0; y <= g.y; y++) { ctx.beginPath(); ctx.moveTo(0, y * cs); ctx.lineTo(g.x * cs, y * cs); ctx.stroke(); }
+        ctx.save();
+        ctx.translate(cs / 2, cs / 2);
+        // Octopus position
+        const ox = S.setupOctoStart ? S.setupOctoStart.x : g.x / 2;
+        const oy = S.setupOctoStart ? S.setupOctoStart.y : g.y / 2;
+        ctx.fillStyle = S.setupOctoStart ? "#ff6666" : "rgba(255,102,102,0.3)";
+        ctx.beginPath();
+        ctx.arc(ox * cs, oy * cs, cs * 0.5, 0, 2 * Math.PI);
+        ctx.fill();
+        if (!S.setupOctoStart) {
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = `${cs * 0.3}px monospace`;
+          ctx.textAlign = "center";
+          ctx.fillText("octo", ox * cs, oy * cs + cs * 0.1);
+        }
+        // Placed agents
+        (S.setupAgents || []).forEach((a, i) => {
+          ctx.fillStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
+          ctx.beginPath();
+          ctx.arc(a.x * cs, a.y * cs, cs * 0.3, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.fillStyle = "#fff";
+          ctx.font = `${cs * 0.25}px monospace`;
+          ctx.textAlign = "center";
+          ctx.fillText(a.type[0].toUpperCase(), a.x * cs, a.y * cs + cs * 0.08);
+        });
+        // Cursor hint
+        if (S.placementTool) {
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "12px monospace";
+          ctx.textAlign = "left";
+          ctx.fillText(`click to place ${S.placementTool}`, 4, -4);
+        }
+        ctx.restore();
+        return;
+      }
+      if (!S.meta) {
+        if (S.finalState) drawSimFinal(cv, S);
         dirtyRef.current = false;
         return;
       }
@@ -554,7 +739,8 @@ function App() {
       const m = S.meta;
       const state = frameCache.current.get(S.frameIdx);
       if (!state) return; // wait for fetch; buffering
-      const cs = cellSizeFor(m.config.x_len, m.config.y_len, cv.parentElement.clientWidth - 8, 560);
+      const availH = Math.min(window.innerHeight * 0.55, 500);
+      const cs = cellSizeFor(m.config.x_len, m.config.y_len, cv.parentElement.clientWidth - 8, availH);
       cv.width = m.config.x_len * cs;
       cv.height = m.config.y_len * cs;
       const ctx = cv.getContext("2d");
@@ -563,8 +749,16 @@ function App() {
         colorMode: S.colorMode, showGrid: S.showGrid, showSensing: S.showSensing,
         sensingRadius: m.config.agent_range_radius,
         ilqr: ilqrCache.current.get(S.frameIdx), ilqrOverlay: S.ilqrOverlay,
-        ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, convergence: S.convergence,
+        ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, ilqrStep: S.ilqrStep,
+        convergence: S.convergence,
         hoverSucker: (S.hover && S.hover.frame === S.frameIdx) ? S.hover.sucker : null,
+        selectedLimb: S.ilqrLimb,
+        zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
+        showOutlines: S.showOutlines,
+        showCenterlines: S.showCenterlines,
+        showHead: S.showHead,
+        showSuckers: S.showSuckers,
+        showAgents: S.showAgents,
       });
     };
     raf = requestAnimationFrame(loop);
@@ -592,6 +786,9 @@ function App() {
       else if (k === "End") setFrameIdx(max);
       else if (k === "[") setIlqrIter((i) => Math.max(0, i - 1));
       else if (k === "]") setIlqrIter((i) => i + 1);
+      else if (k === "{") setIlqrStep((s) => s == null ? 0 : Math.max(0, s - 1));
+      else if (k === "}") setIlqrStep((s) => { const h = meta ? (meta.config.octo_ilqr_horizon || 10) : 10; return s == null ? 0 : Math.min(h, s + 1); });
+      else if (k === "|") setIlqrStep(null);
       else if (k === "i" || k === "I") setIlqrOverlay((v) => !v);
       else if (k === "l" || k === "L") setIlqrLimb((v) => v === "all" ? 0 : (v + 1 > 7 ? "all" : v + 1));
       else if (k === "a" || k === "A") setIlqrLimb("all");
@@ -599,6 +796,8 @@ function App() {
       else if (k === "c" || k === "C") setColorMode((m) => ({ after: "before", before: "target", target: "error", error: "after" }[m]));
       else if (k === "g" || k === "G") setShowGrid((v) => !v);
       else if (k === "d" || k === "D") setShowSensing((v) => !v);
+      else if (k === "o" || k === "O") setShowOutlines((v) => !v);
+      else if (k === "0") { setZoom(1); setPan({ x: 0, y: 0 }); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -607,24 +806,135 @@ function App() {
   // ---- simulate ----
   const startSimulate = () => {
     setSim((s) => ({ ...s, running: true, progress: null }));
-    send("simulate", { num_frames: sim.frames, record_ilqr_history: true, label: "" });
+    const configOverrides = { x_len: setupGrid.x, y_len: setupGrid.y };
+    if (setupBgImage) configOverrides.background_image = setupBgImage.path;
+    const setup = {};
+    if (setupOctoStart) setup.octo_start = [setupOctoStart.x, setupOctoStart.y];
+    if (setupAgents.length > 0) setup.agent_positions = setupAgents;
+    send("simulate", {
+      num_frames: sim.frames, record_ilqr_history: true,
+      label: sim.label || "",
+      config: configOverrides,
+      setup: Object.keys(setup).length > 0 ? setup : undefined,
+    });
   };
   const cancelSimulate = () => send("simulate_cancel", {});
 
-  // ---- mouse hover for inspector ----
+  // ---- image upload ----
+  const onImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      // Send base64 to server (strip data:...;base64, prefix)
+      const b64 = dataUrl.split(",")[1];
+      send("upload_image", { filename: file.name, content_b64: b64 }, (msg) => {
+        if (msg.type === "image_uploaded") {
+          setSetupBgImage({ path: msg.data.path, dataUrl });
+          // Load as Image for preview canvas
+          const img = new Image();
+          img.onload = () => { bgImgRef.current = img; dirtyRef.current = true; };
+          img.src = dataUrl;
+        }
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ---- setup preview click (placement) ----
+  const onSetupClick = (e) => {
+    if (!placementTool) return;
+    const cv = canvasRef.current;
+    const rect = cv.getBoundingClientRect();
+    const cs = cv.width / setupGrid.x;
+    const wx = Math.max(0, Math.min(setupGrid.x - 1,
+      (e.clientX - rect.left) / cs - 0.5));
+    const wy = Math.max(0, Math.min(setupGrid.y - 1,
+      (e.clientY - rect.top) / cs - 0.5));
+    const cx = Math.round(wx * 10) / 10;
+    const cy = Math.round(wy * 10) / 10;
+    if (placementTool === "octopus") {
+      setSetupOctoStart({ x: cx, y: cy });
+      setPlacementTool(null);
+    } else {
+      setSetupAgents((prev) => [...prev, { x: cx, y: cy, type: placementTool }]);
+    }
+  };
+
+  // ---- zoom/pan handlers ----
+  const onWheel = (e) => {
+    e.preventDefault();
+    const cv = canvasRef.current;
+    const rect = cv.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    setZoom((z) => {
+      const nz = Math.max(0.5, Math.min(10, z * factor));
+      // Adjust pan so the point under the mouse stays fixed.
+      setPan((p) => ({
+        x: mx - (mx - p.x) * (nz / z),
+        y: my - (my - p.y) * (nz / z),
+      }));
+      return nz;
+    });
+  };
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;
+    dragging.current = true;
+    dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+  };
+  const onMouseUp = () => { dragging.current = false; };
+
+  // ---- mouse hover for inspector + drag ----
   const onCanvasMove = (e) => {
+    if (dragging.current) {
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      setPan({ x: dragStart.current.panX + dx, y: dragStart.current.panY + dy });
+      return;
+    }
     if (!meta) return;
     const state = frameCache.current.get(frameIdx);
     if (!state) return;
     const cv = canvasRef.current;
     const rect = cv.getBoundingClientRect();
     const cs = cv.width / meta.config.x_len;
-    const wx = (e.clientX - rect.left) / (rect.width / cv.width) / cs - 0.5;
-    const wy = (e.clientY - rect.top) / (rect.height / cv.height) / cs - 0.5;
+    // Account for zoom/pan when mapping mouse to world coords.
+    const zm = zoom;
+    const px = (e.clientX - rect.left - pan.x) / zm;
+    const py = (e.clientY - rect.top - pan.y) / zm;
+    const wx = px / cs - 0.5;
+    const wy = py / cs - 0.5;
     const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
     setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
     dirtyRef.current = true;
   };
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+
+  // ---- right-click context menu ----
+  const onContextMenu = (e) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  };
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const handler = () => setCtxMenu(null);
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [ctxMenu]);
+
+  const visToggles = [
+    ["Surface grid",   showGrid,        setShowGrid],
+    ["Centerlines",    showCenterlines,  setShowCenterlines],
+    ["Suckers",        showSuckers,      setShowSuckers],
+    ["Sucker outlines",showOutlines,     setShowOutlines],
+    ["Head",           showHead,         setShowHead],
+    ["Agents",         showAgents,       setShowAgents],
+    ["Sensing radius", showSensing,      setShowSensing],
+    ["iLQR overlay",   ilqrOverlay,      setIlqrOverlay],
+  ];
 
   const curFrame = meta ? frameCache.current.get(frameIdx) : null;
   const curIlqr = meta ? ilqrCache.current.get(frameIdx) : null;
@@ -649,7 +959,7 @@ function App() {
         </div>
         {meta && (
           <span className="ml-4 text-xs text-slate-300">
-            run {meta.run_id.slice(-6)} · frame {frameIdx}/{maxFrame}
+            {meta.label || meta.run_id.slice(-6)} · frame {frameIdx}/{maxFrame}
             {curFrame && <> · vis {curFrame.metadata.visibility_score} · prey {curFrame.metadata.prey_captured}</>}
           </span>
         )}
@@ -658,9 +968,35 @@ function App() {
       <div className="flex gap-3">
         {/* canvas + transport */}
         <div className="flex-1 min-w-0">
-          <div className="bg-black rounded p-1 inline-block max-w-full overflow-auto">
-            <canvas ref={canvasRef} onMouseMove={onCanvasMove} onMouseLeave={() => setHover(null)} />
+          <div className="bg-black rounded p-1 overflow-hidden"
+               style={{ cursor: (tab === "simulate" && placementTool) ? "crosshair" : (dragging.current ? "grabbing" : "grab") }}>
+            <canvas ref={canvasRef} style={{ display: "block" }}
+                    onMouseMove={onCanvasMove}
+                    onClick={tab === "simulate" && placementTool ? onSetupClick : undefined}
+                    onMouseDown={onMouseDown} onMouseUp={onMouseUp}
+                    onMouseLeave={() => { setHover(null); dragging.current = false; }}
+                    onWheel={onWheel} onContextMenu={onContextMenu} />
           </div>
+
+          {/* right-click context menu */}
+          {ctxMenu && (
+            <div className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-lg py-1 text-xs"
+                 style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+              {visToggles.map(([label, val, setter]) => (
+                <button key={label}
+                  className="block w-full text-left px-3 py-1 hover:bg-slate-700 flex items-center gap-2"
+                  onClick={(e) => { e.stopPropagation(); setter((v) => !v); setCtxMenu(null); }}>
+                  <span style={{ width: 14, display: "inline-block" }}>{val ? "✓" : ""}</span>
+                  {label}
+                </button>
+              ))}
+              <div className="border-t border-slate-600 my-1" />
+              <button className="block w-full text-left px-3 py-1 hover:bg-slate-700"
+                onClick={(e) => { e.stopPropagation(); resetView(); setCtxMenu(null); }}>
+                Reset view
+              </button>
+            </div>
+          )}
 
           {/* transport bar */}
           {meta && (
@@ -688,11 +1024,27 @@ function App() {
                 {Array.from({ length: meta.anatomy.num_arms }, (_, i) => <option key={i} value={i}>{i}</option>)}
               </select>
               <span>iter:</span>
-              <input type="range" min="0" max={curIlqr && curIlqr[0] ? Math.max(0, curIlqr[0].iterations) : 0}
+              <input type="range" min="0"
+                     max={curIlqr && curIlqr.length ? Math.max(0, (curIlqr[0].iterations || []).length - 1) : 0}
                      value={ilqrIter} onChange={(e) => setIlqrIter(parseInt(e.target.value))} />
               <span>{ilqrIter} <kbd>[</kbd><kbd>]</kbd></span>
+              <span className="ml-2">step:</span>
+              <input type="range" min="-1"
+                     max={meta.config.octo_ilqr_horizon || 10}
+                     value={ilqrStep == null ? -1 : ilqrStep}
+                     onChange={(e) => { const v = parseInt(e.target.value); setIlqrStep(v < 0 ? null : v); }} />
+              <span>{ilqrStep == null ? "all" : ilqrStep} <kbd>{"{"}</kbd><kbd>{"}"}</kbd></span>
             </div>
           )}
+
+          {/* debug controls */}
+          <div className="flex items-center gap-3 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
+            <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> sucker outlines <kbd>O</kbd></label>
+            <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
+            <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
+            <span className="text-slate-400">zoom: {zoom.toFixed(1)}x</span>
+            <button className="bg-slate-700 px-2 py-0.5 rounded" onClick={resetView}>reset view <kbd>0</kbd></button>
+          </div>
 
           {/* charts */}
           {meta && (
@@ -720,25 +1072,92 @@ function App() {
         {/* sidebar */}
         <div className="w-72 shrink-0 text-xs space-y-3">
           {tab === "simulate" && (
-            <div className="bg-slate-900 p-3 rounded">
-              <div className="font-bold mb-2 text-sky-400">Simulate</div>
-              <label className="block mb-2">frames
-                <input type="number" min="1" max="10000" value={sim.frames} className="bg-slate-800 ml-2 w-20 px-1 rounded"
-                       onChange={(e) => setSim((s) => ({ ...s, frames: parseInt(e.target.value) || 0 }))} />
-              </label>
-              {(!sim.frames || sim.frames < 1) && <div className="text-red-400 mb-2">frames must be ≥ 1</div>}
-              {!sim.running
-                ? <button disabled={!connected || !sim.frames || sim.frames < 1}
-                    className="bg-green-700 disabled:opacity-40 px-3 py-1 rounded w-full" onClick={startSimulate}>Run</button>
-                : <button className="bg-red-700 px-3 py-1 rounded w-full" onClick={cancelSimulate}>Cancel</button>}
-              {sim.progress && (
-                <div className="mt-2">
-                  <div className="h-2 bg-slate-700 rounded overflow-hidden">
-                    <div className="h-2 bg-sky-500" style={{ width: `${100 * sim.progress.frame / sim.progress.num_frames}%` }} />
+            <div className="space-y-3">
+              <div className="bg-slate-900 p-3 rounded">
+                <div className="font-bold mb-2 text-sky-400">Simulate</div>
+                <label className="block mb-2">label
+                  <input type="text" value={sim.label} placeholder="optional" className="bg-slate-800 ml-2 w-32 px-1 rounded"
+                         onChange={(e) => setSim((s) => ({ ...s, label: e.target.value }))} />
+                </label>
+                <label className="block mb-2">frames
+                  <input type="number" min="1" max="10000" value={sim.frames} className="bg-slate-800 ml-2 w-20 px-1 rounded"
+                         onChange={(e) => setSim((s) => ({ ...s, frames: parseInt(e.target.value) || 0 }))} />
+                </label>
+                {(!sim.frames || sim.frames < 1) && <div className="text-red-400 mb-2">frames must be ≥ 1</div>}
+                {!sim.running
+                  ? <button disabled={!connected || !sim.frames || sim.frames < 1}
+                      className="bg-green-700 disabled:opacity-40 px-3 py-1 rounded w-full" onClick={startSimulate}>Run</button>
+                  : <button className="bg-red-700 px-3 py-1 rounded w-full" onClick={cancelSimulate}>Cancel</button>}
+                {sim.progress && (
+                  <div className="mt-2">
+                    <div className="h-2 bg-slate-700 rounded overflow-hidden">
+                      <div className="h-2 bg-sky-500" style={{ width: `${100 * sim.progress.frame / sim.progress.num_frames}%` }} />
+                    </div>
+                    <div className="mt-1 text-slate-300">frame {sim.progress.frame}/{sim.progress.num_frames} · {Math.round(sim.progress.frame_ms)}ms · vis {sim.progress.visibility_score}</div>
                   </div>
-                  <div className="mt-1 text-slate-300">frame {sim.progress.frame}/{sim.progress.num_frames} · {Math.round(sim.progress.frame_ms)}ms · vis {sim.progress.visibility_score}</div>
+                )}
+              </div>
+
+              {/* Grid size */}
+              <div className="bg-slate-900 p-3 rounded">
+                <div className="font-bold mb-2 text-slate-300">Grid</div>
+                <div className="flex gap-2">
+                  <label>x <input type="number" min="5" max="100" value={setupGrid.x}
+                    className="bg-slate-800 w-14 px-1 rounded ml-1"
+                    onChange={(e) => setSetupGrid((g) => ({ ...g, x: parseInt(e.target.value) || 15 }))} /></label>
+                  <label>y <input type="number" min="5" max="100" value={setupGrid.y}
+                    className="bg-slate-800 w-14 px-1 rounded ml-1"
+                    onChange={(e) => setSetupGrid((g) => ({ ...g, y: parseInt(e.target.value) || 15 }))} /></label>
                 </div>
-              )}
+              </div>
+
+              {/* Background image */}
+              <div className="bg-slate-900 p-3 rounded">
+                <div className="font-bold mb-2 text-slate-300">Background</div>
+                <input type="file" accept="image/*" className="text-xs w-full" onChange={onImageUpload} />
+                {setupBgImage && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <img src={setupBgImage.dataUrl} className="w-10 h-10 rounded object-cover" />
+                    <button className="text-red-400 text-xs" onClick={() => { setSetupBgImage(null); bgImgRef.current = null; }}>remove</button>
+                  </div>
+                )}
+                {!setupBgImage && <div className="text-slate-500 mt-1">random noise surface</div>}
+              </div>
+
+              {/* Placement tools */}
+              <div className="bg-slate-900 p-3 rounded">
+                <div className="font-bold mb-2 text-slate-300">Placement</div>
+                <div className="flex gap-1 mb-2 flex-wrap">
+                  {[["octopus", "#ff6666"], ["prey", "#32cd32"], ["predator", "#ff69b4"]].map(([tool, col]) => (
+                    <button key={tool} onClick={() => setPlacementTool(placementTool === tool ? null : tool)}
+                      className={"px-2 py-1 rounded text-xs border " + (placementTool === tool ? "border-sky-400 bg-slate-700" : "border-slate-600 bg-slate-800")}
+                      style={{ color: col }}>
+                      {tool}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-slate-500 text-xs mb-2">
+                  {placementTool ? `click canvas to place ${placementTool}` : "select a tool, then click the canvas"}
+                </div>
+                {setupOctoStart && (
+                  <div className="flex items-center gap-2 mb-1">
+                    <span style={{ color: "#ff6666" }}>octopus</span>
+                    <span className="text-slate-400">({setupOctoStart.x.toFixed(1)}, {setupOctoStart.y.toFixed(1)})</span>
+                    <button className="text-red-400 text-xs ml-auto" onClick={() => setSetupOctoStart(null)}>x</button>
+                  </div>
+                )}
+                {setupAgents.map((a, i) => (
+                  <div key={i} className="flex items-center gap-2 mb-1">
+                    <span style={{ color: a.type === "predator" ? "#ff69b4" : "#32cd32" }}>{a.type}</span>
+                    <span className="text-slate-400">({a.x.toFixed(1)}, {a.y.toFixed(1)})</span>
+                    <button className="text-red-400 text-xs ml-auto"
+                      onClick={() => setSetupAgents((prev) => prev.filter((_, j) => j !== i))}>x</button>
+                  </div>
+                ))}
+                {setupAgents.length > 0 && (
+                  <button className="text-red-400 text-xs mt-1" onClick={() => setSetupAgents([])}>clear all agents</button>
+                )}
+              </div>
             </div>
           )}
 
@@ -746,38 +1165,115 @@ function App() {
             <div className="bg-slate-900 p-3 rounded">
               <div className="font-bold mb-2 text-sky-400">Runs</div>
               {runs.length === 0 && <div className="text-slate-500">No runs recorded yet.</div>}
-              <div className="space-y-1 max-h-64 overflow-auto">
-                {runs.map((r) => (
-                  <button key={r.run_id} onClick={() => loadRun(r.run_id)}
-                    className={"block w-full text-left px-2 py-1 rounded " + (meta && meta.run_id === r.run_id ? "bg-sky-800" : "bg-slate-800 hover:bg-slate-700")}>
-                    <div className="flex justify-between">
-                      <span>{r.run_id.slice(-6)}</span>
-                      <span className="text-slate-400">{r.frames_recorded}f</span>
-                    </div>
-                    <div className="text-slate-500">{r.status}{r.has_ilqr_history ? " · iLQR" : ""} · {r.config_summary.octo_movement_mode}</div>
-                  </button>
-                ))}
+              <div className="space-y-1 max-h-80 overflow-auto">
+                {runs.map((r) => {
+                  const ts = r.started_at ? r.started_at.replace("T", " ").slice(0, 16) : "";
+                  return (
+                    <button key={r.run_id} onClick={() => loadRun(r.run_id)}
+                      className={"block w-full text-left px-2 py-1 rounded " + (meta && meta.run_id === r.run_id ? "bg-sky-800" : "bg-slate-800 hover:bg-slate-700")}>
+                      <div className="flex justify-between items-center">
+                        <span>{r.label || r.run_id.slice(-6)}</span>
+                        <span className="text-slate-400">{r.frames_recorded}f</span>
+                      </div>
+                      <div className="text-slate-500">
+                        {ts && <>{ts} · </>}
+                        {r.status}{r.has_ilqr_history ? " · iLQR" : ""}
+                        {r.label && <> · <span className="text-slate-600">{r.run_id.slice(-6)}</span></>}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
+            </div>
+          )}
+
+          {/* rename loaded run */}
+          {meta && tab === "playback" && (
+            <div className="bg-slate-900 p-3 rounded">
+              <div className="text-xs text-slate-400 mb-1">rename run {meta.run_id.slice(-6)}</div>
+              <input type="text" className="bg-slate-800 px-2 py-1 rounded w-full text-xs"
+                     defaultValue={meta.label || ""}
+                     placeholder="enter a nickname..."
+                     onKeyDown={(e) => {
+                       if (e.key === "Enter") {
+                         send("rename_run", { run_id: meta.run_id, label: e.target.value });
+                         e.target.blur();
+                       }
+                     }}
+                     onBlur={(e) => send("rename_run", { run_id: meta.run_id, label: e.target.value })} />
             </div>
           )}
 
           {/* sucker inspector */}
           {hover && curFrame && curFrame.octopus.suckers[hover.sucker] && (
             <div className="bg-slate-900 p-3 rounded">
-              <div className="font-bold mb-2 text-sky-400">Sucker #{hover.sucker}</div>
               {(() => {
                 const s = curFrame.octopus.suckers[hover.sucker];
-                const rows = [["before", s.color_before], ["after", s.color], ["target", s.target_color]];
-                return rows.map(([label, c]) => {
-                  const [r, g, b] = C.asTriple(c);
-                  return (
-                    <div key={label} className="flex items-center gap-2 mb-1">
-                      <span className="swatch" style={{ background: `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})` }}></span>
-                      <span className="w-14">{label}</span>
-                      <span className="text-slate-400">{r.toFixed(2)},{g.toFixed(2)},{b.toFixed(2)}</span>
-                    </div>
-                  );
-                });
+                const limbRows = meta ? meta.anatomy.limb_rows : 16;
+                const limbCols = meta ? meta.anatomy.limb_cols : 2;
+                const suckersPerLimb = limbRows * limbCols;
+                const limbIdx = s.limb != null ? s.limb : Math.floor(hover.sucker / suckersPerLimb);
+                const localIdx = hover.sucker % suckersPerLimb;
+                const nodeIdx = localIdx % limbRows;
+                return (<>
+                  <div className="font-bold mb-2 text-sky-400">
+                    Sucker #{hover.sucker} <span className="text-slate-500 font-normal">limb {limbIdx} · node {nodeIdx}</span>
+                  </div>
+                  {[["before", s.color_before], ["after", s.color], ["target", s.target_color]].map(([label, c]) => {
+                    const [r, g, b] = C.asTriple(c);
+                    return (
+                      <div key={label} className="flex items-center gap-2 mb-1">
+                        <span className="swatch" style={{ background: `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})` }}></span>
+                        <span className="w-14">{label}</span>
+                        <span className="text-slate-400">{r.toFixed(2)},{g.toFixed(2)},{b.toFixed(2)}</span>
+                      </div>
+                    );
+                  })}
+                  {/* Per-node iLQR cost breakdown */}
+                  {curIlqr && (() => {
+                    const limbData = curIlqr.find((l) => l.limb === limbIdx);
+                    if (!limbData || !limbData.iterations || !limbData.iterations.length) return null;
+                    const iterIdx = C.clampIdx(ilqrIter, limbData.iterations.length);
+                    const it = limbData.iterations[iterIdx];
+                    const chains = C.chainsWithBase(it.trajectory, limbData.base);
+                    if (!chains.length) return null;
+                    const step = ilqrStep != null ? C.clampIdx(ilqrStep, chains.length) : chains.length - 1;
+                    const chain = chains[step];
+                    // nodeIdx in chain: 0=base, so chain index = nodeIdx
+                    const ci = C.clampIdx(nodeIdx, chain.length);
+                    const cfg = meta ? {
+                      restLength: meta.config.octo_max_sucker_distance || 0.3,
+                      wSpring: meta.config.octo_ilqr_w_spring || 2.0,
+                      wBend: meta.config.octo_ilqr_w_bend || 1.0,
+                      wReachRun: meta.config.octo_ilqr_w_reach_run || 0.1,
+                      wReachTerminal: meta.config.octo_ilqr_w_reach_terminal || 6.0,
+                      wRepel: meta.config.octo_ilqr_w_repel || 8.0,
+                      repelRadius: meta.config.octo_ilqr_repel_radius || 2.5,
+                      target: limbData.final.target,
+                      threat: limbData.final.threat,
+                    } : null;
+                    if (!cfg) return null;
+                    const isTerminal = step === chains.length - 1;
+                    const costs = nodeCosts(chain, ci, cfg, isTerminal);
+                    const entries = Object.entries(costs);
+                    if (!entries.length) return null;
+                    return (
+                      <div className="mt-2 border-t border-slate-700 pt-2">
+                        <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step}{isTerminal ? " (terminal)" : ""}</div>
+                        {entries.map(([name, val]) => (
+                          <div key={name} className="flex justify-between">
+                            <span>{name}</span>
+                            <span className="text-slate-400">{val.toFixed(4)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between font-bold mt-1 border-t border-slate-700 pt-1">
+                          <span>total</span>
+                          <span>{entries.reduce((s, [, v]) => s + v, 0).toFixed(4)}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>);
               })()}
             </div>
           )}
@@ -785,8 +1281,9 @@ function App() {
           <div className="bg-slate-900 p-3 rounded text-slate-400">
             <div className="font-bold mb-1 text-slate-300">keys</div>
             <div><kbd>Space</kbd> play · <kbd>←/→</kbd> ±1 · <kbd>Shift+←/→</kbd> ±10</div>
-            <div><kbd>[</kbd><kbd>]</kbd> iLQR iter · <kbd>I</kbd> overlay · <kbd>L</kbd> limb · <kbd>A</kbd> all</div>
+            <div><kbd>[</kbd><kbd>]</kbd> iter · <kbd>{"{"}</kbd><kbd>{"}"}</kbd> step · <kbd>|</kbd> all steps · <kbd>I</kbd> overlay · <kbd>L</kbd> limb</div>
             <div><kbd>V</kbd> converge · <kbd>C</kbd> color mode · <kbd>G</kbd> grid · <kbd>D</kbd> sensing</div>
+            <div><kbd>O</kbd> outlines · <kbd>0</kbd> reset view · scroll = zoom · drag = pan</div>
             <div className="mt-1">color mode: <span className="text-sky-400">{colorMode}</span></div>
           </div>
         </div>

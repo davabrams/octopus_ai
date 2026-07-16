@@ -100,13 +100,14 @@ y = fig.text(.1, .025, "", fontdict=font)
 fig.waitforbuttonpress()
 
 i: int = 0
+vis_prev: float = float(octo.visibility(surf))
 while i != NUM_ITERATIONS:
     t_start: int = time.time_ns()
     i += 1
 
     # 1) advance the simulation
     with perf.track("agents.increment"):
-        ag.increment_all(octo)
+        ag.increment_all(octo, visibility=vis_prev)
     with perf.track("octopus.move"):
         octo.move(ag)
 
@@ -119,7 +120,7 @@ while i != NUM_ITERATIONS:
     if force_logger is not None:
         force_logger.log_frame(i, octo)
 
-    # 2) run inference / camouflage for the new positions
+    # 3) run inference / camouflage for the new positions
     with perf.track("find_color"):
         color_matrix = octo.find_color(surf, INFERENCE_MODE, model)
     assert isinstance(color_matrix, list)
@@ -128,13 +129,14 @@ while i != NUM_ITERATIONS:
     for ix, l in enumerate(octo.limbs):
         l.force_color(color_matrix[ix])
 
-    # 3) draw the updated state and flush it to the window
+    # 4) draw the updated state and flush it to the window
     with perf.track("render"):
         display_refresh(ax, octo, ag, surf, debug_mode=DEBUG_MODE,
                         show_forces=SHOW_FORCES,
                         highlight_octopus=HIGHLIGHT_OCTOPUS)
     with perf.track("visibility"):
-        y.set_text(f"Visibility = {octo.visibility(surf):.4f}   "
+        vis_prev = float(octo.visibility(surf))
+        y.set_text(f"Visibility = {vis_prev:.4f}   "
                    f"Prey caught = {ag.prey_captured}")
 
     if frame_recorder is not None:

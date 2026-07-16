@@ -66,7 +66,7 @@ class WorldConfig:
 @dataclass(frozen=True)
 class AgentConfig:
     count: int = 5  # number of AGENTS in the world (ie prey and threat); 0 disables
-    max_velocity: float = 0.2
+    max_velocity: float = 0.1
     max_theta: float = 0.1
     movement_mode: MovementMode = MovementMode.RANDOM
     sensing_radius: float = 5.0  # how far an AGENT senses the octopus.

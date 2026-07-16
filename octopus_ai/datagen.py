@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
         # Agent parameters 👾
         'agent_number_of_agents': 5,
-        'agent_max_velocity': 0.2,
+        'agent_max_velocity': 0.1,
         'agent_max_theta': 0.1,
         'agent_movement_mode': MovementMode.RANDOM,
         'agent_range_radius': 5,

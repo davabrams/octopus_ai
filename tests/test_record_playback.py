@@ -50,7 +50,8 @@ class TestRecordPlayback(unittest.TestCase):
         )
 
         class SmallRunner(HeadlessRunner):
-            def __init__(self, cfg, run_id=None, label="", db_path=None):
+            def __init__(self, cfg, run_id=None, label="", db_path=None,
+                         setup=None):
                 cfg = replace(
                     small,
                     run=replace(small.run, num_iterations=cfg.run.num_iterations),
@@ -58,7 +59,8 @@ class TestRecordPlayback(unittest.TestCase):
                         small.output, record_run=True, record_ilqr_history=False
                     ),
                 )
-                super().__init__(cfg, run_id=run_id, label=label, db_path=db_path)
+                super().__init__(cfg, run_id=run_id, label=label,
+                                 db_path=db_path, setup=setup)
 
         self.srv.runner_factory = SmallRunner
 

@@ -777,11 +777,18 @@ class Octopus:
     set_color(RandomSurface, MLMode, model): passes its set_color parameters
                     to its child Limb object's set_color() function
     """
-    def __init__(self, params):
-        """params may be a Config or a legacy flat params dict."""
+    def __init__(self, params, start_xy=None):
+        """params may be a Config or a legacy flat params dict.
+
+        start_xy: optional (x, y) tuple to override the default center position.
+        """
         cfg = as_config(params)
-        self.x = cfg.world.x_len / 2.0
-        self.y = cfg.world.y_len / 2.0
+        if start_xy is not None:
+            self.x = float(start_xy[0])
+            self.y = float(start_xy[1])
+        else:
+            self.x = cfg.world.x_len / 2.0
+            self.y = cfg.world.y_len / 2.0
         self.max_body_velocity = cfg.octopus.max_body_velocity
         self.movement_mode = cfg.octopus.movement_mode
         self.model = None

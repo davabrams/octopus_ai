@@ -143,6 +143,15 @@ class RunStore:
         runs.sort(key=lambda r: (r["started_at"], r["run_id"]), reverse=True)
         return runs
 
+    def rename_run(self, run_id: str, label: str):
+        """Update the label of a completed run."""
+        path = self._path(run_id)
+        con = duckdb.connect(path, read_only=False)
+        try:
+            con.execute("UPDATE runs SET label = ?", [label])
+        finally:
+            con.close()
+
     # ---- metadata --------------------------------------------------------
     def run_meta(self, run_id: str) -> dict:
         con = _connect_ro(self._path(run_id))

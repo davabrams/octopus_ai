@@ -62,12 +62,14 @@ Errors (terminal reply for any failed request)::
            bad_request|sim_failed|gone|unknown_type
 """
 import asyncio
+import base64
 import http
 import json
 import logging
 import os
 import pathlib
 import sys
+import time as _time
 import threading
 from dataclasses import replace
 
@@ -161,7 +163,12 @@ class OctopusSimulationServer:
             "load_run": self._h_load_run,
             "get_frame": self._h_get_frame,
             "get_frames": self._h_get_frames,
+            "rename_run": self._h_rename_run,
+            "upload_image": self._h_upload_image,
         }
+        self.uploads_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "logs", "uploads")
 
     # ---- send helpers ----------------------------------------------------
     async def _send(self, ws, obj):
@@ -260,9 +267,10 @@ class OctopusSimulationServer:
 
         run_id = new_run_id()
         label = str(data.get("label", ""))
+        setup = data.get("setup") or {}
         db_path = os.path.join(self.runs_dir, f"{run_id}.duckdb")
         runner = self.runner_factory(cfg, run_id=run_id, label=label,
-                                     db_path=db_path)
+                                     db_path=db_path, setup=setup)
         active = ActiveRun(run_id, num_frames)
         self._active = active
 
@@ -431,6 +439,43 @@ class OctopusSimulationServer:
             return
         await self._send(ws, {"type": "frames_data", "req_id": req_id,
                               "data": result})
+
+    async def _h_upload_image(self, ws, req_id, data):
+        content_b64 = data.get("content_b64")
+        filename = data.get("filename", "upload.jpg")
+        if not content_b64:
+            await self._error(ws, req_id, "bad_request",
+                              "content_b64 is required")
+            return
+        try:
+            raw = base64.b64decode(content_b64)
+        except Exception:
+            await self._error(ws, req_id, "bad_request", "invalid base64")
+            return
+        os.makedirs(self.uploads_dir, exist_ok=True)
+        safe_name = f"{int(_time.time())}_{os.path.basename(filename)}"
+        path = os.path.join(self.uploads_dir, safe_name)
+        with open(path, "wb") as f:
+            f.write(raw)
+        await self._send(ws, {"type": "image_uploaded", "req_id": req_id,
+                              "data": {"path": path}})
+
+    async def _h_rename_run(self, ws, req_id, data):
+        run_id = data.get("run_id")
+        label = data.get("label", "")
+        if not isinstance(label, str):
+            await self._error(ws, req_id, "bad_request",
+                              "label must be a string")
+            return
+        try:
+            await asyncio.to_thread(
+                self.run_store.rename_run, run_id, label)
+        except RunNotFoundError:
+            await self._error(ws, req_id, "unknown_run",
+                              f"no such run: {run_id}")
+            return
+        await self._send(ws, {"type": "run_renamed", "req_id": req_id,
+                              "data": {"run_id": run_id, "label": label}})
 
     # ---- HTTP page serving (unchanged in P4; flip is P5) -----------------
     def _read_html_page(self):

@@ -51,12 +51,32 @@ class AgentGenerator:
             new_agent = Agent(x, y, t, vx, vy, vel_t, agent_type)
             self.agents.append(new_agent)
 
+    def place_agents(self, positions):
+        """Place agents at explicit positions.
+
+        positions: list of dicts, each with keys x, y, type ("prey"|"predator").
+        """
+        for p in positions:
+            agent_type = (AgentType.PREY if p.get("type", "prey") == "prey"
+                          else AgentType.THREAT)
+            t = np.random.uniform(0, 2 * np.pi)
+            new_agent = Agent(float(p["x"]), float(p["y"]), t, 0.0, 0.0, 0.0,
+                              agent_type)
+            self.agents.append(new_agent)
+
     # Modes where agents react to the octopus. Which spring model the
     # octopus's arms use (lumped vs chain) is irrelevant to the agents, so
     # both map to the same reactive path.
     REACTIVE_MODES = (MovementMode.LUMPED_SPRING, MovementMode.SPRING_CHAIN)
 
-    def increment_all(self, octo=None):
+    def increment_all(self, octo=None, visibility=0.0):
+        """Advance all agents one step.
+
+        visibility: the octopus's current visibility score (0 = invisible,
+        higher = more visible).  In reactive modes this controls how
+        strongly agents pursue or flee — a well-camouflaged octopus is
+        effectively invisible, so agents wander randomly.
+        """
         if self.movement_mode == MovementMode.RANDOM:
             self.agents = [self._increment_random(agent)
                            for agent in self.agents]
@@ -69,7 +89,8 @@ class AgentGenerator:
                 [[s.x, s.y] for limb in octo.limbs for s in limb.suckers],
                 dtype=float,
             )
-            self.agents = [self._increment_reactive(agent, sucker_xy)
+            self.agents = [self._increment_reactive(agent, sucker_xy,
+                                                    visibility)
                            for agent in self.agents]
         else:
             assert False, f"Unknown agent movement mode: {self.movement_mode}"
@@ -153,14 +174,20 @@ class AgentGenerator:
         self._clamp_to_grid(new_agent)
         return new_agent
 
-    def _increment_reactive(self, agent: Agent, sucker_xy) -> Agent:
+    def _increment_reactive(self, agent: Agent, sucker_xy,
+                            visibility: float) -> Agent:
         """Agent reaction to the octopus: PREY flee it, THREATs hunt it.
 
         Agents sense the NEAREST SUCKER rather than the body centre: the
         suckers are the octopus's actual physical extent, so a prey flees
         the arm reaching for it (and it is a sucker that captures it),
-        while a threat closes on whatever part is nearest. Both move at
-        agent_max_velocity along that axis.
+        while a threat closes on whatever part is nearest.
+
+        The strength of the reaction is proportional to the octopus's
+        visibility: at visibility 0 the octopus is perfectly camouflaged
+        and agents wander randomly; as visibility rises agents react more
+        purposefully.  Visibility is clamped to [0, 1] to produce a blend
+        weight.
 
         Beyond range_radius the octopus hasn't been noticed, so the agent
         just wanders (same as RANDOM mode). Shared by every reactive mode
@@ -180,6 +207,13 @@ class AgentGenerator:
         if dist > self.range_radius:
             return self._increment_random(agent)
 
+        # How much the agent reacts vs wanders: visibility clamped to [0,1].
+        react_weight = float(np.clip(visibility, 0.0, 1.0))
+
+        # Effectively invisible -> pure random walk.
+        if react_weight < 1e-6:
+            return self._increment_random(agent)
+
         # Degenerate: sitting exactly on a sucker. Prey bolts in a random
         # direction; a threat has nothing to close on, so it just wanders.
         if dist < 1e-9:
@@ -194,9 +228,19 @@ class AgentGenerator:
             if agent.agent_type == AgentType.PREY:
                 ux, uy = -ux, -uy  # flee: point away
 
-        agent.vx = float(ux * self.max_velocity)
-        agent.vy = float(uy * self.max_velocity)
-        agent.t = float(np.arctan2(uy, ux))
+        # Blend directed movement with random noise based on visibility.
+        rand_theta = np.random.uniform(0, 2 * np.pi)
+        rx, ry = np.cos(rand_theta), np.sin(rand_theta)
+        bx = react_weight * ux + (1.0 - react_weight) * rx
+        by = react_weight * uy + (1.0 - react_weight) * ry
+        mag = np.hypot(bx, by)
+        if mag > 1e-9:
+            bx /= mag
+            by /= mag
+
+        agent.vx = float(bx * self.max_velocity)
+        agent.vy = float(by * self.max_velocity)
+        agent.t = float(np.arctan2(by, bx))
         agent.w = 0.0
         agent.update_kinematics()
         self._clamp_to_grid(agent)

@@ -42,10 +42,11 @@ class FakeRunner:
     raise_exc = None
     respect_stop = False
 
-    def __init__(self, cfg, run_id=None, label="", db_path=None):
+    def __init__(self, cfg, run_id=None, label="", db_path=None, setup=None):
         self.cfg = cfg
         self.run_id = run_id
         self.db_path = db_path
+        self.setup = setup or {}
 
     def run(self, progress_cb=None, should_stop=None):
         if self.raise_exc:

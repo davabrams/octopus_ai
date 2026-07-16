@@ -85,7 +85,8 @@ class TestReactiveAgentMovement(unittest.TestCase):
         ag.agents = [prey]
         d0 = nearest_sucker_dist(octo, prey)
         for _ in range(5):
-            ag.increment_all(octo)   # octopus held still: isolate the agent
+            # visibility=1.0: octopus fully visible so prey reacts
+            ag.increment_all(octo, visibility=1.0)
         self.assertGreater(nearest_sucker_dist(octo, prey), d0)
 
     def test_threat_hunts_the_octopus(self):
@@ -97,7 +98,7 @@ class TestReactiveAgentMovement(unittest.TestCase):
         ag.agents = [threat]
         d0 = nearest_sucker_dist(octo, threat)
         for _ in range(5):
-            ag.increment_all(octo)
+            ag.increment_all(octo, visibility=1.0)
         self.assertLess(nearest_sucker_dist(octo, threat), d0)
 
     def test_both_spring_modes_are_reactive(self):
@@ -115,7 +116,7 @@ class TestReactiveAgentMovement(unittest.TestCase):
                 ag.agents = [threat]
                 d0 = nearest_sucker_dist(octo, threat)
                 for _ in range(5):
-                    ag.increment_all(octo)
+                    ag.increment_all(octo, visibility=1.0)
                 self.assertLess(nearest_sucker_dist(octo, threat), d0)
 
     def test_reactive_mode_requires_octopus(self):
@@ -144,7 +145,7 @@ class TestReactiveAgentMovement(unittest.TestCase):
         ag.agents = [Agent(x=octo.x + 0.5, y=octo.y,
                            agent_type=AgentType.PREY)]
         for _ in range(80):
-            ag.increment_all(octo)
+            ag.increment_all(octo, visibility=1.0)
         a = ag.agents[0]
         self.assertGreaterEqual(a.x, 0.0)
         self.assertGreaterEqual(a.y, 0.0)
@@ -153,7 +154,7 @@ class TestReactiveAgentMovement(unittest.TestCase):
 
     def test_octopus_can_still_catch_fleeing_prey(self):
         """The chase must remain winnable: body velocity (0.25) exceeds
-        agent velocity (0.2), so the octopus slowly gains."""
+        agent velocity (0.1), so the octopus gains on prey."""
         p = self._params()
         octo = Octopus(p)
         ag = AgentGenerator(p)
@@ -161,12 +162,31 @@ class TestReactiveAgentMovement(unittest.TestCase):
                            agent_type=AgentType.PREY)]
         caught = False
         for _ in range(150):
-            ag.increment_all(octo)
+            ag.increment_all(octo, visibility=1.0)
             octo.move(ag)
             if ag.remove_captured_prey(octo):
                 caught = True
                 break
         self.assertTrue(caught)
+
+    def test_invisible_octopus_makes_agents_wander(self):
+        """At visibility=0 agents should random-walk even in reactive mode."""
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        threat = Agent(x=octo.x + 3.0, y=octo.y,
+                       agent_type=AgentType.THREAT)
+        ag.agents = [threat]
+        # With visibility=0, threat should NOT reliably close distance.
+        np.random.seed(42)
+        distances = []
+        for _ in range(20):
+            ag.increment_all(octo, visibility=0.0)
+            distances.append(nearest_sucker_dist(octo, threat))
+        # Not all steps should decrease distance (random walk)
+        decreases = sum(1 for i in range(1, len(distances))
+                        if distances[i] < distances[i - 1])
+        self.assertLess(decreases, len(distances) - 1)
 
 
 if __name__ == '__main__':

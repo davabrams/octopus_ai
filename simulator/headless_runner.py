@@ -173,7 +173,7 @@ class HeadlessRunner:
     and owns the DuckDB connection's whole lifetime on one thread.
     """
 
-    def __init__(self, cfg, run_id=None, label="", db_path=None):
+    def __init__(self, cfg, run_id=None, label="", db_path=None, setup=None):
         if cfg.run.num_iterations <= 0:
             raise ValueError(
                 "num_iterations must be > 0 for a recorded run "
@@ -184,6 +184,7 @@ class HeadlessRunner:
         self.run_id = run_id or new_run_id()
         self.label = label
         self.db_path = db_path
+        self.setup = setup or {}
 
     def run(self, progress_cb=None, should_stop=None) -> RunSummary:
         cfg = self.cfg
@@ -193,9 +194,13 @@ class HeadlessRunner:
         # AgentGenerator's global-RNG seeding fires in.
         np.random.seed(cfg.run.rand_seed)
         surf = RandomSurface(cfg)
-        octo = Octopus(cfg)
+        octo = Octopus(cfg, start_xy=self.setup.get("octo_start"))
         ag = AgentGenerator(cfg)
-        ag.generate(num_agents=cfg.agents.count)
+        agent_positions = self.setup.get("agent_positions")
+        if agent_positions:
+            ag.place_agents(agent_positions)
+        else:
+            ag.generate(num_agents=cfg.agents.count)
         inference_mode, model = _load_model(cfg)
 
         recorder = None
