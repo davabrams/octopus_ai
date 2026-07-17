@@ -140,8 +140,19 @@ class ILQRConfig:
                                    # at its ring point) to the body's ROTATION.
                                    # Torque and linear tension share the same
                                    # base-reaction source, so they live together.
-    w_spring: float = 2.0        # segment spacing toward rest length
+    w_spring: float = 2.0        # segment spacing toward rest length (linear)
+    w_spring_stiffen: float = 30.0  # super-linear (cubic-force) spring term: a
+                                    # soft wall against large stretch/compression
+                                    # so a strong attractor can't ball up or
+                                    # stretch the chain (min seg ~= rest)
+    spring_slack: float = 0.25   # deadband: a segment may deviate +-this from
+                                 # rest length for FREE (nodes move paying only
+                                 # effort within the slack)
     w_bend: float = 1.0          # straightness (anti-crumple)
+    bend_deadzone_deg: float = 15.0  # free bend per node before bending engages
+    w_effort_stiffen: float = 5.0  # super-linear (cubic-force) velocity penalty:
+                                   # forbids a node teleporting across the field
+                                   # in one frame; gentle for normal moves
     w_effort: float = 0.5        # per-node per-step VELOCITY penalty (the
                                  # "translation" cost): |u|^2 keeps motion
                                  # bounded/smooth so the arm can't teleport
@@ -157,13 +168,17 @@ class ILQRConfig:
                                      # adjacent node's: protect the body, not the
                                      # limb tip - base end recoils hardest (1.0),
                                      # tip least (this fraction)
-    # Exploration (off by default): when an arm senses no prey, its tip seeks
-    # the least-explored cell within reach (cells are marked explored by the
-    # SUCKERS, not the body). A weak drive: w_explore << w_reach_terminal, and
-    # prey always preempts it, so exploration never outranks hunting/fleeing.
+    # Exploration (off by default): a node sensing no prey is drawn GENTLY to its
+    # OWN nearest least-visited cell (cells are marked explored by the SUCKERS;
+    # the visit map is whole-body/shared, the attraction is PER-NODE so the arm
+    # spreads to cover ground). w_explore << w_reach_terminal and prey preempts
+    # it per node, so exploration never outranks hunting.
     explore_enabled: bool = False
-    w_explore: float = 0.5       # gentle terminal tip pull toward unexplored
-                                 # (vs 6.0 for prey) - the "much less reward"
+    w_explore: float = 0.5       # gentle per-node pull toward its nearest
+                                 # unexplored cell (vs 6.0 for prey)
+    explore_node_radius: float = 3.0  # how far each node looks for its own
+                                      # least-visited cell; small = local search
+                                      # = arm stays spread (no balling on one cell)
     explore_decay: float = 0.95  # per-frame decay of visit counts; < 1.0 turns
                                  # "least visited" into "least RECENTLY visited"
                                  # and makes the overlay read as recency (recent

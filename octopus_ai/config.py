@@ -262,6 +262,13 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_max_iters': cfg.octopus.limb.ilqr.max_iters,
         'octo_ilqr_body_stiffness': cfg.octopus.limb.ilqr.body_stiffness,
         'octo_ilqr_w_spring': cfg.octopus.limb.ilqr.w_spring,
+        'octo_ilqr_w_spring_stiffen':
+            cfg.octopus.limb.ilqr.w_spring_stiffen,
+        'octo_ilqr_spring_slack': cfg.octopus.limb.ilqr.spring_slack,
+        'octo_ilqr_bend_deadzone_deg':
+            cfg.octopus.limb.ilqr.bend_deadzone_deg,
+        'octo_ilqr_w_effort_stiffen':
+            cfg.octopus.limb.ilqr.w_effort_stiffen,
         'octo_ilqr_w_bend': cfg.octopus.limb.ilqr.w_bend,
         'octo_ilqr_w_effort': cfg.octopus.limb.ilqr.w_effort,
         'octo_ilqr_w_reach_run': cfg.octopus.limb.ilqr.w_reach_run,
@@ -272,6 +279,8 @@ def config_to_flat(cfg: Config) -> dict:
             cfg.octopus.limb.ilqr.repel_tip_fraction,
         'octo_ilqr_explore_enabled': cfg.octopus.limb.ilqr.explore_enabled,
         'octo_ilqr_w_explore': cfg.octopus.limb.ilqr.w_explore,
+        'octo_ilqr_explore_node_radius':
+            cfg.octopus.limb.ilqr.explore_node_radius,
         'octo_ilqr_explore_decay': cfg.octopus.limb.ilqr.explore_decay,
         'octo_ilqr_w_explore_threat_avoid':
             cfg.octopus.limb.ilqr.w_explore_threat_avoid,
@@ -402,6 +411,17 @@ def config_from_flat(d: dict) -> Config:
                                      D.octopus.limb.ilqr.body_stiffness),
                     body_torque_gain=g('octo_ilqr_body_torque_gain',
                                        D.octopus.limb.ilqr.body_torque_gain),
+                    w_spring_stiffen=g(
+                        'octo_ilqr_w_spring_stiffen',
+                        D.octopus.limb.ilqr.w_spring_stiffen),
+                    spring_slack=g('octo_ilqr_spring_slack',
+                                   D.octopus.limb.ilqr.spring_slack),
+                    bend_deadzone_deg=g(
+                        'octo_ilqr_bend_deadzone_deg',
+                        D.octopus.limb.ilqr.bend_deadzone_deg),
+                    w_effort_stiffen=g(
+                        'octo_ilqr_w_effort_stiffen',
+                        D.octopus.limb.ilqr.w_effort_stiffen),
                     w_spring=g('octo_ilqr_w_spring',
                                D.octopus.limb.ilqr.w_spring),
                     w_bend=g('octo_ilqr_w_bend', D.octopus.limb.ilqr.w_bend),
@@ -422,6 +442,9 @@ def config_from_flat(d: dict) -> Config:
                                       D.octopus.limb.ilqr.explore_enabled),
                     w_explore=g('octo_ilqr_w_explore',
                                 D.octopus.limb.ilqr.w_explore),
+                    explore_node_radius=g(
+                        'octo_ilqr_explore_node_radius',
+                        D.octopus.limb.ilqr.explore_node_radius),
                     explore_decay=g('octo_ilqr_explore_decay',
                                     D.octopus.limb.ilqr.explore_decay),
                     w_explore_threat_avoid=g(

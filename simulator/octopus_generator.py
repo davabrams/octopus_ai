@@ -147,8 +147,11 @@ class Limb:
         # least-explored cell within reach (exploration feature).
         self.explore_enabled = limb.ilqr.explore_enabled
         self.w_explore = limb.ilqr.w_explore
-        self.explore_locality = 0.3  # bias the explore target toward the tip so
-                                     # the arm sweeps smoothly rather than jumping
+        self.explore_locality = 0.3  # bias each node's explore cell toward the
+                                     # node so it seeks its NEAREST unexplored one
+        self.explore_node_radius = limb.ilqr.explore_node_radius  # how far a node
+                                     # looks for its own least-visited cell (small
+                                     # = local = arm stays spread, no balling)
         # Steer the explore GOAL away from a sensed threat (the picker is
         # otherwise threat-blind and would aim into the keep-out zone).
         self.w_explore_threat_avoid = limb.ilqr.w_explore_threat_avoid
@@ -584,6 +587,56 @@ class Limb:
                     best = (cx, cy)
         return [float(best[0]), float(best[1])] if best is not None else None
 
+    def _node_explore_target(self, nx, ny, visit_counts, threat):
+        """This node's OWN nearest least-visited cell (per-node exploration).
+
+        Searches a small neighborhood (``explore_node_radius``) of the node,
+        scored by ``visit_count + explore_locality*dist-to-node + threat
+        penalty``, and returns the least-visited cell as [x, y] (or None).
+        Per-node (each node its own nearest cell) so the arm spreads to cover
+        ground rather than balling on one shared cell; the super-linear spring
+        (spring_stiffen) holds the chain spacing against the pull. The visit map
+        is whole-body/shared, so the nodes divide coverage.
+        """
+        reach = self.explore_node_radius
+        y_len, x_len = visit_counts.shape
+        x_lo = max(0, int(np.floor(nx - reach)))
+        x_hi = min(x_len - 1, int(np.ceil(nx + reach)))
+        y_lo = max(0, int(np.floor(ny - reach)))
+        y_hi = min(y_len - 1, int(np.ceil(ny + reach)))
+        best = None
+        best_score = None
+        reach_sq = reach * reach
+        for cy in range(y_lo, y_hi + 1):
+            for cx in range(x_lo, x_hi + 1):
+                d = (cx - nx) ** 2 + (cy - ny) ** 2
+                if d > reach_sq:
+                    continue
+                score = (visit_counts[cy, cx]
+                         + self.explore_locality * np.sqrt(d))
+                if threat is not None:
+                    d_threat = np.hypot(cx - threat[0], cy - threat[1])
+                    if d_threat < self.explore_threat_radius:
+                        score += self.w_explore_threat_avoid * (
+                            self.explore_threat_radius - d_threat)
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best = (cx, cy)
+        if best is None:
+            return None
+        # Aim ONE rest-length toward the chosen cell, not at the cell itself
+        # (which can be several units off): attracting straight to a far cell
+        # demands the arm stretch to span each node's own distant target - no
+        # spring can hold 0.3 spacing AND put nodes on 3-unit-apart cells. A
+        # short nudge keeps the pull at the spacing scale; the super-linear
+        # spring then holds the chain and the arm drifts to cover ground.
+        dx, dy = best[0] - nx, best[1] - ny
+        d = np.hypot(dx, dy)
+        if d < 1e-9:
+            return None
+        step = self.max_sucker_distance
+        return [float(nx + dx / d * step), float(ny + dy / d * step)]
+
     def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None,
                    body_theta: float = 0.0, body_dtheta: float = 0.0,
                    visit_counts=None):
@@ -612,30 +665,29 @@ class Limb:
                 horizon=ic.horizon,
                 max_iters=ic.max_iters,
                 w_spring=ic.w_spring,
+                w_spring_stiffen=ic.w_spring_stiffen,
+                spring_slack=ic.spring_slack,
+                bend_deadzone_deg=ic.bend_deadzone_deg,
                 w_bend=ic.w_bend,
                 w_effort=ic.w_effort,
+                w_effort_stiffen=ic.w_effort_stiffen,
                 w_reach_run=ic.w_reach_run,
                 w_reach_terminal=ic.w_reach_terminal,
                 w_repel=ic.w_repel,
                 repel_radius=ic.repel_radius,
                 repel_tip_fraction=ic.repel_tip_fraction,
-                repel_range=self.agent_range_radius,  # per-node flee range
             )
 
-        # Carry the arm rigidly with the body's rotation this frame: rotate the
-        # free nodes about the body center by body_dtheta BEFORE warm-starting.
-        # Without this, rotating theta moves each base tangentially while the
-        # warm start stays in world coords - a spurious strain that feeds back
-        # into more torque and spins the body away (a runaway limit cycle).
-        # Carried rigidly, rotation adds no strain, so the body only rotates
-        # from genuine off-axis reaching (rotate-to-face, then settle).
-        if body_dtheta != 0.0:
-            cos_d, sin_d = np.cos(body_dtheta), np.sin(body_dtheta)
-            for i in range(1, self.rows):
-                px = self.center_line[i].x - x_octo
-                py = self.center_line[i].y - y_octo
-                self.center_line[i].x = x_octo + cos_d * px - sin_d * py
-                self.center_line[i].y = y_octo + sin_d * px + cos_d * py
+        # The arm is NOT rigidly carried through the body's rotation. The body
+        # is pre-rotated (theta updated from last frame's torque, before this
+        # solve); the base is re-pinned to the rotated ring below, but the free
+        # nodes stay in world coords - so the arm lags and this solve must SMOOTH
+        # it back toward the moved base, paying the EFFORT cost (rotating the limb
+        # is not free). The spring DEADBAND is what keeps this stable: the small
+        # per-frame rotation-lag strain sits inside the free zone, so it makes no
+        # spring tension and no feedback torque. With a live stimulus the arm
+        # reaches and the rotation settles; fully idle it may drift/spin, which
+        # is acceptable (a resting octopus slowly reorienting).
 
         # Pin the base to this arm's point on the body ring: a fixed angular
         # slot (base_angle) rotated by the body's orientation, ring_radius out
@@ -655,48 +707,54 @@ class Limb:
         tip = self.center_line[-1]
         # PER-NODE sensing (node-autonomous, not a limb policy): each free node
         # independently attracts to the nearest PREY within its sense window
-        # (strong) and flees the nearest THREAT within it (graded body>tip). A
-        # node sensing no prey is drawn gently to the limb's least-explored cell
-        # (one search, threat-aware, shared as the exploration background drive).
-        # A node that senses nothing simply doesn't pull. Both can act on
-        # different nodes of this arm at once; the body still emerges from the
-        # summed base tension.
+        # (strong) and FLEES the nearest THREAT by retracting toward the body
+        # ("scrunch up") - the flee force points node -> body, weighted by how
+        # close the threat is (graded body>tip). A node sensing no prey is drawn
+        # gently to its own nearest least-explored cell. A node that senses
+        # nothing doesn't pull. Both can act on different nodes at once; the body
+        # still emerges from the summed base tension.
         R = self.agent_range_radius
+        w_repel = self.ilqr_cfg.w_repel
         prey_xy, threat_xy = self._agent_xy(agents)
-        explore_pt = None
-        if self.explore_enabled and visit_counts is not None:
-            nearest_threat = None
-            if len(threat_xy):
-                dt = np.hypot(threat_xy[:, 0] - base_x, threat_xy[:, 1] - base_y)
-                nearest_threat = threat_xy[int(np.argmin(dt))].tolist()
-            explore_pt = self._ilqr_explore_target(base_x, base_y, tip,
-                                                   visit_counts,
-                                                   threat=nearest_threat)
-
         attract_tgt = np.zeros((n_free, 2), dtype=np.float32)
         attract_sw = np.zeros(n_free, dtype=np.float32)
         repel_tgt = np.zeros((n_free, 2), dtype=np.float32)
         repel_sw = np.zeros(n_free, dtype=np.float32)
         sw_prey = float(np.sqrt(self.ilqr_cfg.w_reach_terminal))
         sw_explore = float(np.sqrt(self.w_explore))
-        sw_repel = float(np.sqrt(self.ilqr_cfg.w_repel))
+        explore_on = self.explore_enabled and visit_counts is not None
         for i in range(n_free):
             node = self.center_line[i + 1]
+            # This node's nearest threat within its window: flee = retract toward
+            # the BODY CENTRE, weight scaling with threat proximity (0 at the edge
+            # of the window, max at contact). Steers its exploration away too.
+            nthreat = None
+            if len(threat_xy):
+                dtn = np.hypot(threat_xy[:, 0] - node.x, threat_xy[:, 1] - node.y)
+                k = int(np.argmin(dtn))
+                if dtn[k] <= R:
+                    nthreat = threat_xy[k]
+                    pen = (R - dtn[k]) / R      # 0 at window edge -> 1 at contact
+                    repel_tgt[i] = (x_octo, y_octo)      # flee toward the body
+                    repel_sw[i] = float(np.sqrt(w_repel * pen))
+            # Nearest PREY within the window -> strong attract.
             if len(prey_xy):
                 dp = np.hypot(prey_xy[:, 0] - node.x, prey_xy[:, 1] - node.y)
                 j = int(np.argmin(dp))
                 if dp[j] <= R:
                     attract_tgt[i] = prey_xy[j]
                     attract_sw[i] = sw_prey
-            if attract_sw[i] == 0.0 and explore_pt is not None:
-                attract_tgt[i] = explore_pt
-                attract_sw[i] = sw_explore
-            if len(threat_xy):
-                dtn = np.hypot(threat_xy[:, 0] - node.x, threat_xy[:, 1] - node.y)
-                k = int(np.argmin(dtn))
-                if dtn[k] <= R:
-                    repel_tgt[i] = threat_xy[k]
-                    repel_sw[i] = sw_repel
+            # Else EXPLORE, PER NODE: this node is drawn (gently) to ITS OWN
+            # nearest least-visited cell (whole-body visit map, per-node target).
+            # Each node seeks a different local cell, so the arm spreads to cover
+            # ground and the springs keep it spaced - drawing every node to one
+            # shared cell balls the whole arm up on it.
+            if attract_sw[i] == 0.0 and explore_on:
+                ept = self._node_explore_target(node.x, node.y, visit_counts,
+                                                nthreat)
+                if ept is not None:
+                    attract_tgt[i] = ept
+                    attract_sw[i] = sw_explore
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below
         # builds a fresh array, so this reference stays stable for recording.

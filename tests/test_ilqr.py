@@ -33,12 +33,12 @@ def _min_node_err(res, target):
     return float(np.linalg.norm(nodes - np.array(target, float), axis=1).min())
 
 
-def _solve(ctrl, base, x0, *, target=None, tip_only=False, threat=None, **kw):
+def _solve(ctrl, base, x0, *, target=None, tip_only=False, repel_to=None, **kw):
     """Per-node solve helper: build the attract/repel arrays and call solve().
 
-    target: attract every node (or just the tip, tip_only=True) toward it.
-    threat: every node flees it. Reproduces simple reach/flee scenarios on the
-    per-node interface.
+    target:   attract every node (or just the tip, tip_only=True) toward it.
+    repel_to: flee = retract every node toward this point (the body centre).
+    Reproduces simple reach/flee scenarios on the per-node interface.
     """
     n = ctrl.n_free
     at = np.zeros((n, 2), np.float32)
@@ -51,8 +51,8 @@ def _solve(ctrl, base, x0, *, target=None, tip_only=False, threat=None, **kw):
             asw[:] = np.sqrt(ctrl.w_reach_terminal)
     rt = np.zeros((n, 2), np.float32)
     rsw = np.zeros(n, np.float32)
-    if threat is not None:
-        rt[:] = threat
+    if repel_to is not None:
+        rt[:] = repel_to
         rsw[:] = np.sqrt(ctrl.w_repel)
     return ctrl.solve(base, at, asw, rt, rsw, x0=x0, **kw)
 
@@ -91,41 +91,88 @@ def test_one_controller_serves_multiple_targets():
         assert err < 0.25, f"target {target}: tip err {err}"
 
 
+def test_spring_stiffen_is_superlinear_and_signed():
+    """The stiffen residual is sw*dev*|dev| (= sw*dev^2, sign-preserved): signed
+    so it corrects both stretch and compression, and super-linear (doubling dev
+    quadruples the residual -> a cubic restoring FORCE)."""
+    from simulator.ilqr.residuals import spring_stiffen_residual
+    base = tf.constant([0.0, 0.0], tf.float32)
+    # single free node; rest=1.0 so seg_len == the node's x.
+    r_stretch = spring_stiffen_residual(tf.constant([2.0, 0.0], tf.float32),
+                                        base, rest=1.0, sw=1.0).numpy()[0]
+    r_compress = spring_stiffen_residual(tf.constant([0.4, 0.0], tf.float32),
+                                         base, rest=1.0, sw=1.0).numpy()[0]
+    r_more = spring_stiffen_residual(tf.constant([3.0, 0.0], tf.float32),
+                                     base, rest=1.0, sw=1.0).numpy()[0]
+    assert abs(r_stretch - 1.0) < 1e-5      # dev=+1  -> +1
+    assert abs(r_compress - (-0.36)) < 1e-5  # dev=-0.6 -> -(0.6^2), signed
+    assert abs(r_more - 4.0) < 1e-5          # dev=+2  -> +4 (dev^2: super-linear)
+
+
+def test_spring_and_bend_deadbands_are_free_zones():
+    """Within the deadbands the spring/bending residuals are zero (the node moves
+    for free, paying only effort); only the overrun is penalized."""
+    from simulator.ilqr.residuals import spring_residual, bending_residual
+    base = tf.constant([0.0, 0.0], tf.float32)
+    # Segment stretched 0.2 with slack 0.25 -> free.
+    r_in = spring_residual(tf.constant([1.2, 0.0], tf.float32), base,
+                           rest=1.0, sw_spring=2.0, slack=0.25).numpy()[0]
+    assert abs(r_in) < 1e-6
+    # Stretched 0.5 -> only the 0.25 excess is sprung.
+    r_out = spring_residual(tf.constant([1.5, 0.0], tf.float32), base,
+                            rest=1.0, sw_spring=2.0, slack=0.25).numpy()[0]
+    assert abs(r_out - 2.0 * 0.25) < 1e-5           # sw * (0.5 - 0.25)
+    # Bending: small curvatures (|curv| 0.05, 0.1) below a 0.3 deadzone are free.
+    xb = tf.constant([1.0, 0.0, 2.0, 0.05, 3.0, 0.0], tf.float32)
+    rb = bending_residual(xb, base, sw_bend=1.0, deadzone=0.3).numpy()
+    assert np.allclose(rb, 0.0, atol=1e-5)
+
+
+def test_effort_stiffen_is_superlinear_per_node():
+    """The velocity-stiffen residual is sw*|u_i|*u_i per node (cost ~ |u_i|^4):
+    a per-node speed penalty that rises super-linearly to forbid teleportation."""
+    from simulator.ilqr.residuals import effort_stiffen_residual
+    # two nodes: one moving (3,4) (speed 5), one still.
+    u = tf.constant([3.0, 4.0, 0.0, 0.0], dtype=tf.float32)
+    r = effort_stiffen_residual(u, sw=1.0).numpy()
+    # node 0 residual = |u|*u = 5*(3,4) = (15,20); node 1 = 0.
+    assert abs(r[0] - 15.0) < 1e-4 and abs(r[1] - 20.0) < 1e-4
+    assert abs(r[2]) < 1e-4 and abs(r[3]) < 1e-4
+    # cost (squared) for node 0 = 15^2+20^2 = 625 = |u|^4 = 5^4. Super-linear.
+    assert abs((r[0] ** 2 + r[1] ** 2) - 625.0) < 1e-2
+
+
 def test_repel_residual_grades_body_over_tip():
-    """node_sw ramps the per-node repel barrier: at equal penetration the
-    body-adjacent node pays more than the tip (protect the body, not the limb)."""
+    """Flee pulls each node toward the body target; node_sw (with the body>tip
+    grade) sets the strength. At EQUAL distance from the body the body-adjacent
+    node (larger weight) pays more than the tip."""
     from simulator.ilqr.residuals import repel_residual
-    # Two free nodes equidistant from their (per-node) threat -> equal penetration.
-    x = tf.constant([1.0, 1.0, 3.0, 1.0], dtype=tf.float32)  # (1,1) and (3,1)
-    threats = tf.constant([[2.0, 0.0], [2.0, 0.0]], dtype=tf.float32)
+    # two free nodes, both 1 unit from the body target at the origin.
+    x = tf.constant([1.0, 0.0, 0.0, 1.0], dtype=tf.float32)  # (1,0) and (0,1)
+    targets = tf.constant([[0.0, 0.0], [0.0, 0.0]], dtype=tf.float32)  # body
     node_sw = tf.constant([1.0, np.sqrt(0.3)], dtype=tf.float32)  # body, tip
-    r = repel_residual(x, threats, node_sw, r_range=2.5).numpy()
-    assert r[0] > r[1] > 0.0
-    # cost is the squared residual: tip pays 0.3x the body-adjacent node.
-    assert abs((r[1] ** 2) / (r[0] ** 2) - 0.3) < 1e-5
+    r = repel_residual(x, targets, node_sw).numpy()  # (4,)
+    c0 = r[0] ** 2 + r[1] ** 2   # body-adjacent node
+    c1 = r[2] ** 2 + r[3] ** 2   # tip node
+    assert c0 > c1 > 0.0
+    assert abs(c1 / c0 - 0.3) < 1e-5  # tip pays 0.3x
 
 
-def test_threat_repulsion_pushes_arm_away():
-    """With a threat present the arm keeps farther from it than without one."""
-    ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50,
-                         repel_range=5.0)
+def test_flee_retracts_arm_toward_body():
+    """Fleeing pulls the arm IN toward the body ('scrunch up'), so the tip ends
+    up closer to the base than when idle - NOT pushed away from the threat."""
+    ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50)
     base = [0.0, 0.0]
-    x0 = ctrl.straight_arm(base, init_angle=0.0)  # arm along +x
-    threat = [2.5, 0.6]                            # just off the arm's side
-    target = [4.0, -1.0]                           # reach away from the threat
+    x0 = ctrl.straight_arm(base, init_angle=0.0)  # arm extended along +x
 
-    def min_dist_to_threat(res):
+    def tip_dist(res):
         nodes = res.x_traj[-1].numpy().reshape(-1, 2)
-        return float(np.linalg.norm(nodes - np.array(threat, float),
-                                    axis=1).min())
+        return float(np.linalg.norm(nodes[-1] - np.array(base, float)))
 
-    with_threat = _solve(ctrl, base, x0, target=target, tip_only=True,
-                         threat=threat)
-    without_threat = _solve(ctrl, base, x0, target=target, tip_only=True)
-
-    assert (min_dist_to_threat(with_threat)
-            > min_dist_to_threat(without_threat) + 0.2), \
-        "repulsion did not push the arm away from the threat"
+    fleeing = _solve(ctrl, base, x0, repel_to=base)  # retract toward the body
+    idle = _solve(ctrl, base, x0)                    # nothing sensed
+    assert tip_dist(fleeing) < tip_dist(idle) - 0.2, \
+        "flee did not retract the arm toward the body"
 
 
 def test_hold_barely_moves():

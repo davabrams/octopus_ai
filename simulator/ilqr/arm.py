@@ -58,8 +58,19 @@ class ArmController:
     # close target; bending kills the high-frequency zigzag that a pure
     # distance-spring chain folds into, while still allowing a smooth curl.
     w_spring: float = 2.0
+    w_spring_stiffen: float = 30.0  # weight of the super-linear (cubic-force)
+                                    # spring term: soft wall vs large stretch/
+                                    # compression so a strong attractor can't
+                                    # ball up or stretch the chain
+    spring_slack: float = 0.25  # deadband: a segment may deviate +-this from
+                                # rest length for FREE (only effort applies)
     w_bend: float = 1.0
+    bend_deadzone_deg: float = 15.0  # a node may bend this many degrees for
+                                     # free before the bending term engages
     w_effort: float = 0.1
+    w_effort_stiffen: float = 5.0  # super-linear (cubic-force) velocity penalty:
+                                   # forbids a node teleporting across the field
+                                   # in one frame; gentle for normal moves
     w_reach_run: float = 0.1
     w_reach_terminal: float = 6.0
     w_repel: float = 8.0        # how strongly a nearby threat is avoided
@@ -69,9 +80,6 @@ class ArmController:
                                      # to the body-adjacent node's: the body
                                      # matters more than a limb tip, so the base
                                      # end recoils hardest and the tip least
-    repel_range: float = 5.0    # per-node flee range = the sense window: a node
-                                # flees a threat anywhere within this of it, the
-                                # push growing as the threat closes
     max_iters: int = 50
     tol: float = 1e-4
 
@@ -79,8 +87,15 @@ class ArmController:
         n_free = self.n_free
         rest = self.rest_length
         sw_spring = float(np.sqrt(self.w_spring))
+        sw_spring_stiffen = float(np.sqrt(self.w_spring_stiffen))
+        slack = float(self.spring_slack)
         sw_bend = float(np.sqrt(self.w_bend))
+        # Curvature-vector magnitude of a `bend_deadzone_deg` bend at rest
+        # spacing: |curv| = 2*rest*sin(angle/2). Bends smaller than this are free.
+        bend_dz = float(2.0 * rest
+                        * np.sin(np.radians(self.bend_deadzone_deg) / 2.0))
         sw_effort = float(np.sqrt(self.w_effort))
+        sw_effort_stiffen = float(np.sqrt(self.w_effort_stiffen))
         # Per-node repel grade ramp (the body-adjacent free node avoids threats
         # hardest, the tip least). Stored on self so solve() can fold it into the
         # per-node repel sqrt-weight it packs (only nodes that sense a threat get
@@ -92,14 +107,15 @@ class ArmController:
             return x + u * DT
 
         # Costs are composed from the shared residual library (residuals.py).
-        # Attraction and repulsion are now PER-NODE (node-autonomous sensing, not
-        # a limb policy): params carries, for THIS arm this frame,
+        # Attraction and repulsion are PER-NODE (node-autonomous sensing, not a
+        # limb policy): params carries, for THIS arm this frame,
         #   [ base_xy(2),
-        #     attract_tgt(2n), attract_sw(n),   # each node's sensed prey/explore
-        #     repel_tgt(2n),   repel_sw(n),     # each node's sensed threat
-        #     repel_range(1) ]                  # the sense window (flee range)
-        # sw entries are 0 for nodes that sense nothing, so only nodes within the
-        # sense window attract/flee. Slices below index into that fixed layout.
+        #     attract_tgt(2n), attract_sw(n),  # each node's sensed prey/explore
+        #     repel_tgt(2n),   repel_sw(n) ]   # each node's flee target (the body
+        #                                      # centre) + threat-proximity weight
+        # sw entries are 0 where a node senses nothing. Attract pulls toward the
+        # prey/explore cell; repel (flee) pulls toward the body ("scrunch up").
+        # Slices below index into that fixed layout.
         a0 = 2
         a1 = a0 + 2 * n_free   # end of attract_tgt
         a2 = a1 + n_free       # end of attract_sw
@@ -110,10 +126,12 @@ class ArmController:
             base_xy = params[0:2]
             return tf.concat([
                 res.effort_residual(u, sw_effort),
-                res.spring_residual(x, base_xy, rest, sw_spring),
-                res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, params[a2:r1], params[r1:r2],
-                                   params[r2]),
+                res.effort_stiffen_residual(u, sw_effort_stiffen),
+                res.spring_residual(x, base_xy, rest, sw_spring, slack),
+                res.spring_stiffen_residual(x, base_xy, rest,
+                                            sw_spring_stiffen, slack),
+                res.bending_residual(x, base_xy, sw_bend, bend_dz),
+                res.repel_residual(x, params[a2:r1], params[r1:r2]),
                 res.attract_residual(x, params[a0:a1], params[a1:a2]),
             ], axis=0)
 
@@ -121,10 +139,11 @@ class ArmController:
             base_xy = params[0:2]
             return tf.concat([
                 res.attract_residual(x, params[a0:a1], params[a1:a2]),
-                res.spring_residual(x, base_xy, rest, sw_spring),
-                res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, params[a2:r1], params[r1:r2],
-                                   params[r2]),
+                res.spring_residual(x, base_xy, rest, sw_spring, slack),
+                res.spring_stiffen_residual(x, base_xy, rest,
+                                            sw_spring_stiffen, slack),
+                res.bending_residual(x, base_xy, sw_bend, bend_dz),
+                res.repel_residual(x, params[a2:r1], params[r1:r2]),
             ], axis=0)
 
         self._dynamics = dynamics
@@ -161,9 +180,11 @@ class ArmController:
                      explore cell); arbitrary where the node senses nothing.
         attract_sw:  (n_free,) per-node attract sqrt-weight; 0 where the node
                      senses no target (so only sensing nodes attract).
-        repel_tgt:   (n_free, 2) the threat each node senses; arbitrary where none.
-        repel_sw:    (n_free,) per-node repel sqrt-weight (0 where no threat is in
-                     the window). The controller multiplies in its body>tip grade.
+        repel_tgt:   (n_free, 2) each node's FLEE target = the body centre (nodes
+                     retract toward it, "scrunch up"); arbitrary where no threat.
+        repel_sw:    (n_free,) per-node flee sqrt-weight (0 where no threat is in
+                     the window, larger the closer the threat). The controller
+                     multiplies in its body>tip grade.
         x0:          (2*n_free,) current free-node positions (warm-start friendly).
         u_init:      optional (horizon, 2*n_free) initial controls; zeros if None
                      (pass last frame's shifted solution to warm-start).
@@ -175,12 +196,12 @@ class ArmController:
         attract_sw = tf.convert_to_tensor(attract_sw, dtype=tf.float32)
         repel_tgt = tf.reshape(
             tf.convert_to_tensor(repel_tgt, dtype=tf.float32), [-1])
-        # Fold the body>tip grade into the per-node repel weight.
+        # Fold the body>tip grade into the per-node flee weight.
         repel_sw = (tf.convert_to_tensor(repel_sw, dtype=tf.float32)
                     * self._repel_grade)
         params = tf.concat(
-            [base_xy, attract_tgt, attract_sw, repel_tgt, repel_sw,
-             [float(self.repel_range)]], axis=0)  # (3 + 6*n_free,)
+            [base_xy, attract_tgt, attract_sw, repel_tgt, repel_sw],
+            axis=0)  # (2 + 6*n_free,)
         if u_init is None:
             u_init = tf.zeros((self.horizon, 2 * self.n_free), dtype=tf.float32)
         return self._solve(x0, params, u_init,
