@@ -61,43 +61,38 @@ def bending_residual(x: tf.Tensor, base_xy: tf.Tensor,
     return sw_bend * tf.reshape(curv, [-1])
 
 
-def repel_residual(x: tf.Tensor, threat: tf.Tensor, threat_w,
-                   r_safe: float, node_sw=None) -> tf.Tensor:
-    """One-sided barrier: every free node pays ``threat_w*(r_safe - dist)``
-    while within ``r_safe`` of the threat, zero beyond it.
+def repel_residual(x: tf.Tensor, threats: tf.Tensor, node_sw,
+                   r_range: float) -> tf.Tensor:
+    """Per-node flee: each free node is pushed away from ITS OWN sensed threat.
 
-    ``threat_w`` is the sqrt-weight, 0 when no threat is in range (so the term
-    vanishes without changing the residual's shape — no retrace). Pushes the
-    whole arm out of the keep-out zone.
-
-    ``node_sw`` is an optional ``(n_free,)`` per-node sqrt-weight ramp: the body
-    matters more than an arm tip, so the body-adjacent node is pushed hardest
-    and the tip least (protect the body, not the limb). None = uniform.
+    Node-autonomous, NOT a limb policy: ``threats`` is ``(n_free, 2)`` - the
+    threat each node senses (arbitrary where it senses none) - and ``node_sw`` is
+    the ``(n_free,)`` per-node sqrt-weight, 0 for nodes that sense no threat in
+    their window (so only nodes within the sense window flee). The barrier
+    ``relu(r_range - dist)`` grows as the threat closes, ``r_range`` being the
+    sense window. ``node_sw`` also carries the body>tip grade (repel_tip_fraction)
+    so the body-adjacent node recoils hardest - protect the body, not the tip.
     """
-    free = tf.reshape(x, (-1, 2))  # (n_free, 2)
-    d = tf.sqrt(tf.reduce_sum(tf.square(free - threat), axis=1) + _EPS)
-    barrier = tf.nn.relu(r_safe - d)  # (n_free,)
-    if node_sw is not None:
-        barrier = barrier * node_sw
-    return threat_w * barrier  # (n_free,)
+    free = tf.reshape(x, (-1, 2))       # (n_free, 2)
+    thr = tf.reshape(threats, (-1, 2))  # (n_free, 2)
+    d = tf.sqrt(tf.reduce_sum(tf.square(free - thr), axis=1) + _EPS)  # (n_free,)
+    return node_sw * tf.nn.relu(r_range - d)  # (n_free,)
 
 
-def reach_residual(x: tf.Tensor, target: tf.Tensor, sw_reach) -> tf.Tensor:
-    """Pull EVERY free node toward ``target`` (whole-arm reach + capture).
+def attract_residual(x: tf.Tensor, targets: tf.Tensor, node_sw) -> tf.Tensor:
+    """Per-node attract: each free node is pulled toward ITS OWN sensed target.
 
-    An octopus arm senses and grabs along its whole length, so attraction acts
-    on every node, not just the tip (a starfish ray would be tip-only). The
-    residual is normalized by ``sqrt(n_free)`` so the aggregate pull equals a
-    single-node reach of the same weight - cost ``= w * mean_i |node_i-target|^2``
-    - rather than growing ``n_free``x and balling the arm up on the target.
-
-    ``sw_reach`` is the sqrt-weight (may be a scalar tensor so strength can vary
-    per solve without a retrace); pass it pre-gated to 0 to disable the term
-    (e.g. the idle "hold", where a whole-arm pull to the current tip would
-    otherwise collapse the arm inward)."""
-    free = tf.reshape(x, (-1, 2))  # (n_free, 2)
-    n = tf.cast(tf.shape(free)[0], tf.float32)
-    return sw_reach * tf.reshape(free - target, [-1]) / tf.sqrt(n)
+    Node-autonomous, NOT a limb policy: ``targets`` is ``(n_free, 2)`` - the prey
+    (strong) or explore cell (gentle) each node senses (arbitrary where it senses
+    nothing) - and ``node_sw`` is the ``(n_free,)`` per-node sqrt-weight, 0 for
+    nodes that sense no target (so only nodes that sense prey attract to it). Each
+    node pulls to its own target at full per-node weight (no whole-arm
+    normalization): nodes converging on one prey grab it; a node the prey never
+    reached simply doesn't pull.
+    """
+    free = tf.reshape(x, (-1, 2))       # (n_free, 2)
+    tgt = tf.reshape(targets, (-1, 2))  # (n_free, 2)
+    return tf.reshape(node_sw[:, None] * (free - tgt), [-1])  # (2*n_free,)
 
 
 def effort_residual(u: tf.Tensor, sw_effort: float) -> tf.Tensor:

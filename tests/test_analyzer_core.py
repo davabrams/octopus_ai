@@ -127,46 +127,38 @@ class TestCoreLogic(unittest.TestCase):
           assert.strictEqual(A.angleDeg(1,0), 0);
           assert.strictEqual(A.angleDeg(0,1), 90);
 
-          // Straight horizontal chain at rest length -> spring/bending vanish.
-          const chain = [[0,0],[1,0],[2,0],[3,0]];
-          const cfg = { restLength:1, wSpring:2, wBend:1, wReachRun:0.1,
-                        wReachTerminal:6, wExplore:0.5, wEffort:3, wRepel:8,
-                        repelRadius:2.5, repelTipFraction:1, target:[5,0],
-                        targetKind:"explore", threat:null };
-          // Interior node: spring/bending ~0; effort from a downward velocity;
-          // whole-arm attraction now reaches this node too (running weight,
-          // normalized by n_free=3), pointing at the target.
-          const c = A.nodeCosts(chain, 1, cfg, false, [0,0.5]);
-          near(c.spring.cost, 0); near(c.bending.cost, 0);
-          near(c.effort.cost, 0.75);                       // wEffort*|v|^2 = 3*0.25
-          near(c.explore.cost, (0.1/3)*16);                // (wReachRun/nFree)*d^2
-          assert.strictEqual(A.arrowFor(c.explore.dir[0], c.explore.dir[1]), "→");
+          // PER-NODE sensing. chain nodes 1..3 (fi 0..2); attract/repel arrays
+          // are indexed by fi. sw entries are sqrt-weights (0 = senses nothing).
+          const chain = [[0,0],[1,0],[2,0],[3,0]];  // nFree=3
+          const cfg = { restLength:1, wSpring:2, wBend:1, wEffort:3,
+                        repelTipFraction:1, repelRange:2.5,
+                        attractTgt:[[5,0],[5,0],[5,0]], attractSw:[0, 2, 0],
+                        repelTgt:[[3,1],[3,1],[3,1]], repelSw:[0, 0, 0] };
 
-          // Tip at terminal: EXPLORE attraction uses w_explore (0.5), not
-          // w_reach_terminal (6) - the weight-label fix - normalized by n_free,
-          // and points at the target.
-          const t = A.nodeCosts(chain, 3, cfg, true, null);
-          near(t.explore.cost, (0.5/3)*4);                 // (wExplore/nFree)*d^2
-          assert.strictEqual(A.arrowFor(t.explore.dir[0], t.explore.dir[1]), "→");
-          assert.ok(!('effort' in t));                     // terminal has no control
+          // Node 2 (fi=1) senses a target at [5,0], sw=2 -> weight 4, d=3.
+          const c2 = A.nodeCosts(chain, 2, cfg, true, null);
+          near(c2.attract.cost, 4 * 9);                    // sw^2 * d^2
+          assert.strictEqual(A.arrowFor(c2.attract.dir[0], c2.attract.dir[1]), "→");
 
-          // Repel points AWAY from a threat just below the tip (ungraded here).
-          const cfg2 = Object.assign({}, cfg, { threat:[3,1] });
-          const r = A.nodeCosts(chain, 3, cfg2, true, null);
-          near(r.repel.cost, 18.0);                        // 8 * 1 * (2.5-1)^2
-          assert.strictEqual(A.arrowFor(r.repel.dir[0], r.repel.dir[1]), "↑");
+          // Node 1 (fi=0) senses NOTHING: attract & repel present but 0, and
+          // effort is shown (non-terminal); "every cost shows".
+          const c1 = A.nodeCosts(chain, 1, cfg, false, [0,0.5]);
+          near(c1.spring.cost, 0); near(c1.bending.cost, 0);
+          near(c1.effort.cost, 0.75);                      // wEffort*|v|^2
+          assert.ok(c1.attract.cost === 0 && c1.repel.cost === 0);
 
-          // Repel shows even when the node is BEYOND the keep-out radius: value
-          // 0, so it's visibly present rather than dropped ("every cost shows").
-          const cfgFar = Object.assign({}, cfg, { threat:[100,100] });
-          const rf = A.nodeCosts(chain, 2, cfgFar, false, [0,0]);
-          assert.ok('repel' in rf && rf.repel.cost === 0);
+          // A node fleeing: repelSw[fi=2]=sqrt(8), threat just below the tip.
+          const cfgR = Object.assign({}, cfg, { repelSw:[0, 0, Math.sqrt(8)] });
+          const t = A.nodeCosts(chain, 3, cfgR, true, null);   // tip, fi=2
+          near(t.repel.cost, 18.0);                        // 8*1*(2.5-1)^2
+          assert.strictEqual(A.arrowFor(t.repel.dir[0], t.repel.dir[1]), "↑");
+          assert.ok(!('effort' in t));                     // terminal, no control
 
-          // Graded repel: at EQUAL range the body-adjacent node avoids harder
-          // than the tip (repelTipFraction=0.3). threat [2,1] is equidistant
-          // from node 1 and node 3.
-          const cfgG = Object.assign({}, cfg,
-            { threat:[2,1], repelTipFraction:0.3 });
+          // Graded repel: at EQUAL range the body-adjacent node (fi=0) avoids
+          // harder than the tip (fi=2) with repelTipFraction=0.3. threat [2,1]
+          // is equidistant from node 1 and node 3.
+          const cfgG = Object.assign({}, cfg, { repelTipFraction:0.3,
+            repelTgt:[[2,1],[2,1],[2,1]], repelSw:[Math.sqrt(8),0,Math.sqrt(8)] });
           const rBody = A.nodeCosts(chain, 1, cfgG, true, null).repel;
           const rTip  = A.nodeCosts(chain, 3, cfgG, true, null).repel;
           assert.ok(rBody.cost > rTip.cost);

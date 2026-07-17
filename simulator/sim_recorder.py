@@ -44,7 +44,9 @@ from octopus_ai.config import (
 )
 from simulator.simutil import MovementMode
 
-SCHEMA_VERSION = 1
+# v2: limb_solves stores per-node attract/repel targets+weights (node-autonomous
+# sensing) instead of one target/target_kind/threat per limb.
+SCHEMA_VERSION = 2
 
 DEFAULT_RUNS_DIR = os.path.join(ROOT_DIR, "logs", "runs")
 
@@ -140,9 +142,9 @@ _DDL = [
     CREATE TABLE IF NOT EXISTS limb_solves (
         run_id VARCHAR NOT NULL, frame INTEGER NOT NULL, limb_ix TINYINT NOT NULL,
         base_x FLOAT NOT NULL, base_y FLOAT NOT NULL,
-        target_x FLOAT NOT NULL, target_y FLOAT NOT NULL,
-        target_kind VARCHAR NOT NULL,
-        threat_x FLOAT, threat_y FLOAT, threat_active BOOLEAN NOT NULL,
+        attract_tgt FLOAT[] NOT NULL, attract_sw FLOAT[] NOT NULL,
+        repel_tgt FLOAT[] NOT NULL, repel_sw FLOAT[] NOT NULL,
+        threat_active BOOLEAN NOT NULL,
         x0 FLOAT[] NOT NULL,
         u_init FLOAT[],
         iterations INTEGER NOT NULL, converged BOOLEAN NOT NULL,
@@ -171,7 +173,7 @@ _INSERTS = {
     "suckers": "INSERT INTO suckers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "agents": "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?)",
     "limb_frames": "INSERT INTO limb_frames VALUES (?,?,?,?,?,?,?,?)",
-    "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "ilqr_iters": "INSERT INTO ilqr_iters VALUES (?,?,?,?,?,?,?,?,?,?,?)",
     "explore_map": "INSERT INTO explore_map VALUES (?,?,?)",
 }
@@ -413,7 +415,6 @@ class SimRecorder:
             if meta is None:
                 continue
             history = getattr(limb, "last_ilqr_history", None)
-            threat = meta["threat"]
             solve_rows.append(
                 (
                     rid,
@@ -421,11 +422,10 @@ class SimRecorder:
                     limb_ix,
                     float(meta["base_xy"][0]),
                     float(meta["base_xy"][1]),
-                    float(meta["target"][0]),
-                    float(meta["target"][1]),
-                    meta["target_kind"],
-                    None if threat is None else float(threat[0]),
-                    None if threat is None else float(threat[1]),
+                    _as_float_list(meta["attract_tgt"]),  # (n,2) flattened
+                    _as_float_list(meta["attract_sw"]),   # (n,)
+                    _as_float_list(meta["repel_tgt"]),    # (n,2) flattened
+                    _as_float_list(meta["repel_sw"]),     # (n,)
                     bool(meta["threat_active"]),
                     _as_float_list(meta["x0"]),
                     _as_float_list(meta["u_init"]),

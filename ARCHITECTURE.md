@@ -255,8 +255,10 @@ The built-out, TensorFlow-native iLQR that drives `MovementMode.ILQR`:
   controller**: chain of nodes (node 0 = base, pinned to the body; the rest are
   decision variables), single-integrator dynamics `x' = x + u·dt`, and
   squared-residual costs (neighbour springs toward `rest_length`, control
-  effort, tip attractor toward the target). It builds its compiled solver once
-  and exposes `solve(base_xy, target, x0, u_init)`; `Limb._move_ilqr` calls it
+  effort, per-node attract/repel from each node's own sensed target/threat). It
+  builds its compiled solver once and exposes `solve(base_xy, attract_tgt,
+  attract_sw, repel_tgt, repel_sw, x0, u_init)` — the attract/repel arrays are
+  per free node; `Limb._move_ilqr` fills them from per-node sensing and calls it
   receding-horizon (MPC): plan, apply the first step, warm-start next frame.
 - **Per-iteration history (record & replay).** `solve(..., record_history=True)`
   captures an `ILQRIterationRecord` per iteration (iter 0 = warm-start rollout;
@@ -715,14 +717,17 @@ With today's analytic costs it stays on CPU.
   RNN doesn't batch trivially).
 - **Motor tier: built.** A TensorFlow Gauss-Newton iLQR (`simulator/ilqr/
   solver.py` + `arm.py`) drives `MovementMode.ILQR`: each limb owns a
-  persistent, compiled `ArmController` and reaches toward prey receding-horizon
-  (MPC). Arm costs = spring (rest spacing) + bending (anti-crumple) + effort +
-  tip attractor (prey) + a one-sided **threat repulsion barrier** (every node
-  pays for being inside a keep-out radius of the nearest threat). The body
-  drifts by the summed per-arm base reactions, which are the local attract/repel
-  influence (toward prey, away from threats) - so the body chases prey and flees
-  threats with no central negotiation. CPU work per §11.4. All the knobs
-  (horizon, iters, body stiffness, and every cost weight) live in
+  persistent, compiled `ArmController` and re-plans receding-horizon (MPC).
+  Attraction and repulsion are **PER-NODE** (node-autonomous sensing, not a limb
+  policy): every free node attracts to ITS OWN nearest sensed prey/explore cell
+  and flees ITS OWN nearest sensed threat, gated by the sense window (weight 0
+  where a node senses nothing) and passed to the solver as per-node arrays in the
+  params tensor. Arm costs = spring (rest spacing) + bending (anti-crumple) +
+  effort (per-node velocity) + per-node **attract** + per-node **repel** (graded
+  body>tip via `repel_tip_fraction`). The body drifts by the summed per-arm base
+  reactions - so it chases prey and flees threats with no central negotiation.
+  CPU work per §11.4. All the knobs (horizon, iters, body stiffness, and every
+  cost weight) live in
   `LimbConfig.ilqr` (`ILQRConfig`), tunable per profile via `replace()`.
   Remaining polish: warm-tune the per-frame iteration budget, and (optionally)
   share one compiled graph across arms to avoid N first-frame compiles while

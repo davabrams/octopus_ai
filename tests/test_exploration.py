@@ -36,9 +36,17 @@ def _octo(*, explore=True, agents=0, w_explore=0.5, decay=1.0, seed=0):
     return octo, ag
 
 
-def _kinds(octo):
-    return {limb.last_ilqr_meta["target_kind"] for limb in octo.limbs
-            if limb.last_ilqr_meta is not None}
+def _attract_sw(octo):
+    """All free nodes' attract sqrt-weights across the octopus (per-node)."""
+    return np.concatenate([limb.last_ilqr_meta["attract_sw"]
+                           for limb in octo.limbs
+                           if limb.last_ilqr_meta is not None])
+
+
+def _repel_sw(octo):
+    return np.concatenate([limb.last_ilqr_meta["repel_sw"]
+                           for limb in octo.limbs
+                           if limb.last_ilqr_meta is not None])
 
 
 class TestExplorationMemory(unittest.TestCase):
@@ -62,7 +70,8 @@ class TestExplorationMemory(unittest.TestCase):
         for _ in range(5):
             octo.move(ag)
         self.assertEqual(octo.visit_counts.sum(), 0.0)
-        self.assertEqual(_kinds(octo), {"hold"})
+        # No agents and explore off => no node senses anything => no attraction.
+        self.assertFalse(_attract_sw(octo).any())
 
     def test_decay_ages_counts(self):
         """decay < 1 fades old visits: revisited cells accumulate fractional
@@ -158,7 +167,8 @@ class TestExplorationSeeking(unittest.TestCase):
 
 class TestRewardHierarchy(unittest.TestCase):
     def test_prey_preempts_exploration(self):
-        """A prey in reach => that arm targets prey, never explores."""
+        """A node that senses prey attracts to the PREY (strong weight), not to
+        the gentle explore target - prey outranks exploration, per node."""
         octo, ag = _octo(explore=True, agents=1)
         cx, cy = octo.x, octo.y
         prey = Agent(x=cx + 2.0, y=cy, agent_type=AgentType.PREY)
@@ -166,9 +176,11 @@ class TestRewardHierarchy(unittest.TestCase):
         for _ in range(5):
             prey.x, prey.y = cx + 2.0, cy
             octo.move(ag)
-        kinds = _kinds(octo)
-        self.assertIn("prey", kinds)
-        self.assertNotIn("explore", kinds)
+        sw = _attract_sw(octo)
+        strong = np.sqrt(octo.limbs[0].ilqr_cfg.w_reach_terminal)  # prey
+        gentle = np.sqrt(octo.limbs[0].w_explore)                  # explore
+        self.assertTrue(np.isclose(sw.max(), strong))  # a node senses prey
+        self.assertGreater(strong, gentle)             # prey > explore drive
 
     def test_explore_reach_is_gentler_than_prey(self):
         """w_explore must stay well below w_reach_terminal so exploration is a
@@ -177,10 +189,10 @@ class TestRewardHierarchy(unittest.TestCase):
         self.assertLess(cfg.octopus.limb.ilqr.w_explore,
                         cfg.octopus.limb.ilqr.w_reach_terminal)
 
-    def test_threat_preempts_prey(self):
-        """Fleeing outranks hunting: with a threat AND a prey both in range, the
-        arms flee (never target prey) - the octopus won't chase food into
-        danger."""
+    def test_prey_and_threat_act_per_node(self):
+        """Node-autonomous (NOT a limb policy): with a prey AND a threat both in
+        range, some nodes attract (prey) while others flee (threat) at the same
+        time - neither preempts the other at the limb level."""
         octo, ag = _octo(explore=True, agents=0)
         cx, cy = octo.x, octo.y
         prey = Agent(x=cx + 2.0, y=cy, agent_type=AgentType.PREY)
@@ -190,10 +202,8 @@ class TestRewardHierarchy(unittest.TestCase):
             prey.x, prey.y = cx + 2.0, cy
             threat.x, threat.y = cx - 2.0, cy
             octo.move(ag)
-        kinds = _kinds(octo)
-        self.assertIn("flee", kinds)
-        self.assertNotIn("prey", kinds)
-        self.assertNotIn("explore", kinds)
+        self.assertTrue(_attract_sw(octo).any())  # some node attracts (prey)
+        self.assertTrue(_repel_sw(octo).any())    # some node flees (threat)
 
 
 if __name__ == '__main__':

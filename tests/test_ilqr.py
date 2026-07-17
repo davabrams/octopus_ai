@@ -1,12 +1,11 @@
 """Tests for the single-limb iLQR motor-control tier (simulator/ilqr).
 
-These exercise the compiled ArmController end to end: a reachable target should
-be reached with the chain held near its rest spacing, one controller should
-serve multiple targets (graph reuse, no retrace), and a held arm (reach off)
-should produce almost no motion. Attraction is WHOLE-ARM (every node pulls
-toward the target, not just the tip), so "reached" means the nearest node lands
-on the target. Configs are kept small (few nodes, short horizon) so the suite
-stays fast despite the one-time graph compile.
+These exercise the compiled ArmController end to end: a tip that senses a target
+reaches it with the chain held near rest spacing, one controller serves multiple
+targets (graph reuse, no retrace), and an arm sensing nothing barely moves.
+Attraction and repulsion are PER-NODE (node-autonomous sensing): each node has
+its own target/threat + weight, so the tests build those arrays via `_solve`.
+Configs are kept small so the suite stays fast despite the one-time graph compile.
 """
 from itertools import pairwise
 
@@ -29,36 +28,54 @@ def _tip_and_segments(res, base):
 
 
 def _min_node_err(res, target):
-    """Distance from the target to the NEAREST free node (whole-arm reach)."""
+    """Distance from the target to the NEAREST free node."""
     nodes = res.x_traj[-1].numpy().reshape(-1, 2)
     return float(np.linalg.norm(nodes - np.array(target, float), axis=1).min())
 
 
-def test_reach_reachable_target_converges():
-    """A target within reach is reached by the arm, segments near rest length.
+def _solve(ctrl, base, x0, *, target=None, tip_only=False, threat=None, **kw):
+    """Per-node solve helper: build the attract/repel arrays and call solve().
 
-    Whole-arm attraction: "reached" means the NEAREST node lands on the target
-    (any part of the arm can grab), not specifically the tip.
+    target: attract every node (or just the tip, tip_only=True) toward it.
+    threat: every node flees it. Reproduces simple reach/flee scenarios on the
+    per-node interface.
+    """
+    n = ctrl.n_free
+    at = np.zeros((n, 2), np.float32)
+    asw = np.zeros(n, np.float32)
+    if target is not None:
+        at[:] = target
+        if tip_only:
+            asw[-1] = np.sqrt(ctrl.w_reach_terminal)
+        else:
+            asw[:] = np.sqrt(ctrl.w_reach_terminal)
+    rt = np.zeros((n, 2), np.float32)
+    rsw = np.zeros(n, np.float32)
+    if threat is not None:
+        rt[:] = threat
+        rsw[:] = np.sqrt(ctrl.w_repel)
+    return ctrl.solve(base, at, asw, rt, rsw, x0=x0, **kw)
+
+
+def test_reach_reachable_target_converges():
+    """A tip that senses a target reaches it, with the chain near rest spacing.
+
+    Per-node attract: only the tip senses the target here (attract_sw nonzero at
+    the tip only), so the arm extends to it and the springs keep the chain
+    coherent (no balling up).
     """
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
     target = [2.5, 2.0]  # |target| ~= 3.2 < reach (5)
 
-    res = ctrl.solve(base_xy=base, target=target, x0=x0)
-    _, seg = _tip_and_segments(res, base)
+    res = _solve(ctrl, base, x0, target=target, tip_only=True)
+    tip, seg = _tip_and_segments(res, base)
 
     assert res.converged, f"did not converge in {res.iterations} iters"
-    err = _min_node_err(res, target)
-    # Whole-arm attraction is normalized (cost = w*mean_i|node-target|^2 via the
-    # sqrt(n_free) residual scale), which reaches robustly at any node count. The
-    # nearest node comes within ~0.3 rest-lengths of the target; in sim units
-    # (rest=capture_radius=0.3) that is well inside capture range.
-    assert err < 0.30, f"no node reached target {target}; min err {err}"
-    # Whole-arm reach DRAPES the arm onto the target (outer segments bunch near
-    # it, inner ones stretch to span the gap), so segments strain more than a
-    # tip-only reach - but the chain stays connected (no collapse to a point).
-    assert seg.min() > 0.4 and seg.max() < 1.7, f"segments drifted: {seg}"
+    assert float(np.linalg.norm(tip - np.array(target, float))) < 0.15
+    # Springs keep the chain coherent: no segment far from rest.
+    assert seg.min() > 0.7 and seg.max() < 1.4, f"segments drifted: {seg}"
 
 
 def test_one_controller_serves_multiple_targets():
@@ -68,21 +85,21 @@ def test_one_controller_serves_multiple_targets():
     x0 = ctrl.straight_arm(base, init_angle=0.0)
 
     for target in ([2.0, 2.0], [-2.0, 1.0], [0.0, -3.0]):
-        res = ctrl.solve(base_xy=base, target=target, x0=x0)
-        err = _min_node_err(res, target)
-        assert err < 0.30, f"target {target}: nearest node err {err}"
+        res = _solve(ctrl, base, x0, target=target, tip_only=True)
+        tip, _ = _tip_and_segments(res, base)
+        err = float(np.linalg.norm(tip - np.array(target, float)))
+        assert err < 0.25, f"target {target}: tip err {err}"
 
 
 def test_repel_residual_grades_body_over_tip():
-    """node_sw ramps the repel barrier: at equal penetration the body-adjacent
-    node pays more than the tip (protect the body, not the limb)."""
+    """node_sw ramps the per-node repel barrier: at equal penetration the
+    body-adjacent node pays more than the tip (protect the body, not the limb)."""
     from simulator.ilqr.residuals import repel_residual
-    # Two free nodes equidistant from the threat -> equal penetration.
+    # Two free nodes equidistant from their (per-node) threat -> equal penetration.
     x = tf.constant([1.0, 1.0, 3.0, 1.0], dtype=tf.float32)  # (1,1) and (3,1)
-    threat = tf.constant([2.0, 0.0], dtype=tf.float32)
+    threats = tf.constant([[2.0, 0.0], [2.0, 0.0]], dtype=tf.float32)
     node_sw = tf.constant([1.0, np.sqrt(0.3)], dtype=tf.float32)  # body, tip
-    r = repel_residual(x, threat, threat_w=1.0, r_safe=2.5,
-                       node_sw=node_sw).numpy()
+    r = repel_residual(x, threats, node_sw, r_range=2.5).numpy()
     assert r[0] > r[1] > 0.0
     # cost is the squared residual: tip pays 0.3x the body-adjacent node.
     assert abs((r[1] ** 2) / (r[0] ** 2) - 0.3) < 1e-5
@@ -91,7 +108,7 @@ def test_repel_residual_grades_body_over_tip():
 def test_threat_repulsion_pushes_arm_away():
     """With a threat present the arm keeps farther from it than without one."""
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50,
-                         repel_radius=2.5)
+                         repel_range=5.0)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)  # arm along +x
     threat = [2.5, 0.6]                            # just off the arm's side
@@ -102,31 +119,28 @@ def test_threat_repulsion_pushes_arm_away():
         return float(np.linalg.norm(nodes - np.array(threat, float),
                                     axis=1).min())
 
-    with_threat = ctrl.solve(base, target, x0, threat=threat)
-    without_threat = ctrl.solve(base, target, x0, threat=None)
+    with_threat = _solve(ctrl, base, x0, target=target, tip_only=True,
+                         threat=threat)
+    without_threat = _solve(ctrl, base, x0, target=target, tip_only=True)
 
     assert (min_dist_to_threat(with_threat)
             > min_dist_to_threat(without_threat) + 0.2), \
         "repulsion did not push the arm away from the threat"
 
 
-def test_hold_reach_off_barely_moves():
-    """Hold (reach_weight=0): with nothing to chase, effort/spring keep the arm
-    still. With whole-arm attraction a pull toward the current tip would instead
-    drag every other node inward, so reach must be gated OFF - this checks every
-    node stays put, not just the tip.
-    """
+def test_hold_barely_moves():
+    """With nothing sensed (all attract/repel weights 0), effort/spring keep the
+    arm still - no attractor pulls any node."""
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=30)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
     nodes0 = tf.reshape(x0, (-1, 2)).numpy()
 
-    res = ctrl.solve(base_xy=base, target=nodes0[-1].tolist(), x0=x0,
-                     reach_weight=0.0)
+    res = _solve(ctrl, base, x0)  # no target, no threat
     nodes = res.x_traj[-1].numpy().reshape(-1, 2)
 
     assert float(np.linalg.norm(nodes - nodes0, axis=1).max()) < 0.1, \
-        "arm moved despite hold (reach off)"
+        "arm moved despite sensing nothing"
 
 
 # --------------------------------------------------------------------------
@@ -144,13 +158,13 @@ def test_history_off_is_identical_and_none():
     x0 = ctrl.straight_arm(base, init_angle=0.0)
     target = [2.5, 2.0]
 
-    off = ctrl.solve(base_xy=base, target=target, x0=x0)
+    off = _solve(ctrl, base, x0, target=target, tip_only=True)
     assert off.history is None
 
     # Kernel tracing counts before/after a recorded solve are unchanged.
     kernels = ctrl._solve._kernels
     before = [k.experimental_get_tracing_count() for k in kernels]
-    on = ctrl.solve(base_xy=base, target=target, x0=x0, record_history=True)
+    on = _solve(ctrl, base, x0, target=target, tip_only=True, record_history=True)
     after = [k.experimental_get_tracing_count() for k in kernels]
     assert before == after, "recorded solve retraced a compiled kernel"
 
@@ -167,8 +181,8 @@ def test_history_length_indices_and_shapes():
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=10)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
-    res = ctrl.solve(base_xy=base, target=[2.5, 2.0], x0=x0,
-                     record_history=True)
+    res = _solve(ctrl, base, x0, target=[2.5, 2.0], tip_only=True,
+                 record_history=True)
 
     h = res.history
     assert len(h) == res.iterations + 1
@@ -188,8 +202,8 @@ def test_history_accepted_costs_strictly_decrease():
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=10)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
-    res = ctrl.solve(base_xy=base, target=[2.5, 2.0], x0=x0,
-                     record_history=True)
+    res = _solve(ctrl, base, x0, target=[2.5, 2.0], tip_only=True,
+                 record_history=True)
 
     accepted = [rec for rec in res.history if rec.phase == "accepted"]
     costs = [rec.cost for rec in accepted]
@@ -255,7 +269,8 @@ def test_limb_integration_populates_history():
     limb.move(5.0, 5.0, agents=[])
     assert limb.last_ilqr_history is not None
     assert limb.last_ilqr_meta is not None
-    assert limb.last_ilqr_meta["target_kind"] == "hold"  # no agents
+    assert not limb.last_ilqr_meta["attract_sw"].any()  # senses nothing
+    assert not limb.last_ilqr_meta["repel_sw"].any()
     assert limb.last_ilqr_meta["u_init"] is None
     assert limb.last_ilqr_history[0].phase == "init"
 

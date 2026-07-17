@@ -171,35 +171,31 @@
       const cy = chain[nodeIdx - 1][1] - 2 * p[1] + chain[nodeIdx + 1][1];
       out.bending = { cost: cfg.wBend * (cx * cx + cy * cy), dir: unit([cx, cy]) };
     }
-    // Attraction: EVERY free node (whole-arm reach, not tip-only). The label AND
-    // the terminal weight depend on what the arm is chasing - a strong pull to
-    // PREY vs a gentle pull to an EXPLORE cell (w_explore, not w_reach_terminal);
-    // "hold" has no attractor. Weight is divided by n_free to match the solver's
-    // sqrt(n_free)-normalized residual. Force points TOWARD the target (an
-    // ATTRACT, vs the repel's away-from below).
-    if (nodeIdx > 0 && cfg.target && cfg.targetKind !== "hold") {
-      const nFree = chain.length - 1;
-      const d = norm(sub(p, cfg.target));
-      const label = cfg.targetKind === "explore" ? "explore"
-        : cfg.targetKind === "flee" ? "flee" : "reach";
-      const wBase = isTerminal
-        ? (cfg.targetKind === "explore" ? cfg.wExplore : cfg.wReachTerminal)
-        : cfg.wReachRun;
-      out[label] = { cost: (wBase / nFree) * d * d, dir: unit(sub(cfg.target, p)) };
-    }
-    // Repel: every free node while a threat is present (shown as 0 when the node
-    // is beyond the keep-out radius, so its absence-of-force is visible, not
-    // dropped). Graded by node: the body-adjacent free node avoids hardest, the
-    // tip least (repel_tip_fraction) - protect the body, not the limb. Force
-    // points AWAY from the threat (vs the attract's toward).
-    if (nodeIdx > 0 && cfg.threat) {
+    // PER-NODE attract & repel (node-autonomous sensing). fi is the free-node
+    // index (chain[0] is the base). Both are shown for every free node - as 0
+    // when the node senses nothing (weight 0) - so every applied term is visible.
+    const fi = nodeIdx - 1;
+    if (nodeIdx > 0) {
+      // Attract: node pulled to ITS OWN sensed target (prey/explore); weight is
+      // the recorded sqrt-weight squared. 0 where the node senses nothing.
+      const asw = cfg.attractSw ? (cfg.attractSw[fi] || 0) : 0;
+      const atgt = cfg.attractTgt && cfg.attractTgt[fi] ? cfg.attractTgt[fi] : p;
+      out.attract = asw > 0
+        ? { cost: asw * asw * norm(sub(p, atgt)) ** 2, dir: unit(sub(atgt, p)) }
+        : { cost: 0, dir: [0, 0] };
+      // Repel: node pushed from ITS OWN sensed threat, over the sense window,
+      // graded body>tip (repel_tip_fraction). 0 where it senses no threat.
+      const rsw = cfg.repelSw ? (cfg.repelSw[fi] || 0) : 0;
+      const rtgt = cfg.repelTgt && cfg.repelTgt[fi] ? cfg.repelTgt[fi] : p;
       const nFree = chain.length - 1;
       const ratio = 1 + (cfg.repelTipFraction - 1)
-        * (nodeIdx - 1) / Math.max(1, nFree - 1);
-      const d = norm(sub(p, cfg.threat));
-      const pen = Math.max(0, cfg.repelRadius - d);
-      out.repel = { cost: cfg.wRepel * ratio * pen * pen,
-                    dir: pen > 0 ? unit(sub(p, cfg.threat)) : [0, 0] };
+        * fi / Math.max(1, nFree - 1);
+      const d = norm(sub(p, rtgt));
+      const pen = Math.max(0, cfg.repelRange - d);
+      out.repel = rsw > 0
+        ? { cost: rsw * rsw * ratio * pen * pen,
+            dir: pen > 0 ? unit(sub(p, rtgt)) : [0, 0] }
+        : { cost: 0, dir: [0, 0] };
     }
     return out;
   }
@@ -1357,13 +1353,14 @@ function App() {
                       wReachTerminal: meta.config.octo_ilqr_w_reach_terminal || 6.0,
                       wExplore: meta.config.octo_ilqr_w_explore || 0.5,
                       wEffort: meta.config.octo_ilqr_w_effort || 0.1,
-                      wRepel: meta.config.octo_ilqr_w_repel || 8.0,
-                      repelRadius: meta.config.octo_ilqr_repel_radius || 2.5,
                       repelTipFraction: meta.config.octo_ilqr_repel_tip_fraction != null
                         ? meta.config.octo_ilqr_repel_tip_fraction : 0.3,
-                      target: limbData.final.target,
-                      targetKind: limbData.final.target_kind,
-                      threat: limbData.final.threat,
+                      repelRange: meta.config.agent_range_radius || 5.0,
+                      // Per-node sensing arrays (node-autonomous attract/repel).
+                      attractTgt: limbData.final.attract_tgt,
+                      attractSw: limbData.final.attract_sw,
+                      repelTgt: limbData.final.repel_tgt,
+                      repelSw: limbData.final.repel_sw,
                     } : null;
                     if (!cfg) return null;
                     const isTerminal = step === chains.length - 1;
@@ -1378,7 +1375,12 @@ function App() {
                     if (!entries.length) return null;
                     return (
                       <div className="mt-2 border-t border-slate-700 pt-2">
-                        <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step} · node {ci}{isTerminal ? " (terminal)" : ""} · kind {cfg.targetKind || "?"}</div>
+                        <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step} · node {ci}{isTerminal ? " (terminal)" : ""} · senses {(() => {
+                          const fi = ci - 1;
+                          const a = cfg.attractSw && cfg.attractSw[fi] > 0;
+                          const r = cfg.repelSw && cfg.repelSw[fi] > 0;
+                          return [a && "prey/explore", r && "threat"].filter(Boolean).join("+") || "nothing";
+                        })()}</div>
                         {entries.map(([name, { cost, dir }]) => (
                           <div key={name} className="flex justify-between">
                             <span>{name} <span className="text-slate-500">{C.arrowFor(dir[0], dir[1])} {C.angleDeg(dir[0], dir[1])}°</span></span>

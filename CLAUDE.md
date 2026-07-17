@@ -124,11 +124,21 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   `theta` — so the arms fan out from distinct roots. The body integrates the
   arms' summed *torque* into `theta` (angular twin of the linear tension→drift),
   so the fan rotates. See BODY_ROTATION_PLAN.md.
+- **Motor sensing is PER-NODE** (node-autonomous, not a limb policy): in `ILQR`
+  mode every free centerline node independently **attracts** to the nearest prey
+  within its sense window (strong) and **flees** the nearest threat within it
+  (`repel`, graded so the body-adjacent node recoils hardest and the tip least,
+  `octo_ilqr_repel_tip_fraction`). Both can act on different nodes of one arm at
+  once — there is no single per-limb target or "target kind". A node sensing no
+  prey is drawn gently to the limb's least-explored cell (exploration). The body
+  still emerges from the summed base tension. `simulator/ilqr/residuals.py`
+  `attract_residual`/`repel_residual`; the per-node sensing loop is in
+  `Limb._move_ilqr`.
 - **Exploration** (`octo_ilqr_explore_enabled`, off by default): cells are
-  marked explored by the **suckers** (`Octopus.visit_counts`); when an arm
-  senses no prey, its tip softly seeks the least-explored cell in reach
-  (`w_explore ≪ w_reach_terminal`). Prey preempts it; the threat repel always
-  dominates. See EXPLORATION_PLAN.md.
+  marked explored by the **suckers** (`Octopus.visit_counts`, recency-decayed by
+  `octo_ilqr_explore_decay` < 1); a node that senses no prey is gently drawn to
+  the least-explored reachable cell (`w_explore ≪ w_reach_terminal`), threat-
+  aware. Prey outranks it per node. See EXPLORATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
   constrained to change ≤ `octo_max_hue_change` (0.25) per step **per
   channel**. Full **RGB**: the surface grid is `(y, x, 3)` and each of

@@ -393,8 +393,8 @@ class RunStore:
 
     def _build_ilqr(self, con, run_id, frame, horizon, n_free) -> list:
         solves = con.execute(
-            "SELECT limb_ix, base_x, base_y, target_x, target_y, "
-            "target_kind, threat_x, threat_y, threat_active, iterations, "
+            "SELECT limb_ix, base_x, base_y, attract_tgt, attract_sw, "
+            "repel_tgt, repel_sw, threat_active, iterations, "
             "converged, final_cost FROM limb_solves WHERE frame = ? "
             "ORDER BY limb_ix",
             [frame],
@@ -422,23 +422,33 @@ class RunStore:
                         "trajectory": last_traj,  # carry-forward on rejects
                     }
                 )
-            threat = [_r4(s[6]), _r4(s[7])] if s[8] else None
             out.append(
                 {
                     "limb": int(limb_ix),
                     "base": {"x": _r4(s[1]), "y": _r4(s[2])},
                     "final": {
-                        "cost": _r4(s[11]),
-                        "iterations": int(s[9]),
-                        "converged": bool(s[10]),
-                        "target": [_r4(s[3]), _r4(s[4])],
-                        "target_kind": s[5],
-                        "threat": threat,
+                        "cost": _r4(s[10]),
+                        "iterations": int(s[8]),
+                        "converged": bool(s[9]),
+                        # Per-node sensing: each free node's attract/repel target
+                        # ([x, y] pairs) and its weight (0 = sensed nothing).
+                        "attract_tgt": _pairs(s[3]),
+                        "attract_sw": [_r4(v) for v in s[4]],
+                        "repel_tgt": _pairs(s[5]),
+                        "repel_sw": [_r4(v) for v in s[6]],
+                        "threat_active": bool(s[7]),
                     },
                     "iterations": iteration_list,
                 }
             )
         return out
+
+
+def _pairs(flat) -> list:
+    """Flat [x0,y0,x1,y1,...] -> [[x0,y0],[x1,y1],...] (per-node [x, y])."""
+    if flat is None:
+        return []
+    return [[_r4(flat[i]), _r4(flat[i + 1])] for i in range(0, len(flat), 2)]
 
 
 def _reshape_traj(flat, horizon, n_free) -> list:

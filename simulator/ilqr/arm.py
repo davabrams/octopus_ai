@@ -69,69 +69,62 @@ class ArmController:
                                      # to the body-adjacent node's: the body
                                      # matters more than a limb tip, so the base
                                      # end recoils hardest and the tip least
+    repel_range: float = 5.0    # per-node flee range = the sense window: a node
+                                # flees a threat anywhere within this of it, the
+                                # push growing as the threat closes
     max_iters: int = 50
     tol: float = 1e-4
 
     def __post_init__(self):
         n_free = self.n_free
         rest = self.rest_length
-        r_safe = float(self.repel_radius)
         sw_spring = float(np.sqrt(self.w_spring))
         sw_bend = float(np.sqrt(self.w_bend))
         sw_effort = float(np.sqrt(self.w_effort))
-        sw_reach_run = float(np.sqrt(self.w_reach_run))
-        sw_reach_terminal = float(np.sqrt(self.w_reach_terminal))
-        self._sw_repel = float(np.sqrt(self.w_repel))
-        # Default terminal reach sqrt-weight; solve() can override per call
-        # (a gentle weight for exploration vs the strong default for prey).
-        self._sw_reach_terminal = sw_reach_terminal
-        # Per-node repel sqrt-weight ramp: the body-adjacent free node (index 0)
-        # avoids threats at full strength, tapering to repel_tip_fraction at the
-        # tip - the body matters more than a limb tip, so it recoils hardest.
-        repel_node_sw = tf.constant(
-            np.sqrt(np.linspace(1.0, self.repel_tip_fraction, n_free)),
-            dtype=tf.float32)
+        # Per-node repel grade ramp (the body-adjacent free node avoids threats
+        # hardest, the tip least). Stored on self so solve() can fold it into the
+        # per-node repel sqrt-weight it packs (only nodes that sense a threat get
+        # a nonzero weight; the ramp scales those that do).
+        self._repel_grade = np.sqrt(
+            np.linspace(1.0, self.repel_tip_fraction, n_free)).astype(np.float32)
 
         def dynamics(x, u):
             return x + u * DT
 
-        # Costs are composed from the shared residual library (residuals.py);
-        # each term returns a residual vector the solver squares and sums, with
-        # its weight folded in as sqrt(w). params =
-        # [base_xy, target, threat, threat_w, sw_reach_terminal, reach_gate]
-        # (see solve()) - the terminal-reach sqrt-weight rides in params so one
-        # compiled controller serves a strong prey reach and a gentle
-        # exploration reach without a retrace, and reach_gate (0/1) switches the
-        # whole reach off for the idle "hold" (target == current tip, where a
-        # whole-arm pull would collapse the arm) without a retrace either.
+        # Costs are composed from the shared residual library (residuals.py).
+        # Attraction and repulsion are now PER-NODE (node-autonomous sensing, not
+        # a limb policy): params carries, for THIS arm this frame,
+        #   [ base_xy(2),
+        #     attract_tgt(2n), attract_sw(n),   # each node's sensed prey/explore
+        #     repel_tgt(2n),   repel_sw(n),     # each node's sensed threat
+        #     repel_range(1) ]                  # the sense window (flee range)
+        # sw entries are 0 for nodes that sense nothing, so only nodes within the
+        # sense window attract/flee. Slices below index into that fixed layout.
+        a0 = 2
+        a1 = a0 + 2 * n_free   # end of attract_tgt
+        a2 = a1 + n_free       # end of attract_sw
+        r1 = a2 + 2 * n_free   # end of repel_tgt
+        r2 = r1 + n_free       # end of repel_sw
+
         def running_cost(x, u, params):
             base_xy = params[0:2]
-            target = params[2:4]
-            threat = params[4:6]
-            threat_w = params[6]
-            reach_gate = params[8]
             return tf.concat([
                 res.effort_residual(u, sw_effort),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, threat, threat_w, r_safe,
-                                   node_sw=repel_node_sw),
-                res.reach_residual(x, target, sw_reach_run * reach_gate),
+                res.repel_residual(x, params[a2:r1], params[r1:r2],
+                                   params[r2]),
+                res.attract_residual(x, params[a0:a1], params[a1:a2]),
             ], axis=0)
 
         def terminal_cost(x, params):
             base_xy = params[0:2]
-            target = params[2:4]
-            threat = params[4:6]
-            threat_w = params[6]
-            sw_reach = params[7]  # per-solve terminal reach sqrt-weight
-            reach_gate = params[8]
             return tf.concat([
-                res.reach_residual(x, target, sw_reach * reach_gate),
+                res.attract_residual(x, params[a0:a1], params[a1:a2]),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, threat, threat_w, r_safe,
-                                   node_sw=repel_node_sw),
+                res.repel_residual(x, params[a2:r1], params[r1:r2],
+                                   params[r2]),
             ], axis=0)
 
         self._dynamics = dynamics
@@ -154,48 +147,40 @@ class ArmController:
 
     def solve(self,
               base_xy,
-              target,
+              attract_tgt,
+              attract_sw,
+              repel_tgt,
+              repel_sw,
               x0,
-              threat=None,
               u_init: tf.Tensor | None = None,
-              record_history: bool = False,
-              reach_weight: float | None = None) -> ILQRResult:
-        """Plan a trajectory for this arm.
+              record_history: bool = False) -> ILQRResult:
+        """Plan a trajectory for this arm from PER-NODE sensing.
 
-        base_xy: (2,) current body-anchored base position.
-        target:  (2,) tip goal (prey / attractor).
-        x0:      (2*n_free,) current free-node positions (warm-start friendly).
-        threat:  optional (2,) position of the nearest threat to avoid; None
-                 disables the repulsion term for this solve.
-        u_init:  optional (horizon, 2*n_free) initial controls; zeros if None
-                 (pass last frame's shifted solution to warm-start).
-        record_history: capture per-iteration solve history on the returned
-                 ILQRResult (off = zero overhead). A per-call flag, not a
-                 controller field, so one compiled controller serves both modes.
-        reach_weight: terminal whole-arm-pull weight for THIS solve (not sqrt'd);
-                 None uses the controller's w_reach_terminal. A gentle value
-                 drives a soft exploration reach; the strong default drives prey.
-                 0 disables reach entirely (the idle "hold": the arm settles on
-                 spring/bend/effort instead of pulling toward its own tip).
+        base_xy:     (2,) current body-anchored base position.
+        attract_tgt: (n_free, 2) the target each node is drawn to (prey or an
+                     explore cell); arbitrary where the node senses nothing.
+        attract_sw:  (n_free,) per-node attract sqrt-weight; 0 where the node
+                     senses no target (so only sensing nodes attract).
+        repel_tgt:   (n_free, 2) the threat each node senses; arbitrary where none.
+        repel_sw:    (n_free,) per-node repel sqrt-weight (0 where no threat is in
+                     the window). The controller multiplies in its body>tip grade.
+        x0:          (2*n_free,) current free-node positions (warm-start friendly).
+        u_init:      optional (horizon, 2*n_free) initial controls; zeros if None
+                     (pass last frame's shifted solution to warm-start).
+        record_history: capture per-iteration solve history (off = zero overhead).
         """
         base_xy = tf.convert_to_tensor(base_xy, dtype=tf.float32)
-        target = tf.convert_to_tensor(target, dtype=tf.float32)
-        if threat is None:
-            # Park the (inert) threat on the base and zero its weight.
-            threat_xy = base_xy
-            threat_w = 0.0
-        else:
-            threat_xy = tf.convert_to_tensor(threat, dtype=tf.float32)
-            threat_w = self._sw_repel
-        sw_reach = (self._sw_reach_terminal if reach_weight is None
-                    else float(np.sqrt(max(reach_weight, 0.0))))
-        # Gate the whole reach term off when reach_weight is exactly 0 (hold).
-        # None (prey default) and any positive weight (explore) leave it on.
-        reach_gate = 0.0 if (reach_weight is not None
-                             and reach_weight <= 0.0) else 1.0
+        attract_tgt = tf.reshape(
+            tf.convert_to_tensor(attract_tgt, dtype=tf.float32), [-1])
+        attract_sw = tf.convert_to_tensor(attract_sw, dtype=tf.float32)
+        repel_tgt = tf.reshape(
+            tf.convert_to_tensor(repel_tgt, dtype=tf.float32), [-1])
+        # Fold the body>tip grade into the per-node repel weight.
+        repel_sw = (tf.convert_to_tensor(repel_sw, dtype=tf.float32)
+                    * self._repel_grade)
         params = tf.concat(
-            [base_xy, target, threat_xy, [threat_w], [sw_reach], [reach_gate]],
-            axis=0)  # (9,)
+            [base_xy, attract_tgt, attract_sw, repel_tgt, repel_sw,
+             [float(self.repel_range)]], axis=0)  # (3 + 6*n_free,)
         if u_init is None:
             u_init = tf.zeros((self.horizon, 2 * self.n_free), dtype=tf.float32)
         return self._solve(x0, params, u_init,

@@ -525,56 +525,23 @@ class Limb:
         self.last_arm_length = float(
             np.hypot(free[-1].x - base.x, free[-1].y - base.y))
 
-    def _ilqr_target(self, agents):
-        """The reach target for this arm this frame.
+    def _agent_xy(self, agents):
+        """Split agents into (prey_xy, threat_xy) position arrays for per-node
+        sensing in _move_ilqr. Each is an (m, 2) float array (possibly empty).
 
-        Nearest sensed PREY within the arm's range as [x, y], or None when no
-        prey is in range. Sensed from the WHOLE arm (the nearest centerline
-        node), symmetric with _ilqr_nearest_threat and with whole-arm
-        attraction: any part of the arm can detect prey and any part can grab it
-        (an octopus arm, not a starfish ray). An extended arm therefore reaches
-        prey well beyond the body's own sensing radius - which is why the body
-        must follow the ARM's reach rather than re-sensing from its centre (see
-        _move_ilqr).
+        Node-autonomous sensing supersedes the old whole-arm _ilqr_target /
+        _ilqr_nearest_threat: every free node picks its OWN nearest prey/threat
+        within its window, so we just hand _move_ilqr the raw positions.
         """
-        if not agents:
-            return None
-        nearest = None
-        nearest_d = None
-        for ag in agents:
-            if ag.agent_type != AgentType.PREY:
-                continue
-            d = min(np.hypot(ag.x - n.x, ag.y - n.y) for n in self.center_line)
-            if d > self.agent_range_radius:
-                continue
-            if nearest_d is None or d < nearest_d:
-                nearest_d = d
-                nearest = ag
-        return [nearest.x, nearest.y] if nearest is not None else None
-
-    def _ilqr_nearest_threat(self, agents):
-        """Nearest sensed THREAT within the arm's range as [x, y], or None.
-
-        Sensed from the WHOLE arm (the nearest centerline node), not just the
-        tip: a threat near the arm's middle or base must be avoided too, and the
-        repulsion barrier already pushes every node away from it. (Prey is still
-        sensed from the tip - reaching is a tip act; avoiding is a body-wide one.)
-        """
-        if not agents:
-            return None
-        nearest = None
-        nearest_d = None
-        for ag in agents:
-            if ag.agent_type != AgentType.THREAT:
-                continue
-            d = min(np.hypot(ag.x - n.x, ag.y - n.y)
-                    for n in self.center_line)
-            if d > self.agent_range_radius:
-                continue
-            if nearest_d is None or d < nearest_d:
-                nearest_d = d
-                nearest = ag
-        return [nearest.x, nearest.y] if nearest is not None else None
+        prey = []
+        threat = []
+        for ag in (agents or []):
+            if ag.agent_type == AgentType.PREY:
+                prey.append((ag.x, ag.y))
+            elif ag.agent_type == AgentType.THREAT:
+                threat.append((ag.x, ag.y))
+        return (np.array(prey, dtype=float).reshape(-1, 2),
+                np.array(threat, dtype=float).reshape(-1, 2))
 
     def _ilqr_explore_target(self, base_x, base_y, tip, visit_counts,
                              threat=None):
@@ -652,6 +619,7 @@ class Limb:
                 w_repel=ic.w_repel,
                 repel_radius=ic.repel_radius,
                 repel_tip_fraction=ic.repel_tip_fraction,
+                repel_range=self.agent_range_radius,  # per-node flee range
             )
 
         # Carry the arm rigidly with the body's rotation this frame: rotate the
@@ -685,56 +653,61 @@ class Limb:
                       dtype=np.float32).reshape(-1)
 
         tip = self.center_line[-1]
-        prey = self._ilqr_target(agents)           # [x, y] or None (whole arm)
-        threat = self._ilqr_nearest_threat(agents)  # sensed from whole arm
-        # Priority: FLEE a sensed threat (dominant) -> else reach PREY (strong)
-        # -> else EXPLORE the least-visited cell (gentle) -> else hold. Fleeing
-        # outranks hunting: a threat in range aborts any prey pursuit, so the
-        # octopus never chases food into danger. (The threat repel term is also
-        # always on and reinforces the flee.) Exploration is threat-aware and
-        # ranks last; prey preempts it.
+        # PER-NODE sensing (node-autonomous, not a limb policy): each free node
+        # independently attracts to the nearest PREY within its sense window
+        # (strong) and flees the nearest THREAT within it (graded body>tip). A
+        # node sensing no prey is drawn gently to the limb's least-explored cell
+        # (one search, threat-aware, shared as the exploration background drive).
+        # A node that senses nothing simply doesn't pull. Both can act on
+        # different nodes of this arm at once; the body still emerges from the
+        # summed base tension.
+        R = self.agent_range_radius
+        prey_xy, threat_xy = self._agent_xy(agents)
         explore_pt = None
-        if (prey is None and threat is None and self.explore_enabled
-                and visit_counts is not None):
+        if self.explore_enabled and visit_counts is not None:
+            nearest_threat = None
+            if len(threat_xy):
+                dt = np.hypot(threat_xy[:, 0] - base_x, threat_xy[:, 1] - base_y)
+                nearest_threat = threat_xy[int(np.argmin(dt))].tolist()
             explore_pt = self._ilqr_explore_target(base_x, base_y, tip,
-                                                   visit_counts, threat=threat)
-        if threat is not None:
-            # Reach the WHOLE arm away from the threat (body-center flee
-            # direction, shared by every arm so they pull the body clear in
-            # concert), at full extension. Strong weight - escaping matters more
-            # than food. Prey is ignored while threatened.
-            ax, ay = x_octo - threat[0], y_octo - threat[1]
-            d_flee = np.hypot(ax, ay) or 1.0
-            reach = (self.rows - 1) * self.max_sucker_distance
-            solve_target = [base_x + ax / d_flee * reach,
-                            base_y + ay / d_flee * reach]
-            reach_weight = None          # controller default (strong)
-            target_kind = "flee"
-        elif prey is not None:
-            solve_target = prey
-            reach_weight = None          # controller default (strong)
-            target_kind = "prey"
-        elif explore_pt is not None:
-            solve_target = explore_pt
-            reach_weight = self.w_explore  # gentle
-            target_kind = "explore"
-        else:
-            # Nothing to chase: disable reach (weight 0). With whole-arm
-            # attraction a pull toward the current tip would drag the other
-            # nodes inward; instead the arm just settles on spring/bend/effort.
-            solve_target = [tip.x, tip.y]
-            reach_weight = 0.0
-            target_kind = "hold"
+                                                   visit_counts,
+                                                   threat=nearest_threat)
+
+        attract_tgt = np.zeros((n_free, 2), dtype=np.float32)
+        attract_sw = np.zeros(n_free, dtype=np.float32)
+        repel_tgt = np.zeros((n_free, 2), dtype=np.float32)
+        repel_sw = np.zeros(n_free, dtype=np.float32)
+        sw_prey = float(np.sqrt(self.ilqr_cfg.w_reach_terminal))
+        sw_explore = float(np.sqrt(self.w_explore))
+        sw_repel = float(np.sqrt(self.ilqr_cfg.w_repel))
+        for i in range(n_free):
+            node = self.center_line[i + 1]
+            if len(prey_xy):
+                dp = np.hypot(prey_xy[:, 0] - node.x, prey_xy[:, 1] - node.y)
+                j = int(np.argmin(dp))
+                if dp[j] <= R:
+                    attract_tgt[i] = prey_xy[j]
+                    attract_sw[i] = sw_prey
+            if attract_sw[i] == 0.0 and explore_pt is not None:
+                attract_tgt[i] = explore_pt
+                attract_sw[i] = sw_explore
+            if len(threat_xy):
+                dtn = np.hypot(threat_xy[:, 0] - node.x, threat_xy[:, 1] - node.y)
+                k = int(np.argmin(dtn))
+                if dtn[k] <= R:
+                    repel_tgt[i] = threat_xy[k]
+                    repel_sw[i] = sw_repel
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below
         # builds a fresh array, so this reference stays stable for recording.
         u_init = self._ilqr_u
 
         res = self._ilqr_controller.solve(
-            base_xy=[base_x, base_y], target=solve_target, x0=x0,
-            threat=threat, u_init=self._ilqr_u,
-            record_history=self.record_ilqr_history,
-            reach_weight=reach_weight)
+            base_xy=[base_x, base_y],
+            attract_tgt=attract_tgt, attract_sw=attract_sw,
+            repel_tgt=repel_tgt, repel_sw=repel_sw,
+            x0=x0, u_init=self._ilqr_u,
+            record_history=self.record_ilqr_history)
 
         # Receding horizon: apply only the first planned step (x_traj[1]).
         new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
@@ -758,13 +731,15 @@ class Limb:
             self.last_ilqr_history = res.history
             self.last_ilqr_meta = {
                 "base_xy": (float(base_x), float(base_y)),
-                "target": (float(solve_target[0]), float(solve_target[1])),
-                # 'prey' | 'explore' | 'hold' - without it an idle/exploring
-                # frame looks like the arm "reaching" its own tip.
-                "target_kind": target_kind,
-                "threat": (None if threat is None
-                           else (float(threat[0]), float(threat[1]))),
-                "threat_active": threat is not None,
+                # Per-node sensing (node-autonomous): the target/threat each free
+                # node attracts-to/flees and its per-node weight (0 = sensed
+                # nothing). The analyzer reconstructs per-node attract/repel costs
+                # from these; there is no single limb target/kind any more.
+                "attract_tgt": attract_tgt,   # (n_free, 2)
+                "attract_sw": attract_sw,     # (n_free,)
+                "repel_tgt": repel_tgt,       # (n_free, 2)
+                "repel_sw": repel_sw,         # (n_free,)
+                "threat_active": bool((repel_sw > 0.0).any()),
                 "x0": x0,                 # (2*n_free,) float32
                 "u_init": u_init,         # (horizon, 2*n_free) float32 | None
                 "iterations": res.iterations,
@@ -804,7 +779,7 @@ class Limb:
         # hair compressed and asymmetrically, and a two-sided idle spring would
         # jitter the body at max speed. Gating the push on a real threat gives
         # the flee without the idle wander.
-        pushing = threat is not None
+        pushing = bool((repel_sw > 0.0).any())  # this arm senses a threat
         if seg_len > 1e-9 and (stretch > 0.0 or pushing):
             self.last_tension = self.ilqr_body_stiffness * stretch \
                 * np.array([dx / seg_len, dy / seg_len])

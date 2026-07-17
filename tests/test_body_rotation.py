@@ -185,26 +185,36 @@ class TestThreatResponse(unittest.TestCase):
         ddx, _ = self._fixed_agent("threat", 1.5, 0.0)
         self.assertLess(ddx, -0.1)
 
-    def test_threat_sensed_from_whole_arm_not_just_tip(self):
-        """A threat near an arm's MIDDLE (out of the tip's range) is still
-        sensed — whole-arm sensing catches what tip-only would miss."""
+    def test_threat_sensed_per_node(self):
+        """Per-node sensing (node-autonomous): a threat inside a node's window
+        makes THAT node flee (repel_sw > 0); a threat outside every node's window
+        makes none flee."""
         from simulator.simutil import Agent, AgentType
-        octo, _ = _ilqr_octo(agents=0)
-        limb = octo.limbs[0]
-        # Lay the arm out straight along +x so mid and tip are well separated.
-        for i, cp in enumerate(limb.center_line):
-            cp.x = octo.x + i * 0.5
-            cp.y = octo.y
-        limb.agent_range_radius = 0.5  # small range: tip-only would miss
-        mid = limb.center_line[len(limb.center_line) // 2]
-        tip = limb.center_line[-1]
-        threat = Agent(x=mid.x + 0.2, y=mid.y, agent_type=AgentType.THREAT)
+        cfg = make_config(
+            x_len=14, y_len=14, limb_rows=5, octo_num_arms=8,
+            octo_movement_mode=MovementMode.ILQR,
+            limb_movement_mode=MovementMode.ILQR,
+            octo_ilqr_horizon=4, octo_ilqr_max_iters=3,
+            record_ilqr_history=True)
+        np.random.seed(1)
+        octo = Octopus(cfg)
+        ag = AgentGenerator(cfg)
+        ag.generate(0)
 
-        # Within range of the middle node => sensed by whole-arm sensing...
-        self.assertIsNotNone(limb._ilqr_nearest_threat([threat]))
-        # ...but out of the tip's range (tip-only would have returned None).
-        self.assertGreater(math.hypot(threat.x - tip.x, threat.y - tip.y),
-                           limb.agent_range_radius)
+        def any_flee():
+            return any(limb.last_ilqr_meta["repel_sw"].any()
+                       for limb in octo.limbs if limb.last_ilqr_meta)
+
+        # A threat on the body: some node is inside its window -> it flees.
+        ag.agents = [Agent(x=octo.x, y=octo.y, agent_type=AgentType.THREAT)]
+        octo.move(ag)
+        self.assertTrue(any_flee())
+
+        # A threat far outside every node's window: nobody flees.
+        ag.agents = [Agent(x=octo.x + 100.0, y=octo.y + 100.0,
+                           agent_type=AgentType.THREAT)]
+        octo.move(ag)
+        self.assertFalse(any_flee())
 
 
 class TestLimbsRemainIndependent(unittest.TestCase):
