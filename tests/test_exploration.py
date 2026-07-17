@@ -134,6 +134,27 @@ class TestExplorationSeeking(unittest.TestCase):
                                                           cy - tip.y))
                 self.assertGreaterEqual(score, best - 1e-6)
 
+    def test_explore_target_avoids_a_threat(self):
+        """A sensed threat pushes the explore goal off the cell it would
+        otherwise pick - the fix for the stall behind a threat."""
+        octo, ag = _octo(explore=True, agents=0)
+        octo.move(ag)  # seed geometry + map
+        limb = octo.limbs[0]
+        base = limb.center_line[0]
+        tip = limb.center_line[-1]
+        # Where it goes with no threat...
+        free_target = limb._ilqr_explore_target(base.x, base.y, tip,
+                                                octo.visit_counts)
+        self.assertIsNotNone(free_target)
+        # ...drop a threat right on that cell; the goal must move off it.
+        threat = [free_target[0], free_target[1]]
+        avoided = limb._ilqr_explore_target(base.x, base.y, tip,
+                                            octo.visit_counts, threat=threat)
+        self.assertIsNotNone(avoided)
+        d_free = np.hypot(free_target[0] - threat[0], free_target[1] - threat[1])
+        d_avoid = np.hypot(avoided[0] - threat[0], avoided[1] - threat[1])
+        self.assertGreater(d_avoid, d_free)
+
 
 class TestRewardHierarchy(unittest.TestCase):
     def test_prey_preempts_exploration(self):
@@ -155,6 +176,24 @@ class TestRewardHierarchy(unittest.TestCase):
         cfg = make_config(octo_ilqr_explore_enabled=True)
         self.assertLess(cfg.octopus.limb.ilqr.w_explore,
                         cfg.octopus.limb.ilqr.w_reach_terminal)
+
+    def test_threat_preempts_prey(self):
+        """Fleeing outranks hunting: with a threat AND a prey both in range, the
+        arms flee (never target prey) - the octopus won't chase food into
+        danger."""
+        octo, ag = _octo(explore=True, agents=0)
+        cx, cy = octo.x, octo.y
+        prey = Agent(x=cx + 2.0, y=cy, agent_type=AgentType.PREY)
+        threat = Agent(x=cx - 2.0, y=cy, agent_type=AgentType.THREAT)
+        ag.agents = [prey, threat]
+        for _ in range(5):
+            prey.x, prey.y = cx + 2.0, cy
+            threat.x, threat.y = cx - 2.0, cy
+            octo.move(ag)
+        kinds = _kinds(octo)
+        self.assertIn("flee", kinds)
+        self.assertNotIn("prey", kinds)
+        self.assertNotIn("explore", kinds)
 
 
 if __name__ == '__main__':

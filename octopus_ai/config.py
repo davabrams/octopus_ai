@@ -148,6 +148,10 @@ VIZ_ILQR = replace(
         movement_mode=MovementMode.ILQR,   # body drifts by the arms' pull
         limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
     ),
+    # Agents react to the octopus: THREATs pursue it, PREY flee, inside their
+    # sense window (ignoring camouflage). Makes the hunt/flee dynamics visible
+    # instead of RANDOM wandering.
+    agents=replace(VIZ.agents, movement_mode=MovementMode.PURSUIT_FLEE),
 )
 
 # Headless record-and-replay. Same simulation as VIZ_ILQR, but writes a
@@ -267,6 +271,10 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_explore_enabled': cfg.octopus.limb.ilqr.explore_enabled,
         'octo_ilqr_w_explore': cfg.octopus.limb.ilqr.w_explore,
         'octo_ilqr_explore_decay': cfg.octopus.limb.ilqr.explore_decay,
+        'octo_ilqr_w_explore_threat_avoid':
+            cfg.octopus.limb.ilqr.w_explore_threat_avoid,
+        'octo_ilqr_explore_threat_radius':
+            cfg.octopus.limb.ilqr.explore_threat_radius,
         'octo_ilqr_body_torque_gain': cfg.octopus.limb.ilqr.body_torque_gain,
         'octo_num_arms': cfg.octopus.num_arms,
         'octo_ring_radius': cfg.octopus.ring_radius,
@@ -411,6 +419,12 @@ def config_from_flat(d: dict) -> Config:
                                 D.octopus.limb.ilqr.w_explore),
                     explore_decay=g('octo_ilqr_explore_decay',
                                     D.octopus.limb.ilqr.explore_decay),
+                    w_explore_threat_avoid=g(
+                        'octo_ilqr_w_explore_threat_avoid',
+                        D.octopus.limb.ilqr.w_explore_threat_avoid),
+                    explore_threat_radius=g(
+                        'octo_ilqr_explore_threat_radius',
+                        D.octopus.limb.ilqr.explore_threat_radius),
                 ),
             ),
             sucker=SuckerConfig(

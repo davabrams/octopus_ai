@@ -17,6 +17,10 @@ class MovementMode(Enum):
     SPRING_CHAIN: int = 2
     ILQR: int = 3  # per-limb iLQR trajectory optimizer (simulator/ilqr);
                    # each limb solves its own controls (ARCHITECTURE.md §11.4)
+    PURSUIT_FLEE: int = 4  # AGENTS only: within its sense window a THREAT moves
+                           # straight at the nearest octopus sucker and a PREY
+                           # straight away, ignoring camouflage (unlike the
+                           # visibility-gated reactive modes); wanders otherwise.
 
 
 class AgentType(Enum):

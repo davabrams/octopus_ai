@@ -73,14 +73,16 @@ class AgentGenerator:
         """Advance all agents one step.
 
         visibility: the octopus's current visibility score (0 = invisible,
-        higher = more visible).  In reactive modes this controls how
-        strongly agents pursue or flee — a well-camouflaged octopus is
-        effectively invisible, so agents wander randomly.
+        higher = more visible).  In the visibility-gated REACTIVE_MODES this
+        controls how strongly agents pursue or flee — a well-camouflaged octopus
+        is effectively invisible, so agents wander randomly. PURSUIT_FLEE
+        ignores it (always reacts at full strength inside the sense window).
         """
         if self.movement_mode == MovementMode.RANDOM:
             self.agents = [self._increment_random(agent)
                            for agent in self.agents]
-        elif self.movement_mode in self.REACTIVE_MODES:
+        elif (self.movement_mode in self.REACTIVE_MODES
+              or self.movement_mode == MovementMode.PURSUIT_FLEE):
             if not octo:
                 assert False, ("agent movement mode reacts to the octopus "
                                "but no octopus object was passed")
@@ -89,8 +91,13 @@ class AgentGenerator:
                 [[s.x, s.y] for limb in octo.limbs for s in limb.suckers],
                 dtype=float,
             )
+            # PURSUIT_FLEE reacts regardless of camouflage: force full reaction
+            # weight so agents commit to pursuing/fleeing inside the sense
+            # window. The reactive spring modes stay visibility-gated.
+            react_vis = (1.0 if self.movement_mode == MovementMode.PURSUIT_FLEE
+                         else visibility)
             self.agents = [self._increment_reactive(agent, sucker_xy,
-                                                    visibility)
+                                                    react_vis)
                            for agent in self.agents]
         else:
             assert False, f"Unknown agent movement mode: {self.movement_mode}"

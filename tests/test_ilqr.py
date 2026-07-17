@@ -2,9 +2,11 @@
 
 These exercise the compiled ArmController end to end: a reachable target should
 be reached with the chain held near its rest spacing, one controller should
-serve multiple targets (graph reuse, no retrace), and a target at the current
-tip should produce almost no motion. Configs are kept small (few nodes, short
-horizon) so the suite stays fast despite the one-time graph compile.
+serve multiple targets (graph reuse, no retrace), and a held arm (reach off)
+should produce almost no motion. Attraction is WHOLE-ARM (every node pulls
+toward the target, not just the tip), so "reached" means the nearest node lands
+on the target. Configs are kept small (few nodes, short horizon) so the suite
+stays fast despite the one-time graph compile.
 """
 from itertools import pairwise
 
@@ -26,21 +28,37 @@ def _tip_and_segments(res, base):
     return tip, seg
 
 
+def _min_node_err(res, target):
+    """Distance from the target to the NEAREST free node (whole-arm reach)."""
+    nodes = res.x_traj[-1].numpy().reshape(-1, 2)
+    return float(np.linalg.norm(nodes - np.array(target, float), axis=1).min())
+
+
 def test_reach_reachable_target_converges():
-    """A target within reach is reached, with segments near rest length."""
+    """A target within reach is reached by the arm, segments near rest length.
+
+    Whole-arm attraction: "reached" means the NEAREST node lands on the target
+    (any part of the arm can grab), not specifically the tip.
+    """
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
     target = [2.5, 2.0]  # |target| ~= 3.2 < reach (5)
 
     res = ctrl.solve(base_xy=base, target=target, x0=x0)
-    tip, seg = _tip_and_segments(res, base)
+    _, seg = _tip_and_segments(res, base)
 
     assert res.converged, f"did not converge in {res.iterations} iters"
-    tip_err = float(np.linalg.norm(tip - np.array(target, float)))
-    assert tip_err < 0.15, f"tip {tip} missed target {target} by {tip_err}"
-    # Springs keep the chain coherent: no segment far from rest.
-    assert seg.min() > 0.7 and seg.max() < 1.4, f"segments drifted: {seg}"
+    err = _min_node_err(res, target)
+    # Whole-arm attraction is normalized (cost = w*mean_i|node-target|^2 via the
+    # sqrt(n_free) residual scale), which reaches robustly at any node count. The
+    # nearest node comes within ~0.3 rest-lengths of the target; in sim units
+    # (rest=capture_radius=0.3) that is well inside capture range.
+    assert err < 0.30, f"no node reached target {target}; min err {err}"
+    # Whole-arm reach DRAPES the arm onto the target (outer segments bunch near
+    # it, inner ones stretch to span the gap), so segments strain more than a
+    # tip-only reach - but the chain stays connected (no collapse to a point).
+    assert seg.min() > 0.4 and seg.max() < 1.7, f"segments drifted: {seg}"
 
 
 def test_one_controller_serves_multiple_targets():
@@ -51,9 +69,8 @@ def test_one_controller_serves_multiple_targets():
 
     for target in ([2.0, 2.0], [-2.0, 1.0], [0.0, -3.0]):
         res = ctrl.solve(base_xy=base, target=target, x0=x0)
-        tip, _ = _tip_and_segments(res, base)
-        tip_err = float(np.linalg.norm(tip - np.array(target, float)))
-        assert tip_err < 0.25, f"target {target}: tip {tip} err {tip_err}"
+        err = _min_node_err(res, target)
+        assert err < 0.30, f"target {target}: nearest node err {err}"
 
 
 def test_threat_repulsion_pushes_arm_away():
@@ -78,17 +95,23 @@ def test_threat_repulsion_pushes_arm_away():
         "repulsion did not push the arm away from the threat"
 
 
-def test_target_at_tip_barely_moves():
-    """With the target at the current tip, effort cost keeps the arm still."""
+def test_hold_reach_off_barely_moves():
+    """Hold (reach_weight=0): with nothing to chase, effort/spring keep the arm
+    still. With whole-arm attraction a pull toward the current tip would instead
+    drag every other node inward, so reach must be gated OFF - this checks every
+    node stays put, not just the tip.
+    """
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=30)
     base = [0.0, 0.0]
     x0 = ctrl.straight_arm(base, init_angle=0.0)
-    tip0 = tf.reshape(x0, (-1, 2)).numpy()[-1]
+    nodes0 = tf.reshape(x0, (-1, 2)).numpy()
 
-    res = ctrl.solve(base_xy=base, target=tip0.tolist(), x0=x0)
-    tip, _ = _tip_and_segments(res, base)
+    res = ctrl.solve(base_xy=base, target=nodes0[-1].tolist(), x0=x0,
+                     reach_weight=0.0)
+    nodes = res.x_traj[-1].numpy().reshape(-1, 2)
 
-    assert float(np.linalg.norm(tip - tip0)) < 0.1, "arm moved despite goal=tip"
+    assert float(np.linalg.norm(nodes - nodes0, axis=1).max()) < 0.1, \
+        "arm moved despite hold (reach off)"
 
 
 # --------------------------------------------------------------------------

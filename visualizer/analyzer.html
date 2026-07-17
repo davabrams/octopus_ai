@@ -122,9 +122,86 @@
     return { idx: next, playing: true };
   }
 
+  // 8-way arrow glyph for a world-space direction (y is DOWN on the canvas, so
+  // +dy reads as "down"); "·" for a zero vector.
+  const _ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"];
+  function arrowFor(dx, dy) {
+    if (dx === 0 && dy === 0) return "·";
+    const oct = ((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8;
+    return _ARROWS[oct];
+  }
+  function angleDeg(dx, dy) {
+    if (dx === 0 && dy === 0) return 0;
+    return Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
+  }
+
+  // Per-node iLQR cost breakdown for a chain at a given step. chain is
+  // [[x,y], ...] including base; cfg has the weights/rest_length/target/threat.
+  // Each term returns { cost, dir } where `dir` is a UNIT vector along the force
+  // that term exerts on this node (the negative cost gradient) - i.e. the way it
+  // pushes the node. cost and dir come from the SAME term so they always agree.
+  function nodeCosts(chain, nodeIdx, cfg, isTerminal, vel) {
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+    const norm = (v) => Math.sqrt(v[0] * v[0] + v[1] * v[1]);
+    const unit = (v) => { const n = norm(v) || 1; return [v[0] / n, v[1] / n]; };
+    const out = {};
+    const p = chain[nodeIdx];
+    // Effort (translation): the control at this step is the node's per-frame
+    // velocity u = x_{t+1} - x_t (dt=1). Cost w_effort*|u|^2 penalizes fast
+    // motion so the arm can't teleport. Only free nodes, and only at non-
+    // terminal steps (the terminal STATE has no outgoing control - matches the
+    // solver, whose terminal_cost omits effort). `vel` is that displacement.
+    if (nodeIdx > 0 && vel && !isTerminal) {
+      out.effort = { cost: cfg.wEffort * (vel[0] * vel[0] + vel[1] * vel[1]),
+                     dir: unit(vel) };
+    }
+    // Spring: prev segment (i-1 -> i) should sit at restLength. Force pulls the
+    // node toward its neighbour when stretched, pushes away when compressed.
+    if (nodeIdx > 0) {
+      const q = chain[nodeIdx - 1];
+      const dev = norm(sub(p, q)) - cfg.restLength;
+      const s = Math.sign(dev);
+      out.spring = { cost: cfg.wSpring * dev * dev,
+                     dir: unit([(q[0] - p[0]) * s, (q[1] - p[1]) * s]) };
+    }
+    // Bending: straighten toward the neighbours. Force is along the curvature
+    // vector (p_{i-1} - 2 p_i + p_{i+1}), pointing at the neighbours' midline.
+    if (nodeIdx > 0 && nodeIdx < chain.length - 1) {
+      const cx = chain[nodeIdx - 1][0] - 2 * p[0] + chain[nodeIdx + 1][0];
+      const cy = chain[nodeIdx - 1][1] - 2 * p[1] + chain[nodeIdx + 1][1];
+      out.bending = { cost: cfg.wBend * (cx * cx + cy * cy), dir: unit([cx, cy]) };
+    }
+    // Attraction: EVERY free node (whole-arm reach, not tip-only). The label AND
+    // the terminal weight depend on what the arm is chasing - a strong pull to
+    // PREY vs a gentle pull to an EXPLORE cell (w_explore, not w_reach_terminal);
+    // "hold" has no attractor. Weight is divided by n_free to match the solver's
+    // sqrt(n_free)-normalized residual. Force points TOWARD the target (an
+    // ATTRACT, vs the repel's away-from below).
+    if (nodeIdx > 0 && cfg.target && cfg.targetKind !== "hold") {
+      const nFree = chain.length - 1;
+      const d = norm(sub(p, cfg.target));
+      const label = cfg.targetKind === "explore" ? "explore"
+        : cfg.targetKind === "flee" ? "flee" : "reach";
+      const wBase = isTerminal
+        ? (cfg.targetKind === "explore" ? cfg.wExplore : cfg.wReachTerminal)
+        : cfg.wReachRun;
+      out[label] = { cost: (wBase / nFree) * d * d, dir: unit(sub(cfg.target, p)) };
+    }
+    // Repel: every free node within radius of a threat. Force points AWAY from
+    // the threat - the attract/repel distinction the panel makes visible.
+    if (nodeIdx > 0 && cfg.threat) {
+      const d = norm(sub(p, cfg.threat));
+      if (d < cfg.repelRadius) {
+        const pen = cfg.repelRadius - d;
+        out.repel = { cost: cfg.wRepel * pen * pen, dir: unit(sub(p, cfg.threat)) };
+      }
+    }
+    return out;
+  }
+
   const AnalyzerCore = {
     to255, asTriple, makeLru, prefetchPlan, chainsWithBase, nearestSucker,
-    colorErrorStats, clampIdx, playbackAdvance,
+    colorErrorStats, clampIdx, playbackAdvance, arrowFor, angleDeg, nodeCosts,
   };
   const root = (typeof window !== "undefined") ? window : globalThis;
   root.AnalyzerCore = AnalyzerCore;
@@ -372,40 +449,6 @@ function drawIlqrOverlay(ctx, view) {
   });
 }
 
-// Compute per-node iLQR cost breakdown for a chain at a given step.
-// chain is [[x,y], ...] including base; cfg has the weights/rest_length.
-function nodeCosts(chain, nodeIdx, cfg, isTerminal) {
-  const dist = (a, b) => Math.sqrt((a[0]-b[0])*(a[0]-b[0]) + (a[1]-b[1])*(a[1]-b[1]));
-  const out = {};
-  // Spring: deviation from rest length to previous node.
-  if (nodeIdx > 0) {
-    const d = dist(chain[nodeIdx], chain[nodeIdx - 1]);
-    const dev = d - cfg.restLength;
-    out.spring = cfg.wSpring * dev * dev;
-  }
-  // Bending: discrete curvature at interior nodes.
-  if (nodeIdx > 0 && nodeIdx < chain.length - 1) {
-    const dx = chain[nodeIdx-1][0] - 2*chain[nodeIdx][0] + chain[nodeIdx+1][0];
-    const dy = chain[nodeIdx-1][1] - 2*chain[nodeIdx][1] + chain[nodeIdx+1][1];
-    out.bending = cfg.wBend * (dx*dx + dy*dy);
-  }
-  // Reach: only tip, and stronger at terminal step.
-  if (nodeIdx === chain.length - 1 && cfg.target) {
-    const d = dist(chain[nodeIdx], cfg.target);
-    const w = isTerminal ? cfg.wReachTerminal : cfg.wReachRun;
-    out.reach = w * d * d;
-  }
-  // Repel: every free node (nodeIdx > 0).
-  if (nodeIdx > 0 && cfg.threat) {
-    const d = dist(chain[nodeIdx], cfg.threat);
-    if (d < cfg.repelRadius) {
-      const pen = cfg.repelRadius - d;
-      out.repel = cfg.wRepel * pen * pen;
-    }
-  }
-  return out;
-}
-
 function strokeChain(ctx, chain, cs) {
   ctx.beginPath();
   ctx.moveTo(chain[0][0] * cs, chain[0][1] * cs);
@@ -414,8 +457,10 @@ function strokeChain(ctx, chain, cs) {
 }
 
 // Per-cell sucker visit-count heatmap. explore is a [y][x] grid of counts.
-// Normalize to the max and tint each visited cell (warm, alpha by count);
-// unexplored cells (count 0) are left clear so coverage reads at a glance.
+// With decay on (explore_decay < 1) the counts are a RECENCY field: recently
+// visited cells are high, older ones have faded. Ramp each cell from faded
+// light orange (low = least recent) to dark saturated orange (high = most
+// recent); unexplored cells (0) are left clear so coverage reads at a glance.
 function drawExploreOverlay(ctx, explore, cs, xLen, yLen) {
   let maxC = 0;
   for (let y = 0; y < explore.length; y++) {
@@ -428,8 +473,13 @@ function drawExploreOverlay(ctx, explore, cs, xLen, yLen) {
     for (let x = 0; x < xLen && x < row.length; x++) {
       const v = row[x];
       if (v <= 0) continue;
-      const t = v / maxC;                       // 0..1 (dark->hot)
-      ctx.fillStyle = `rgba(251,146,60,${0.2 + 0.55 * t})`;  // amber
+      const t = v / maxC;                       // 0 = least recent, 1 = most
+      // Faded light orange -> dark orange, alpha widening with recency, so the
+      // recent/old contrast reads clearly (was a near-flat amber before).
+      const r = Math.round(253 + (200 - 253) * t);
+      const g = Math.round(200 + (80 - 200) * t);
+      const b = Math.round(140 + (0 - 140) * t);
+      ctx.fillStyle = `rgba(${r},${g},${b},${0.12 + 0.75 * t})`;
       ctx.fillRect(x * cs, y * cs, cs, cs);
     }
   }
@@ -1087,6 +1137,7 @@ function App() {
           {/* debug controls */}
           <div className="flex items-center gap-3 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> sucker outlines <kbd>O</kbd></label>
+            <label title="Red skeleton line joining each limb's nodes"><input type="checkbox" checked={showCenterlines} onChange={(e) => setShowCenterlines(e.target.checked)} /> centerline</label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
             {meta && meta.has_explore && (
@@ -1299,28 +1350,37 @@ function App() {
                       wBend: meta.config.octo_ilqr_w_bend || 1.0,
                       wReachRun: meta.config.octo_ilqr_w_reach_run || 0.1,
                       wReachTerminal: meta.config.octo_ilqr_w_reach_terminal || 6.0,
+                      wExplore: meta.config.octo_ilqr_w_explore || 0.5,
+                      wEffort: meta.config.octo_ilqr_w_effort || 0.1,
                       wRepel: meta.config.octo_ilqr_w_repel || 8.0,
                       repelRadius: meta.config.octo_ilqr_repel_radius || 2.5,
                       target: limbData.final.target,
+                      targetKind: limbData.final.target_kind,
                       threat: limbData.final.threat,
                     } : null;
                     if (!cfg) return null;
                     const isTerminal = step === chains.length - 1;
-                    const costs = nodeCosts(chain, ci, cfg, isTerminal);
+                    // Node velocity at this step = displacement to the next step
+                    // (the control u the effort term penalizes); null at terminal.
+                    const vel = !isTerminal
+                      ? [chains[step + 1][ci][0] - chain[ci][0],
+                         chains[step + 1][ci][1] - chain[ci][1]]
+                      : null;
+                    const costs = C.nodeCosts(chain, ci, cfg, isTerminal, vel);
                     const entries = Object.entries(costs);
                     if (!entries.length) return null;
                     return (
                       <div className="mt-2 border-t border-slate-700 pt-2">
-                        <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step}{isTerminal ? " (terminal)" : ""}</div>
-                        {entries.map(([name, val]) => (
+                        <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step} · node {ci}{isTerminal ? " (terminal)" : ""} · kind {cfg.targetKind || "?"}</div>
+                        {entries.map(([name, { cost, dir }]) => (
                           <div key={name} className="flex justify-between">
-                            <span>{name}</span>
-                            <span className="text-slate-400">{val.toFixed(4)}</span>
+                            <span>{name} <span className="text-slate-500">{C.arrowFor(dir[0], dir[1])} {C.angleDeg(dir[0], dir[1])}°</span></span>
+                            <span className="text-slate-400">{cost.toFixed(4)}</span>
                           </div>
                         ))}
                         <div className="flex justify-between font-bold mt-1 border-t border-slate-700 pt-1">
                           <span>total</span>
-                          <span>{entries.reduce((s, [, v]) => s + v, 0).toFixed(4)}</span>
+                          <span>{entries.reduce((s, [, v]) => s + v.cost, 0).toFixed(4)}</span>
                         </div>
                       </div>
                     );

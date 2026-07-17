@@ -111,6 +111,13 @@ class TestBodyRotation(unittest.TestCase):
         coords - a spurious strain that feeds back into more torque and pins
         dtheta at the cap forever (a runaway spin). The rigid carry breaks that
         loop, so the per-frame rotation decays toward zero.
+
+        The stimulus here is deliberately UNREACHABLE (distance 6 vs ~2 reach),
+        so the arm strains at it indefinitely - the worst case for settling. With
+        WHOLE-ARM sensing/attraction several arms chase the one prey, so the
+        transient is longer than the old tip-only reach (~100 frames vs ~40); the
+        window is sized to the settle, and a genuine runaway would stay pinned at
+        the cap the whole time rather than decaying below a fifth of it.
         """
         from simulator.simutil import Agent, AgentType
         octo, ag = _ilqr_octo(agents=1)
@@ -118,7 +125,7 @@ class TestBodyRotation(unittest.TestCase):
         prey = Agent(x=cx, y=cy + 6.0, agent_type=AgentType.PREY)  # off-axis
         ag.agents = [prey]
         steps = []
-        for _ in range(40):
+        for _ in range(120):
             prey.x, prey.y = cx, cy + 6.0  # freeze the stimulus
             octo.move(ag)
             steps.append(abs(octo.last_body_dtheta))
@@ -182,7 +189,7 @@ class TestThreatResponse(unittest.TestCase):
         """A threat near an arm's MIDDLE (out of the tip's range) is still
         sensed — whole-arm sensing catches what tip-only would miss."""
         from simulator.simutil import Agent, AgentType
-        octo, ag = _ilqr_octo(agents=0)
+        octo, _ = _ilqr_octo(agents=0)
         limb = octo.limbs[0]
         # Lay the arm out straight along +x so mid and tip are well separated.
         for i, cp in enumerate(limb.center_line):

@@ -76,9 +76,21 @@ def repel_residual(x: tf.Tensor, threat: tf.Tensor, threat_w,
 
 
 def reach_residual(x: tf.Tensor, target: tf.Tensor, sw_reach) -> tf.Tensor:
-    """Pull the tip toward ``target``. ``sw_reach`` is the sqrt-weight (may be a
-    scalar tensor so the pull strength can vary per solve without a retrace)."""
-    return sw_reach * (tip(x) - target)
+    """Pull EVERY free node toward ``target`` (whole-arm reach + capture).
+
+    An octopus arm senses and grabs along its whole length, so attraction acts
+    on every node, not just the tip (a starfish ray would be tip-only). The
+    residual is normalized by ``sqrt(n_free)`` so the aggregate pull equals a
+    single-node reach of the same weight - cost ``= w * mean_i |node_i-target|^2``
+    - rather than growing ``n_free``x and balling the arm up on the target.
+
+    ``sw_reach`` is the sqrt-weight (may be a scalar tensor so strength can vary
+    per solve without a retrace); pass it pre-gated to 0 to disable the term
+    (e.g. the idle "hold", where a whole-arm pull to the current tip would
+    otherwise collapse the arm inward)."""
+    free = tf.reshape(x, (-1, 2))  # (n_free, 2)
+    n = tf.cast(tf.shape(free)[0], tf.float32)
+    return sw_reach * tf.reshape(free - target, [-1]) / tf.sqrt(n)
 
 
 def effort_residual(u: tf.Tensor, sw_effort: float) -> tf.Tensor:

@@ -149,6 +149,10 @@ class Limb:
         self.w_explore = limb.ilqr.w_explore
         self.explore_locality = 0.3  # bias the explore target toward the tip so
                                      # the arm sweeps smoothly rather than jumping
+        # Steer the explore GOAL away from a sensed threat (the picker is
+        # otherwise threat-blind and would aim into the keep-out zone).
+        self.w_explore_threat_avoid = limb.ilqr.w_explore_threat_avoid
+        self.explore_threat_radius = limb.ilqr.explore_threat_radius
 
         # How close two suckers must be to count as neighbours for the LIMB
         # model; datagen builds its training adjacents with this.
@@ -521,15 +525,17 @@ class Limb:
         self.last_arm_length = float(
             np.hypot(free[-1].x - base.x, free[-1].y - base.y))
 
-    def _ilqr_target(self, tip, agents):
-        """The reach target for this arm's tip this frame.
+    def _ilqr_target(self, agents):
+        """The reach target for this arm this frame.
 
         Nearest sensed PREY within the arm's range as [x, y], or None when no
-        prey is in range. Sensing is measured from the arm's TIP, so an
-        extended arm reaches prey well beyond the body's own sensing radius -
-        which is exactly why the body must follow the ARM's reach rather than
-        re-sensing from its centre (see _move_ilqr). Threats are handled
-        separately by _ilqr_nearest_threat.
+        prey is in range. Sensed from the WHOLE arm (the nearest centerline
+        node), symmetric with _ilqr_nearest_threat and with whole-arm
+        attraction: any part of the arm can detect prey and any part can grab it
+        (an octopus arm, not a starfish ray). An extended arm therefore reaches
+        prey well beyond the body's own sensing radius - which is why the body
+        must follow the ARM's reach rather than re-sensing from its centre (see
+        _move_ilqr).
         """
         if not agents:
             return None
@@ -538,7 +544,7 @@ class Limb:
         for ag in agents:
             if ag.agent_type != AgentType.PREY:
                 continue
-            d = np.hypot(ag.x - tip.x, ag.y - tip.y)
+            d = min(np.hypot(ag.x - n.x, ag.y - n.y) for n in self.center_line)
             if d > self.agent_range_radius:
                 continue
             if nearest_d is None or d < nearest_d:
@@ -570,15 +576,21 @@ class Limb:
                 nearest = ag
         return [nearest.x, nearest.y] if nearest is not None else None
 
-    def _ilqr_explore_target(self, base_x, base_y, tip, visit_counts):
+    def _ilqr_explore_target(self, base_x, base_y, tip, visit_counts,
+                             threat=None):
         """Least-explored reachable cell as [x, y], or None.
 
         Searches the cells this arm's tip can reach (within ~arm length of the
         base) and returns the one that minimizes
-        ``visit_count + explore_locality * distance-to-current-tip`` - i.e. the
-        least-visited cell, biased toward the current tip so the arm sweeps
-        smoothly. The visit map is shared, so as one arm covers a region the
-        others are drawn elsewhere (emergent coverage, no direct coupling).
+        ``visit_count + explore_locality * distance-to-current-tip
+        + threat_penalty`` - i.e. the least-visited cell, biased toward the
+        current tip so the arm sweeps smoothly, and pushed off cells near a
+        sensed ``threat`` [x, y]. Without the threat term the least-visited
+        frontier is exactly the region the threat has kept the octopus out of,
+        so the arm reaches into the keep-out zone and stalls against the repel
+        barrier; the penalty moves the goal to the safe side. The visit map is
+        shared, so as one arm covers a region the others are drawn elsewhere
+        (emergent coverage, no direct coupling).
         """
         reach = (self.rows - 1) * self.max_sucker_distance
         y_len, x_len = visit_counts.shape
@@ -595,6 +607,11 @@ class Limb:
                     continue  # out of reach
                 d_tip = np.hypot(cx - tip.x, cy - tip.y)
                 score = visit_counts[cy, cx] + self.explore_locality * d_tip
+                if threat is not None:
+                    d_threat = np.hypot(cx - threat[0], cy - threat[1])
+                    if d_threat < self.explore_threat_radius:
+                        score += self.w_explore_threat_avoid * (
+                            self.explore_threat_radius - d_threat)
                 if best_score is None or score < best_score:
                     best_score = score
                     best = (cx, cy)
@@ -667,17 +684,32 @@ class Limb:
                       dtype=np.float32).reshape(-1)
 
         tip = self.center_line[-1]
-        prey = self._ilqr_target(tip, agents)      # [x, y] or None
+        prey = self._ilqr_target(agents)           # [x, y] or None (whole arm)
         threat = self._ilqr_nearest_threat(agents)  # sensed from whole arm
-        # Priority: reach PREY (strong) -> else EXPLORE the least-visited cell
-        # (gentle) -> else hold at the tip. Prey always preempts exploration, so
-        # exploration never outranks hunting; the threat repel is a separate,
-        # always-on term, so it always dominates too.
+        # Priority: FLEE a sensed threat (dominant) -> else reach PREY (strong)
+        # -> else EXPLORE the least-visited cell (gentle) -> else hold. Fleeing
+        # outranks hunting: a threat in range aborts any prey pursuit, so the
+        # octopus never chases food into danger. (The threat repel term is also
+        # always on and reinforces the flee.) Exploration is threat-aware and
+        # ranks last; prey preempts it.
         explore_pt = None
-        if prey is None and self.explore_enabled and visit_counts is not None:
+        if (prey is None and threat is None and self.explore_enabled
+                and visit_counts is not None):
             explore_pt = self._ilqr_explore_target(base_x, base_y, tip,
-                                                   visit_counts)
-        if prey is not None:
+                                                   visit_counts, threat=threat)
+        if threat is not None:
+            # Reach the WHOLE arm away from the threat (body-center flee
+            # direction, shared by every arm so they pull the body clear in
+            # concert), at full extension. Strong weight - escaping matters more
+            # than food. Prey is ignored while threatened.
+            ax, ay = x_octo - threat[0], y_octo - threat[1]
+            d_flee = np.hypot(ax, ay) or 1.0
+            reach = (self.rows - 1) * self.max_sucker_distance
+            solve_target = [base_x + ax / d_flee * reach,
+                            base_y + ay / d_flee * reach]
+            reach_weight = None          # controller default (strong)
+            target_kind = "flee"
+        elif prey is not None:
             solve_target = prey
             reach_weight = None          # controller default (strong)
             target_kind = "prey"
@@ -686,8 +718,11 @@ class Limb:
             reach_weight = self.w_explore  # gentle
             target_kind = "explore"
         else:
+            # Nothing to chase: disable reach (weight 0). With whole-arm
+            # attraction a pull toward the current tip would drag the other
+            # nodes inward; instead the arm just settles on spring/bend/effort.
             solve_target = [tip.x, tip.y]
-            reach_weight = None
+            reach_weight = 0.0
             target_kind = "hold"
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below

@@ -88,21 +88,24 @@ class ArmController:
         # Costs are composed from the shared residual library (residuals.py);
         # each term returns a residual vector the solver squares and sums, with
         # its weight folded in as sqrt(w). params =
-        # [base_xy, target, threat, threat_w, sw_reach_terminal] (see solve()) -
-        # the terminal-reach sqrt-weight rides in params so one compiled
-        # controller serves a strong prey reach and a gentle exploration reach
-        # without a retrace.
+        # [base_xy, target, threat, threat_w, sw_reach_terminal, reach_gate]
+        # (see solve()) - the terminal-reach sqrt-weight rides in params so one
+        # compiled controller serves a strong prey reach and a gentle
+        # exploration reach without a retrace, and reach_gate (0/1) switches the
+        # whole reach off for the idle "hold" (target == current tip, where a
+        # whole-arm pull would collapse the arm) without a retrace either.
         def running_cost(x, u, params):
             base_xy = params[0:2]
             target = params[2:4]
             threat = params[4:6]
             threat_w = params[6]
+            reach_gate = params[8]
             return tf.concat([
                 res.effort_residual(u, sw_effort),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
                 res.repel_residual(x, threat, threat_w, r_safe),
-                res.reach_residual(x, target, sw_reach_run),
+                res.reach_residual(x, target, sw_reach_run * reach_gate),
             ], axis=0)
 
         def terminal_cost(x, params):
@@ -111,8 +114,9 @@ class ArmController:
             threat = params[4:6]
             threat_w = params[6]
             sw_reach = params[7]  # per-solve terminal reach sqrt-weight
+            reach_gate = params[8]
             return tf.concat([
-                res.reach_residual(x, target, sw_reach),
+                res.reach_residual(x, target, sw_reach * reach_gate),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
                 res.repel_residual(x, threat, threat_w, r_safe),
@@ -156,9 +160,11 @@ class ArmController:
         record_history: capture per-iteration solve history on the returned
                  ILQRResult (off = zero overhead). A per-call flag, not a
                  controller field, so one compiled controller serves both modes.
-        reach_weight: terminal tip-pull weight for THIS solve (not sqrt'd); None
-                 uses the controller's w_reach_terminal. A gentle value drives a
-                 soft exploration reach; the strong default drives prey.
+        reach_weight: terminal whole-arm-pull weight for THIS solve (not sqrt'd);
+                 None uses the controller's w_reach_terminal. A gentle value
+                 drives a soft exploration reach; the strong default drives prey.
+                 0 disables reach entirely (the idle "hold": the arm settles on
+                 spring/bend/effort instead of pulling toward its own tip).
         """
         base_xy = tf.convert_to_tensor(base_xy, dtype=tf.float32)
         target = tf.convert_to_tensor(target, dtype=tf.float32)
@@ -171,8 +177,13 @@ class ArmController:
             threat_w = self._sw_repel
         sw_reach = (self._sw_reach_terminal if reach_weight is None
                     else float(np.sqrt(max(reach_weight, 0.0))))
+        # Gate the whole reach term off when reach_weight is exactly 0 (hold).
+        # None (prey default) and any positive weight (explore) leave it on.
+        reach_gate = 0.0 if (reach_weight is not None
+                             and reach_weight <= 0.0) else 1.0
         params = tf.concat(
-            [base_xy, target, threat_xy, [threat_w], [sw_reach]], axis=0)  # (8,)
+            [base_xy, target, threat_xy, [threat_w], [sw_reach], [reach_gate]],
+            axis=0)  # (9,)
         if u_init is None:
             u_init = tf.zeros((self.horizon, 2 * self.n_free), dtype=tf.float32)
         return self._solve(x0, params, u_init,

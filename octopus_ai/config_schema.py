@@ -142,7 +142,13 @@ class ILQRConfig:
                                    # base-reaction source, so they live together.
     w_spring: float = 2.0        # segment spacing toward rest length
     w_bend: float = 1.0          # straightness (anti-crumple)
-    w_effort: float = 0.1        # control-magnitude penalty
+    w_effort: float = 0.5        # per-node per-step VELOCITY penalty (the
+                                 # "translation" cost): |u|^2 keeps motion
+                                 # bounded/smooth so the arm can't teleport
+                                 # (no unrealistic accel/jerk). Summed over every
+                                 # free node x horizon step, so it weighs on the
+                                 # total far more than its scalar suggests - push
+                                 # it too high and the gentle explore pull loses.
     w_reach_run: float = 0.1     # weak per-step tip pull toward the target
     w_reach_terminal: float = 6.0  # strong terminal tip pull (dominates)
     w_repel: float = 8.0         # threat avoidance strength
@@ -154,8 +160,18 @@ class ILQRConfig:
     explore_enabled: bool = False
     w_explore: float = 0.5       # gentle terminal tip pull toward unexplored
                                  # (vs 6.0 for prey) - the "much less reward"
-    explore_decay: float = 1.0   # per-frame decay of visit counts; < 1.0 turns
+    explore_decay: float = 0.95  # per-frame decay of visit counts; < 1.0 turns
                                  # "least visited" into "least RECENTLY visited"
+                                 # and makes the overlay read as recency (recent
+                                 # cells bright, old ones fade). 1.0 = cumulative.
+    # The explore-target picker is otherwise threat-blind, so the least-visited
+    # frontier is exactly the region the threat has kept the octopus out of -
+    # the arm reaches for it while the repel barrier shoves back, and the two
+    # cancel into a stall. Penalize explore cells near a sensed threat so the
+    # goal lands on the SAFE side (the solver's repel term still guards the
+    # crossing). Zero weight reproduces the old threat-blind behaviour.
+    w_explore_threat_avoid: float = 10.0  # penalty per unit inside the radius
+    explore_threat_radius: float = 5.0    # cells within this of a threat pay it
 
 
 # ---------------------------------------------------------------- limbs ---

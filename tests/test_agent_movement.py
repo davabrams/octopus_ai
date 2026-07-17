@@ -189,5 +189,77 @@ class TestReactiveAgentMovement(unittest.TestCase):
         self.assertLess(decreases, len(distances) - 1)
 
 
+class TestPursuitFleeAgentMovement(unittest.TestCase):
+    """PURSUIT_FLEE: threats pursue, prey flee, inside the sense window,
+    IGNORING camouflage (unlike the visibility-gated spring modes)."""
+
+    def _params(self, **over):
+        base = dict(
+            x_len=24, y_len=24, octo_num_arms=8,
+            limb_rows=16, limb_cols=2, rand_seed=3,
+            # Octopus mode is irrelevant here (agents only read sucker
+            # positions); RANDOM keeps the test off the iLQR compile path.
+            octo_movement_mode=MovementMode.RANDOM,
+            limb_movement_mode=MovementMode.RANDOM,
+            agent_movement_mode=MovementMode.PURSUIT_FLEE,
+        )
+        base.update(over)
+        return make_config(**base)
+
+    def test_threat_pursues_even_when_camouflaged(self):
+        """visibility=0 (fully camouflaged) still pursues - the whole point of
+        PURSUIT_FLEE vs the visibility-gated reactive modes."""
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        threat = Agent(x=octo.x + 3.0, y=octo.y, agent_type=AgentType.THREAT)
+        ag.agents = [threat]
+        d0 = nearest_sucker_dist(octo, threat)
+        for _ in range(5):
+            ag.increment_all(octo, visibility=0.0)
+        self.assertLess(nearest_sucker_dist(octo, threat), d0)
+
+    def test_prey_flees_even_when_camouflaged(self):
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        prey = Agent(x=octo.x + 3.0, y=octo.y, agent_type=AgentType.PREY)
+        ag.agents = [prey]
+        d0 = nearest_sucker_dist(octo, prey)
+        for _ in range(5):
+            ag.increment_all(octo, visibility=0.0)
+        self.assertGreater(nearest_sucker_dist(octo, prey), d0)
+
+    def test_only_acts_in_sense_window(self):
+        """A threat beyond its sense window wanders (does not steadily close)."""
+        p = self._params(agent_range_radius=2)
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        far = Agent(x=octo.x + 10.0, y=octo.y, agent_type=AgentType.THREAT)
+        ag.agents = [far]
+        np.random.seed(11)
+        dists = [nearest_sucker_dist(octo, far)]
+        for _ in range(20):
+            ag.increment_all(octo, visibility=0.0)
+            dists.append(nearest_sucker_dist(octo, far))
+        decreases = sum(1 for i in range(1, len(dists))
+                        if dists[i] < dists[i - 1])
+        self.assertLess(decreases, len(dists) - 1)  # not steady pursuit
+
+    def test_pursuit_flee_stays_on_grid(self):
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        # Prey pinned in a corner, fleeing - must clamp to the grid, not walk off.
+        ag.agents = [Agent(x=1.0, y=1.0, agent_type=AgentType.PREY)]
+        for _ in range(80):
+            ag.increment_all(octo, visibility=0.0)
+        a = ag.agents[0]
+        self.assertGreaterEqual(a.x, 0.0)
+        self.assertGreaterEqual(a.y, 0.0)
+        self.assertLessEqual(a.x, p.world.x_len - 1.0)
+        self.assertLessEqual(a.y, p.world.y_len - 1.0)
+
+
 if __name__ == '__main__':
     unittest.main()

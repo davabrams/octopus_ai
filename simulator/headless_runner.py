@@ -315,6 +315,12 @@ def main(argv=None):
         action="store_true",
         help="disable per-iteration iLQR history capture",
     )
+    parser.add_argument(
+        "--explore",
+        action="store_true",
+        help="enable sucker exploration (off in the RECORD profile by default); "
+        "records the visit-count map so the analyzer's exploration overlay lights up",
+    )
     args = parser.parse_args(argv)
 
     # Import profiles here so the module stays import-light for the server.
@@ -331,6 +337,11 @@ def main(argv=None):
         cfg = replace(cfg, run=replace(cfg.run, num_iterations=args.frames))
     if args.no_ilqr_history:
         cfg = replace(cfg, output=replace(cfg.output, record_ilqr_history=False))
+    if args.explore:
+        o = cfg.octopus
+        cfg = replace(cfg, octopus=replace(
+            o, limb=replace(o.limb, ilqr=replace(
+                o.limb.ilqr, explore_enabled=True))))
 
     print_config(cfg, "headless_runner CONFIG")
     runner = HeadlessRunner(cfg, label=args.label)
