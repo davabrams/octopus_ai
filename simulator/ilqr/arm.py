@@ -65,6 +65,10 @@ class ArmController:
     w_repel: float = 8.0        # how strongly a nearby threat is avoided
     repel_radius: float = 2.5   # threat "keep-out" radius: every arm node pays
                                 # for being closer than this to a threat
+    repel_tip_fraction: float = 0.3  # tip's threat-avoidance strength relative
+                                     # to the body-adjacent node's: the body
+                                     # matters more than a limb tip, so the base
+                                     # end recoils hardest and the tip least
     max_iters: int = 50
     tol: float = 1e-4
 
@@ -81,6 +85,12 @@ class ArmController:
         # Default terminal reach sqrt-weight; solve() can override per call
         # (a gentle weight for exploration vs the strong default for prey).
         self._sw_reach_terminal = sw_reach_terminal
+        # Per-node repel sqrt-weight ramp: the body-adjacent free node (index 0)
+        # avoids threats at full strength, tapering to repel_tip_fraction at the
+        # tip - the body matters more than a limb tip, so it recoils hardest.
+        repel_node_sw = tf.constant(
+            np.sqrt(np.linspace(1.0, self.repel_tip_fraction, n_free)),
+            dtype=tf.float32)
 
         def dynamics(x, u):
             return x + u * DT
@@ -104,7 +114,8 @@ class ArmController:
                 res.effort_residual(u, sw_effort),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, threat, threat_w, r_safe),
+                res.repel_residual(x, threat, threat_w, r_safe,
+                                   node_sw=repel_node_sw),
                 res.reach_residual(x, target, sw_reach_run * reach_gate),
             ], axis=0)
 
@@ -119,7 +130,8 @@ class ArmController:
                 res.reach_residual(x, target, sw_reach * reach_gate),
                 res.spring_residual(x, base_xy, rest, sw_spring),
                 res.bending_residual(x, base_xy, sw_bend),
-                res.repel_residual(x, threat, threat_w, r_safe),
+                res.repel_residual(x, threat, threat_w, r_safe,
+                                   node_sw=repel_node_sw),
             ], axis=0)
 
         self._dynamics = dynamics

@@ -187,14 +187,19 @@
         : cfg.wReachRun;
       out[label] = { cost: (wBase / nFree) * d * d, dir: unit(sub(cfg.target, p)) };
     }
-    // Repel: every free node within radius of a threat. Force points AWAY from
-    // the threat - the attract/repel distinction the panel makes visible.
+    // Repel: every free node while a threat is present (shown as 0 when the node
+    // is beyond the keep-out radius, so its absence-of-force is visible, not
+    // dropped). Graded by node: the body-adjacent free node avoids hardest, the
+    // tip least (repel_tip_fraction) - protect the body, not the limb. Force
+    // points AWAY from the threat (vs the attract's toward).
     if (nodeIdx > 0 && cfg.threat) {
+      const nFree = chain.length - 1;
+      const ratio = 1 + (cfg.repelTipFraction - 1)
+        * (nodeIdx - 1) / Math.max(1, nFree - 1);
       const d = norm(sub(p, cfg.threat));
-      if (d < cfg.repelRadius) {
-        const pen = cfg.repelRadius - d;
-        out.repel = { cost: cfg.wRepel * pen * pen, dir: unit(sub(p, cfg.threat)) };
-      }
+      const pen = Math.max(0, cfg.repelRadius - d);
+      out.repel = { cost: cfg.wRepel * ratio * pen * pen,
+                    dir: pen > 0 ? unit(sub(p, cfg.threat)) : [0, 0] };
     }
     return out;
   }
@@ -1354,6 +1359,8 @@ function App() {
                       wEffort: meta.config.octo_ilqr_w_effort || 0.1,
                       wRepel: meta.config.octo_ilqr_w_repel || 8.0,
                       repelRadius: meta.config.octo_ilqr_repel_radius || 2.5,
+                      repelTipFraction: meta.config.octo_ilqr_repel_tip_fraction != null
+                        ? meta.config.octo_ilqr_repel_tip_fraction : 0.3,
                       target: limbData.final.target,
                       targetKind: limbData.final.target_kind,
                       threat: limbData.final.threat,

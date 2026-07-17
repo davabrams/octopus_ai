@@ -153,6 +153,10 @@ class ILQRConfig:
     w_reach_terminal: float = 6.0  # strong terminal tip pull (dominates)
     w_repel: float = 8.0         # threat avoidance strength
     repel_radius: float = 2.5    # threat keep-out radius
+    repel_tip_fraction: float = 0.3  # tip's threat-avoidance vs the body-
+                                     # adjacent node's: protect the body, not the
+                                     # limb tip - base end recoils hardest (1.0),
+                                     # tip least (this fraction)
     # Exploration (off by default): when an arm senses no prey, its tip seeks
     # the least-explored cell within reach (cells are marked explored by the
     # SUCKERS, not the body). A weak drive: w_explore << w_reach_terminal, and

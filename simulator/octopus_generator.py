@@ -651,6 +651,7 @@ class Limb:
                 w_reach_terminal=ic.w_reach_terminal,
                 w_repel=ic.w_repel,
                 repel_radius=ic.repel_radius,
+                repel_tip_fraction=ic.repel_tip_fraction,
             )
 
         # Carry the arm rigidly with the body's rotation this frame: rotate the

@@ -268,6 +268,8 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_w_reach_terminal': cfg.octopus.limb.ilqr.w_reach_terminal,
         'octo_ilqr_w_repel': cfg.octopus.limb.ilqr.w_repel,
         'octo_ilqr_repel_radius': cfg.octopus.limb.ilqr.repel_radius,
+        'octo_ilqr_repel_tip_fraction':
+            cfg.octopus.limb.ilqr.repel_tip_fraction,
         'octo_ilqr_explore_enabled': cfg.octopus.limb.ilqr.explore_enabled,
         'octo_ilqr_w_explore': cfg.octopus.limb.ilqr.w_explore,
         'octo_ilqr_explore_decay': cfg.octopus.limb.ilqr.explore_decay,
@@ -413,6 +415,9 @@ def config_from_flat(d: dict) -> Config:
                               D.octopus.limb.ilqr.w_repel),
                     repel_radius=g('octo_ilqr_repel_radius',
                                    D.octopus.limb.ilqr.repel_radius),
+                    repel_tip_fraction=g(
+                        'octo_ilqr_repel_tip_fraction',
+                        D.octopus.limb.ilqr.repel_tip_fraction),
                     explore_enabled=g('octo_ilqr_explore_enabled',
                                       D.octopus.limb.ilqr.explore_enabled),
                     w_explore=g('octo_ilqr_w_explore',

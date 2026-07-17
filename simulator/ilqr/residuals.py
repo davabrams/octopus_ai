@@ -62,17 +62,24 @@ def bending_residual(x: tf.Tensor, base_xy: tf.Tensor,
 
 
 def repel_residual(x: tf.Tensor, threat: tf.Tensor, threat_w,
-                   r_safe: float) -> tf.Tensor:
+                   r_safe: float, node_sw=None) -> tf.Tensor:
     """One-sided barrier: every free node pays ``threat_w*(r_safe - dist)``
     while within ``r_safe`` of the threat, zero beyond it.
 
     ``threat_w`` is the sqrt-weight, 0 when no threat is in range (so the term
     vanishes without changing the residual's shape — no retrace). Pushes the
     whole arm out of the keep-out zone.
+
+    ``node_sw`` is an optional ``(n_free,)`` per-node sqrt-weight ramp: the body
+    matters more than an arm tip, so the body-adjacent node is pushed hardest
+    and the tip least (protect the body, not the limb). None = uniform.
     """
     free = tf.reshape(x, (-1, 2))  # (n_free, 2)
     d = tf.sqrt(tf.reduce_sum(tf.square(free - threat), axis=1) + _EPS)
-    return threat_w * tf.nn.relu(r_safe - d)  # (n_free,)
+    barrier = tf.nn.relu(r_safe - d)  # (n_free,)
+    if node_sw is not None:
+        barrier = barrier * node_sw
+    return threat_w * barrier  # (n_free,)
 
 
 def reach_residual(x: tf.Tensor, target: tf.Tensor, sw_reach) -> tf.Tensor:

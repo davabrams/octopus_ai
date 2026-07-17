@@ -73,6 +73,21 @@ def test_one_controller_serves_multiple_targets():
         assert err < 0.30, f"target {target}: nearest node err {err}"
 
 
+def test_repel_residual_grades_body_over_tip():
+    """node_sw ramps the repel barrier: at equal penetration the body-adjacent
+    node pays more than the tip (protect the body, not the limb)."""
+    from simulator.ilqr.residuals import repel_residual
+    # Two free nodes equidistant from the threat -> equal penetration.
+    x = tf.constant([1.0, 1.0, 3.0, 1.0], dtype=tf.float32)  # (1,1) and (3,1)
+    threat = tf.constant([2.0, 0.0], dtype=tf.float32)
+    node_sw = tf.constant([1.0, np.sqrt(0.3)], dtype=tf.float32)  # body, tip
+    r = repel_residual(x, threat, threat_w=1.0, r_safe=2.5,
+                       node_sw=node_sw).numpy()
+    assert r[0] > r[1] > 0.0
+    # cost is the squared residual: tip pays 0.3x the body-adjacent node.
+    assert abs((r[1] ** 2) / (r[0] ** 2) - 0.3) < 1e-5
+
+
 def test_threat_repulsion_pushes_arm_away():
     """With a threat present the arm keeps farther from it than without one."""
     ctrl = ArmController(n_free=5, rest_length=1.0, horizon=8, max_iters=50,

@@ -131,8 +131,8 @@ class TestCoreLogic(unittest.TestCase):
           const chain = [[0,0],[1,0],[2,0],[3,0]];
           const cfg = { restLength:1, wSpring:2, wBend:1, wReachRun:0.1,
                         wReachTerminal:6, wExplore:0.5, wEffort:3, wRepel:8,
-                        repelRadius:2.5, target:[5,0], targetKind:"explore",
-                        threat:null };
+                        repelRadius:2.5, repelTipFraction:1, target:[5,0],
+                        targetKind:"explore", threat:null };
           // Interior node: spring/bending ~0; effort from a downward velocity;
           // whole-arm attraction now reaches this node too (running weight,
           // normalized by n_free=3), pointing at the target.
@@ -150,11 +150,27 @@ class TestCoreLogic(unittest.TestCase):
           assert.strictEqual(A.arrowFor(t.explore.dir[0], t.explore.dir[1]), "→");
           assert.ok(!('effort' in t));                     // terminal has no control
 
-          // Repel points AWAY from a threat just below the tip.
+          // Repel points AWAY from a threat just below the tip (ungraded here).
           const cfg2 = Object.assign({}, cfg, { threat:[3,1] });
           const r = A.nodeCosts(chain, 3, cfg2, true, null);
-          near(r.repel.cost, 18.0);                        // 8 * (2.5-1)^2
+          near(r.repel.cost, 18.0);                        // 8 * 1 * (2.5-1)^2
           assert.strictEqual(A.arrowFor(r.repel.dir[0], r.repel.dir[1]), "↑");
+
+          // Repel shows even when the node is BEYOND the keep-out radius: value
+          // 0, so it's visibly present rather than dropped ("every cost shows").
+          const cfgFar = Object.assign({}, cfg, { threat:[100,100] });
+          const rf = A.nodeCosts(chain, 2, cfgFar, false, [0,0]);
+          assert.ok('repel' in rf && rf.repel.cost === 0);
+
+          // Graded repel: at EQUAL range the body-adjacent node avoids harder
+          // than the tip (repelTipFraction=0.3). threat [2,1] is equidistant
+          // from node 1 and node 3.
+          const cfgG = Object.assign({}, cfg,
+            { threat:[2,1], repelTipFraction:0.3 });
+          const rBody = A.nodeCosts(chain, 1, cfgG, true, null).repel;
+          const rTip  = A.nodeCosts(chain, 3, cfgG, true, null).repel;
+          assert.ok(rBody.cost > rTip.cost);
+          near(rTip.cost / rBody.cost, 0.3);
 
           // Stretched spring pulls the node back toward its previous neighbour.
           const stretched = [[0,0],[1.5,0],[2.5,0],[3.5,0]];
