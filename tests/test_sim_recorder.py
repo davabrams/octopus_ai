@@ -399,5 +399,41 @@ class TestConfigAndSurfaceRoundTrip(unittest.TestCase):
         self.assertTrue(np.allclose(rebuilt, surf.grid, atol=1e-6))
 
 
+class TestExploreRecording(unittest.TestCase):
+    def test_explore_map_recorded_when_enabled(self):
+        """With exploration on, runs.has_explore is set and explore_map holds
+        one flattened (x_len*y_len) visit grid per frame."""
+        cfg, surf, octo, ag = _build(octo_ilqr_explore_enabled=True)
+        db = _tmp_db("explore.duckdb")
+        rec = SimRecorder(cfg, run_id="ex", db_path=db)
+        rec.record_surface(surf)
+        _drive(rec, octo, ag, surf, 3)
+        rec.close()
+        con = duckdb.connect(db, read_only=True)
+        self.assertTrue(
+            con.execute("SELECT has_explore FROM runs").fetchone()[0])
+        self.assertEqual(
+            con.execute("SELECT count(*) FROM explore_map").fetchone()[0], 3)
+        n = con.execute(
+            "SELECT len(counts) FROM explore_map LIMIT 1").fetchone()[0]
+        self.assertEqual(n, cfg.world.x_len * cfg.world.y_len)
+        con.close()
+
+    def test_explore_map_empty_when_disabled(self):
+        """Default (exploration off) => has_explore false, no explore_map rows."""
+        cfg, surf, octo, ag = _build()
+        db = _tmp_db("noexplore.duckdb")
+        rec = SimRecorder(cfg, run_id="ne", db_path=db)
+        rec.record_surface(surf)
+        _drive(rec, octo, ag, surf, 2)
+        rec.close()
+        con = duckdb.connect(db, read_only=True)
+        self.assertFalse(
+            con.execute("SELECT has_explore FROM runs").fetchone()[0])
+        self.assertEqual(
+            con.execute("SELECT count(*) FROM explore_map").fetchone()[0], 0)
+        con.close()
+
+
 if __name__ == "__main__":
     unittest.main()

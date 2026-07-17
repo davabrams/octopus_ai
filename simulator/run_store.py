@@ -52,6 +52,29 @@ def _frames_has_theta(con) -> bool:
     return bool(rows)
 
 
+def _table_exists(con, table: str) -> bool:
+    """Whether a table exists (runs recorded before it was added won't have
+    it - e.g. explore_map on pre-exploration runs)."""
+    rows = con.execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_name = ?",
+        [table],
+    ).fetchall()
+    return bool(rows)
+
+
+def _runs_has_explore(con) -> bool:
+    """Value of runs.has_explore, or False if the column predates exploration."""
+    cols = con.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'runs' AND column_name = 'has_explore'"
+    ).fetchall()
+    if not cols:
+        return False
+    row = con.execute("SELECT has_explore FROM runs").fetchone()
+    return bool(row[0]) if row else False
+
+
 def _connect_ro(path):
     """Open a run file read-only, replaying a crashed run's WAL if needed.
 
@@ -202,6 +225,7 @@ class RunStore:
                 "GROUP BY frame ORDER BY frame"
             ).fetchall()
             mean_final_cost = [_r4(r[1]) for r in mean_cost_rows]
+            has_explore = _runs_has_explore(con)
         finally:
             con.close()
 
@@ -227,14 +251,17 @@ class RunStore:
                 "mean_final_cost": mean_final_cost,
             },
             "has_ilqr_history": bool(has_ilqr),
+            "has_explore": has_explore,
         }
 
     # ---- frames ----------------------------------------------------------
-    def get_frame(self, run_id: str, frame: int, include_ilqr: bool = False) -> dict:
+    def get_frame(self, run_id: str, frame: int, include_ilqr: bool = False,
+                  include_explore: bool = False) -> dict:
         con = _connect_ro(self._path(run_id))
         try:
             meta = con.execute(
-                "SELECT frames_recorded, num_arms, limb_rows, ilqr_horizon FROM runs"
+                "SELECT frames_recorded, num_arms, limb_rows, ilqr_horizon, "
+                "x_len, y_len FROM runs"
             ).fetchone()
             if meta is None:
                 raise RunNotFoundError(run_id)
@@ -249,9 +276,26 @@ class RunStore:
                 if include_ilqr
                 else []
             )
+            explore = (self._build_explore(con, frame, meta[4], meta[5])
+                       if include_explore else None)
         finally:
             con.close()
-        return {"run_id": run_id, "frame": frame, "state": state, "ilqr": ilqr}
+        return {"run_id": run_id, "frame": frame, "state": state,
+                "ilqr": ilqr, "explore": explore}
+
+    def _build_explore(self, con, frame, x_len, y_len):
+        """The per-frame sucker visit-count grid as [y][x], or None if the run
+        has no explore data (pre-exploration runs / exploration disabled)."""
+        if not _table_exists(con, "explore_map"):
+            return None
+        row = con.execute(
+            "SELECT counts FROM explore_map WHERE frame = ?", [frame]
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        flat = row[0]
+        return [[_r4(flat[y * x_len + x]) for x in range(x_len)]
+                for y in range(y_len)]
 
     def get_frames(self, run_id: str, start: int, count: int) -> dict:
         con = _connect_ro(self._path(run_id))

@@ -187,6 +187,15 @@ function drawWorld(ctx, background, state, view) {
       ctx.beginPath(); ctx.moveTo(0, y * cs); ctx.lineTo(xLen * cs, y * cs); ctx.stroke();
     }
   }
+
+  // Exploration overlay: the per-cell sucker VISIT-COUNT heatmap. Drawn in cell
+  // coords (aligned with the background grid, NOT the half-cell entity shift).
+  // Warmer/more opaque = more explored; unexplored cells are left clear, so the
+  // octopus's coverage (and where it gets stuck) reads at a glance.
+  if (view.exploreOverlay && view.explore) {
+    drawExploreOverlay(ctx, view.explore, cs, xLen, yLen);
+  }
+
   if (!state) { ctx.restore(); return; }
 
   // Entities at cell centres: shift by half a cell (commit 089a7ff). Do NOT
@@ -404,6 +413,28 @@ function strokeChain(ctx, chain, cs) {
   ctx.stroke();
 }
 
+// Per-cell sucker visit-count heatmap. explore is a [y][x] grid of counts.
+// Normalize to the max and tint each visited cell (warm, alpha by count);
+// unexplored cells (count 0) are left clear so coverage reads at a glance.
+function drawExploreOverlay(ctx, explore, cs, xLen, yLen) {
+  let maxC = 0;
+  for (let y = 0; y < explore.length; y++) {
+    const row = explore[y];
+    for (let x = 0; x < row.length; x++) if (row[x] > maxC) maxC = row[x];
+  }
+  if (maxC <= 0) return;
+  for (let y = 0; y < yLen && y < explore.length; y++) {
+    const row = explore[y];
+    for (let x = 0; x < xLen && x < row.length; x++) {
+      const v = row[x];
+      if (v <= 0) continue;
+      const t = v / maxC;                       // 0..1 (dark->hot)
+      ctx.fillStyle = `rgba(251,146,60,${0.2 + 0.55 * t})`;  // amber
+      ctx.fillRect(x * cs, y * cs, cs, cs);
+    }
+  }
+}
+
 // Inline SVG line chart. series: [{data:[...], color, dashed}]; cursor: frame.
 function LineChart({ series, cursor, onSeek, height, log }) {
   const width = 340;
@@ -451,6 +482,7 @@ function App() {
   const [ilqrIter, setIlqrIter] = useState(0);
   const [ilqrStep, setIlqrStep] = useState(null); // null = show all, number = highlight one
   const [convergence, setConvergence] = useState(false);
+  const [exploreOverlay, setExploreOverlay] = useState(false); // visit-count heatmap
   const [hover, setHover] = useState(null); // {sucker, frame} inspector
   const [ilqrTick, setIlqrTick] = useState(0); // bump to force re-render when iLQR data arrives
   const [zoom, setZoom] = useState(1);
@@ -476,6 +508,7 @@ function App() {
   const canvasRef = useRef(null);
   const frameCache = useRef(C.makeLru(400));
   const ilqrCache = useRef(C.makeLru(40));
+  const exploreCache = useRef(C.makeLru(60)); // per-frame visit-count grids
   const dirtyRef = useRef(true);
   const stateRef = useRef({}); // live-drawn refs (NOT React state churn)
   const pendingReq = useRef(new Map());
@@ -492,6 +525,7 @@ function App() {
   stateRef.current.ilqrIter = ilqrIter;
   stateRef.current.ilqrStep = ilqrStep;
   stateRef.current.convergence = convergence;
+  stateRef.current.exploreOverlay = exploreOverlay;
   stateRef.current.hover = hover;
   stateRef.current.zoom = zoom;
   stateRef.current.pan = pan;
@@ -564,6 +598,7 @@ function App() {
         ilqrCache.current.set(data.frame, data.ilqr);
         setIlqrTick((t) => t + 1); // force React re-render so UI picks up iLQR data
       }
+      if (data.explore) exploreCache.current.set(data.frame, data.explore);
       dirtyRef.current = true;
     } else if (type === "frames_data") {
       data.frames.forEach((st) => frameCache.current.set(st.metadata.iteration, st));
@@ -594,6 +629,7 @@ function App() {
   const loadRun = useCallback((runId) => {
     frameCache.current = C.makeLru(400);
     ilqrCache.current = C.makeLru(40);
+    exploreCache.current = C.makeLru(60);
     setFrameIdx(0);
     setPlaying(false);
     send("load_run", { run_id: runId }, (msg) => {
@@ -632,6 +668,10 @@ function App() {
     if (!ilqrCache.current.has(f)) send("get_frame", { run_id: runId, frame: f, include_ilqr: true });
   }, [send]);
 
+  const ensureExplore = useCallback((runId, f) => {
+    if (!exploreCache.current.has(f)) send("get_frame", { run_id: runId, frame: f, include_explore: true });
+  }, [send]);
+
   // ---- effects: fetch current frame + iLQR when scrubbing ----
   useEffect(() => {
     if (!meta) return;
@@ -644,6 +684,12 @@ function App() {
     ensureIlqr(meta.run_id, frameIdx);
     dirtyRef.current = true;
   }, [meta, frameIdx, ilqrOverlay, ensureIlqr]);
+
+  useEffect(() => {
+    if (!meta || !exploreOverlay) return;
+    ensureExplore(meta.run_id, frameIdx);
+    dirtyRef.current = true;
+  }, [meta, frameIdx, exploreOverlay, ensureExplore]);
 
   // Mark dirty when ANY visual toggle changes so the RAF loop redraws.
   useEffect(() => { dirtyRef.current = true; },
@@ -753,6 +799,7 @@ function App() {
         convergence: S.convergence,
         hoverSucker: (S.hover && S.hover.frame === S.frameIdx) ? S.hover.sucker : null,
         selectedLimb: S.ilqrLimb,
+        explore: exploreCache.current.get(S.frameIdx), exploreOverlay: S.exploreOverlay,
         zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
         showOutlines: S.showOutlines,
         showCenterlines: S.showCenterlines,
@@ -1042,6 +1089,11 @@ function App() {
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> sucker outlines <kbd>O</kbd></label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
+            {meta.has_explore && (
+              <label title="Per-cell sucker visit-count heatmap (exploration priority)">
+                <input type="checkbox" checked={exploreOverlay} onChange={(e) => setExploreOverlay(e.target.checked)} /> exploration
+              </label>
+            )}
             <span className="text-slate-400">zoom: {zoom.toFixed(1)}x</span>
             <button className="bg-slate-700 px-2 py-0.5 rounded" onClick={resetView}>reset view <kbd>0</kbd></button>
           </div>

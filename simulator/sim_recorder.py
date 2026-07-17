@@ -65,7 +65,15 @@ _DDL = [
         num_arms INTEGER NOT NULL, limb_rows INTEGER NOT NULL,
         limb_cols INTEGER NOT NULL,
         ilqr_horizon INTEGER NOT NULL, ilqr_max_iters INTEGER NOT NULL,
-        has_ilqr_history BOOLEAN NOT NULL DEFAULT FALSE
+        has_ilqr_history BOOLEAN NOT NULL DEFAULT FALSE,
+        has_explore BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS explore_map (   -- per-frame sucker visit counts
+        run_id VARCHAR NOT NULL, frame INTEGER NOT NULL,
+        counts FLOAT[] NOT NULL,               -- flattened (y_len*x_len), [y][x]
+        PRIMARY KEY (run_id, frame)
     )
     """,
     """
@@ -165,6 +173,7 @@ _INSERTS = {
     "limb_frames": "INSERT INTO limb_frames VALUES (?,?,?,?,?,?,?,?)",
     "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "ilqr_iters": "INSERT INTO ilqr_iters VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    "explore_map": "INSERT INTO explore_map VALUES (?,?,?)",
 }
 
 _BUFFERED_TABLES = (
@@ -175,6 +184,7 @@ _BUFFERED_TABLES = (
     "limb_frames",
     "limb_solves",
     "ilqr_iters",
+    "explore_map",
 )
 
 
@@ -218,6 +228,7 @@ class SimRecorder:
         self.db_path = db_path
         self.run_label = run_label
         self.flush_every_frames = max(1, int(flush_every_frames))
+        self._has_explore = bool(self.cfg.octopus.limb.ilqr.explore_enabled)
 
         self.conn = duckdb.connect(db_path)
         self._create_schema()
@@ -253,7 +264,7 @@ class SimRecorder:
         self.conn.execute(
             "INSERT INTO runs (run_id, label, config_json, x_len, y_len, "
             "num_arms, limb_rows, limb_cols, ilqr_horizon, ilqr_max_iters, "
-            "has_ilqr_history) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "has_ilqr_history, has_explore) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT (run_id) DO NOTHING",
             [
                 self.run_id,
@@ -267,6 +278,7 @@ class SimRecorder:
                 cfg.octopus.limb.ilqr.horizon,
                 cfg.octopus.limb.ilqr.max_iters,
                 has_ilqr,
+                self._has_explore,
             ],
         )
 
@@ -301,6 +313,9 @@ class SimRecorder:
         # Head + body forces.
         st["head"] = (float(octo.x), float(octo.y))
         st["head_theta"] = float(getattr(octo, "theta", 0.0))
+        if self._has_explore and getattr(octo, "visit_counts", None) is not None:
+            st["explore"] = np.asarray(octo.visit_counts,
+                                       dtype=np.float32).reshape(-1).tolist()
         bf = np.asarray(octo.last_body_force, dtype=float)
         bd = np.asarray(octo.last_body_drift, dtype=float)
         st["body_force"] = (float(bf[0]), float(bf[1]))
@@ -525,6 +540,9 @@ class SimRecorder:
         self._buffers["ilqr_iters"].extend(st["ilqr_iters"])
 
         self._buffers["agents"].extend(st.get("agent_rows", []))
+
+        if "explore" in st:
+            self._buffers["explore_map"].append((rid, frame, st["explore"]))
 
         self._frames_recorded += 1
         self._frames_since_flush += 1

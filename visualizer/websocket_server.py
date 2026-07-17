@@ -390,6 +390,7 @@ class OctopusSimulationServer:
         run_id = data.get("run_id")
         frame = data.get("frame")
         include_ilqr = bool(data.get("include_ilqr", False))
+        include_explore = bool(data.get("include_explore", False))
         if self._active is not None and run_id == self._active.run_id:
             await self._error(ws, req_id, "run_in_progress",
                               "run is still being recorded")
@@ -400,7 +401,8 @@ class OctopusSimulationServer:
             return
         try:
             result = await asyncio.to_thread(
-                self.run_store.get_frame, run_id, frame, include_ilqr)
+                self.run_store.get_frame, run_id, frame, include_ilqr,
+                include_explore)
         except RunNotFoundError:
             await self._error(ws, req_id, "unknown_run",
                               f"no such run: {run_id}")
