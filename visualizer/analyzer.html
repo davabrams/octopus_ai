@@ -1089,7 +1089,7 @@ function App() {
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> sucker outlines <kbd>O</kbd></label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
-            {meta.has_explore && (
+            {meta && meta.has_explore && (
               <label title="Per-cell sucker visit-count heatmap (exploration priority)">
                 <input type="checkbox" checked={exploreOverlay} onChange={(e) => setExploreOverlay(e.target.checked)} /> exploration
               </label>
