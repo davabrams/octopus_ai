@@ -152,24 +152,40 @@
     // terminal steps (the terminal STATE has no outgoing control - matches the
     // solver, whose terminal_cost omits effort). `vel` is that displacement.
     if (nodeIdx > 0 && vel && !isTerminal) {
-      out.effort = { cost: cfg.wEffort * (vel[0] * vel[0] + vel[1] * vel[1]),
-                     dir: unit(vel) };
+      const v2 = vel[0] * vel[0] + vel[1] * vel[1];
+      out.effort = { cost: cfg.wEffort * v2, dir: unit(vel) };
+      // Super-linear velocity penalty: cost = w * |u|^4 - the hard wall against
+      // a node teleporting across the field in one frame.
+      out.effortStiffen = { cost: cfg.wEffortStiffen * v2 * v2, dir: unit(vel) };
     }
     // Spring: prev segment (i-1 -> i) should sit at restLength. Force pulls the
     // node toward its neighbour when stretched, pushes away when compressed.
     if (nodeIdx > 0) {
       const q = chain[nodeIdx - 1];
-      const dev = norm(sub(p, q)) - cfg.restLength;
+      const rawDev = norm(sub(p, q)) - cfg.restLength;
+      // Deadband: a segment may deviate +-springSlack from rest for free.
+      const slack = cfg.springSlack || 0;
+      const dev = Math.sign(rawDev) * Math.max(0, Math.abs(rawDev) - slack);
       const s = Math.sign(dev);
-      out.spring = { cost: cfg.wSpring * dev * dev,
-                     dir: unit([(q[0] - p[0]) * s, (q[1] - p[1]) * s]) };
+      const sdir = unit([(q[0] - p[0]) * s, (q[1] - p[1]) * s]);
+      out.spring = { cost: cfg.wSpring * dev * dev, dir: sdir };
+      // Super-linear spring: cost = w * dev^4 (the dominant deviation cost when
+      // a segment is far from rest). Same restoring direction as the linear one.
+      out.springStiffen = { cost: cfg.wSpringStiffen * dev * dev * dev * dev,
+                            dir: sdir };
     }
     // Bending: straighten toward the neighbours. Force is along the curvature
     // vector (p_{i-1} - 2 p_i + p_{i+1}), pointing at the neighbours' midline.
     if (nodeIdx > 0 && nodeIdx < chain.length - 1) {
       const cx = chain[nodeIdx - 1][0] - 2 * p[0] + chain[nodeIdx + 1][0];
       const cy = chain[nodeIdx - 1][1] - 2 * p[1] + chain[nodeIdx + 1][1];
-      out.bending = { cost: cfg.wBend * (cx * cx + cy * cy), dir: unit([cx, cy]) };
+      // Deadband: a node may bend up to bendDeadzoneDeg for free. The curvature-
+      // vector magnitude of that bend at rest spacing is 2*rest*sin(deg/2); only
+      // the excess magnitude is penalized (cost = w * excess^2).
+      const mag = Math.hypot(cx, cy);
+      const dz = 2 * cfg.restLength * Math.sin((cfg.bendDeadzoneDeg || 0) * Math.PI / 360);
+      const excess = Math.max(0, mag - dz);
+      out.bending = { cost: cfg.wBend * excess * excess, dir: unit([cx, cy]) };
     }
     // PER-NODE attract & repel (node-autonomous sensing). fi is the free-node
     // index (chain[0] is the base). Both are shown for every free node - as 0
@@ -183,18 +199,18 @@
       out.attract = asw > 0
         ? { cost: asw * asw * norm(sub(p, atgt)) ** 2, dir: unit(sub(atgt, p)) }
         : { cost: 0, dir: [0, 0] };
-      // Repel: node pushed from ITS OWN sensed threat, over the sense window,
-      // graded body>tip (repel_tip_fraction). 0 where it senses no threat.
+      // Repel/flee: node RETRACTS toward the body ("scrunch up") - the force
+      // points node -> body (repelTgt is the body centre), NOT away from the
+      // threat. Weight scales with threat proximity (0 where it senses none),
+      // graded body>tip. Same form as attract, target = body.
       const rsw = cfg.repelSw ? (cfg.repelSw[fi] || 0) : 0;
       const rtgt = cfg.repelTgt && cfg.repelTgt[fi] ? cfg.repelTgt[fi] : p;
       const nFree = chain.length - 1;
       const ratio = 1 + (cfg.repelTipFraction - 1)
         * fi / Math.max(1, nFree - 1);
-      const d = norm(sub(p, rtgt));
-      const pen = Math.max(0, cfg.repelRange - d);
       out.repel = rsw > 0
-        ? { cost: rsw * rsw * ratio * pen * pen,
-            dir: pen > 0 ? unit(sub(p, rtgt)) : [0, 0] }
+        ? { cost: rsw * rsw * ratio * norm(sub(p, rtgt)) ** 2,
+            dir: unit(sub(rtgt, p)) }
         : { cost: 0, dir: [0, 0] };
     }
     return out;
@@ -352,11 +368,22 @@ function drawWorld(ctx, background, state, view) {
 
   // Agents.
   if (view.showAgents !== false) {
-    state.agents.forEach((a) => {
+    state.agents.forEach((a, ai) => {
       ctx.fillStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
       ctx.beginPath();
       ctx.arc(a.x * cs, a.y * cs, cs * 0.2, 0, 2 * Math.PI);
       ctx.fill();
+      // Outline (shared "outlines" toggle with the suckers). A hovered agent
+      // gets a bright yellow ring regardless, so it's findable.
+      if (view.hoverAgent === ai) {
+        ctx.strokeStyle = "#facc15";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      } else if (view.showOutlines) {
+        ctx.strokeStyle = a.type === "predator" ? "#7a1030" : "#0f4a1a";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
       if (view.showSensing) {
         ctx.strokeStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
         ctx.lineWidth = 1;
@@ -371,6 +398,20 @@ function drawWorld(ctx, background, state, view) {
 
   ctx.restore(); // cell-centre shift
   ctx.restore(); // zoom/pan transform
+}
+
+// One-line description of an agent's behaviour, from its type + the run's agent
+// movement mode (meta.config.agent_movement_mode).
+function agentBehavior(type, mode) {
+  const threat = type === "predator";
+  const m = mode || "";
+  if (m.includes("PURSUIT_FLEE"))
+    return threat ? "pursues the octopus (ignores camouflage)"
+                  : "flees the octopus (ignores camouflage)";
+  if (m.includes("SPRING_CHAIN") || m.includes("LUMPED_SPRING"))
+    return threat ? "pursues the octopus when it's visible"
+                  : "flees the octopus when it's visible";
+  return "wanders (random walk)";
 }
 
 function pickSuckerColor(s, mode) {
@@ -535,6 +576,7 @@ function App() {
   const [convergence, setConvergence] = useState(false);
   const [exploreOverlay, setExploreOverlay] = useState(false); // visit-count heatmap
   const [hover, setHover] = useState(null); // {sucker, frame} inspector
+  const [hoverAgent, setHoverAgent] = useState(null); // {agent, frame, cx, cy}
   const [ilqrTick, setIlqrTick] = useState(0); // bump to force re-render when iLQR data arrives
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -578,6 +620,7 @@ function App() {
   stateRef.current.convergence = convergence;
   stateRef.current.exploreOverlay = exploreOverlay;
   stateRef.current.hover = hover;
+  stateRef.current.hoverAgent = hoverAgent;
   stateRef.current.zoom = zoom;
   stateRef.current.pan = pan;
   stateRef.current.showOutlines = showOutlines;
@@ -849,6 +892,7 @@ function App() {
         ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, ilqrStep: S.ilqrStep,
         convergence: S.convergence,
         hoverSucker: (S.hover && S.hover.frame === S.frameIdx) ? S.hover.sucker : null,
+        hoverAgent: (S.hoverAgent && S.hoverAgent.frame === S.frameIdx) ? S.hoverAgent.agent : null,
         selectedLimb: S.ilqrLimb,
         explore: exploreCache.current.get(S.frameIdx), exploreOverlay: S.exploreOverlay,
         zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
@@ -1005,8 +1049,17 @@ function App() {
     const py = (e.clientY - rect.top - pan.y) / zm;
     const wx = px / cs - 0.5;
     const wy = py / cs - 0.5;
-    const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
-    setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
+    // Agents take priority over suckers (they're distinct dots). nearestSucker
+    // just finds the nearest {x,y}, so it works for agents too.
+    const ai = C.nearestSucker(state.agents, wx, wy, 0.6);
+    if (ai >= 0) {
+      setHoverAgent({ agent: ai, frame: frameIdx, cx: e.clientX, cy: e.clientY });
+      setHover(null);
+    } else {
+      setHoverAgent(null);
+      const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
+      setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
+    }
     dirtyRef.current = true;
   };
   const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
@@ -1072,9 +1125,48 @@ function App() {
                     onMouseMove={onCanvasMove}
                     onClick={tab === "simulate" && placementTool ? onSetupClick : undefined}
                     onMouseDown={onMouseDown} onMouseUp={onMouseUp}
-                    onMouseLeave={() => { setHover(null); dragging.current = false; }}
+                    onMouseLeave={() => { setHover(null); setHoverAgent(null); dragging.current = false; }}
                     onWheel={onWheel} onContextMenu={onContextMenu} />
           </div>
+
+          {/* agent hover tooltip */}
+          {hoverAgent && curFrame && curFrame.agents[hoverAgent.agent] && (() => {
+            const a = curFrame.agents[hoverAgent.agent];
+            const threat = a.type === "predator";
+            const speed = Math.hypot(a.vx || 0, a.vy || 0);
+            const mode = meta.config.agent_movement_mode || "";
+            const senseR = meta.config.agent_range_radius || 5;
+            // Is the octopus within THIS agent's sense window right now? Agents
+            // react to the nearest SUCKER (the octopus's physical extent).
+            let minD = Infinity;
+            (curFrame.octopus.suckers || []).forEach((s) => {
+              const d = Math.hypot(s.x - a.x, s.y - a.y);
+              if (d < minD) minD = d;
+            });
+            const vis = (curFrame.metadata && curFrame.metadata.visibility_score) || 0;
+            // Actually acting this frame: octopus in range (+ visible, for the
+            // visibility-gated spring modes). PURSUIT_FLEE ignores camouflage.
+            const acting = minD <= senseR &&
+              (mode.includes("PURSUIT_FLEE") ? true
+               : (mode.includes("SPRING") || mode.includes("LUMPED")) ? vis > 1e-6
+               : false);
+            const action = acting ? (threat ? "▸ PURSUING the octopus" : "▸ FLEEING the octopus")
+              : (minD > senseR ? "▸ wandering — octopus out of range"
+                 : "▸ wandering — octopus camouflaged");
+            return (
+              <div className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-lg px-3 py-2 text-xs pointer-events-none"
+                   style={{ left: hoverAgent.cx + 14, top: hoverAgent.cy + 14, maxWidth: 260 }}>
+                <div className="font-bold mb-1" style={{ color: threat ? "#ff69b4" : "#32cd32" }}>
+                  {threat ? "THREAT (predator)" : "PREY"} <span className="text-slate-500 font-normal">#{a.id}</span>
+                </div>
+                <div style={{ color: acting ? (threat ? "#ff69b4" : "#32cd32") : "#94a3b8" }}>{action}</div>
+                <div className="text-slate-400 mt-1">octopus {minD === Infinity ? "?" : minD.toFixed(1)} away · senses ≤ {senseR}</div>
+                <div className="text-slate-500">policy: {agentBehavior(a.type, mode)}</div>
+                <div className="text-slate-400 mt-1">speed {speed.toFixed(3)} · max {meta.config.agent_max_velocity}</div>
+                <div className="text-slate-400">pos ({a.x.toFixed(1)}, {a.y.toFixed(1)})</div>
+              </div>
+            );
+          })()}
 
           {/* right-click context menu */}
           {ctxMenu && (
@@ -1137,7 +1229,7 @@ function App() {
 
           {/* debug controls */}
           <div className="flex items-center gap-3 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
-            <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> sucker outlines <kbd>O</kbd></label>
+            <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> outlines <kbd>O</kbd></label>
             <label title="Red skeleton line joining each limb's nodes"><input type="checkbox" checked={showCenterlines} onChange={(e) => setShowCenterlines(e.target.checked)} /> centerline</label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
@@ -1348,6 +1440,14 @@ function App() {
                     const cfg = meta ? {
                       restLength: meta.config.octo_max_sucker_distance || 0.3,
                       wSpring: meta.config.octo_ilqr_w_spring || 2.0,
+                      wSpringStiffen: meta.config.octo_ilqr_w_spring_stiffen != null
+                        ? meta.config.octo_ilqr_w_spring_stiffen : 30.0,
+                      springSlack: meta.config.octo_ilqr_spring_slack != null
+                        ? meta.config.octo_ilqr_spring_slack : 0.25,
+                      bendDeadzoneDeg: meta.config.octo_ilqr_bend_deadzone_deg != null
+                        ? meta.config.octo_ilqr_bend_deadzone_deg : 15.0,
+                      wEffortStiffen: meta.config.octo_ilqr_w_effort_stiffen != null
+                        ? meta.config.octo_ilqr_w_effort_stiffen : 5.0,
                       wBend: meta.config.octo_ilqr_w_bend || 1.0,
                       wReachRun: meta.config.octo_ilqr_w_reach_run || 0.1,
                       wReachTerminal: meta.config.octo_ilqr_w_reach_terminal || 6.0,
@@ -1355,7 +1455,6 @@ function App() {
                       wEffort: meta.config.octo_ilqr_w_effort || 0.1,
                       repelTipFraction: meta.config.octo_ilqr_repel_tip_fraction != null
                         ? meta.config.octo_ilqr_repel_tip_fraction : 0.3,
-                      repelRange: meta.config.agent_range_radius || 5.0,
                       // Per-node sensing arrays (node-autonomous attract/repel).
                       attractTgt: limbData.final.attract_tgt,
                       attractSw: limbData.final.attract_sw,
@@ -1377,9 +1476,11 @@ function App() {
                       <div className="mt-2 border-t border-slate-700 pt-2">
                         <div className="text-slate-400 mb-1">iLQR costs · iter {iterIdx} · step {step} · node {ci}{isTerminal ? " (terminal)" : ""} · senses {(() => {
                           const fi = ci - 1;
-                          const a = cfg.attractSw && cfg.attractSw[fi] > 0;
+                          const asw2 = cfg.attractSw ? (cfg.attractSw[fi] || 0) ** 2 : 0;
+                          // Prey uses w_reach_terminal, explore uses w_explore; pick the nearer.
+                          const a = asw2 > 0 ? (Math.abs(asw2 - cfg.wReachTerminal) <= Math.abs(asw2 - cfg.wExplore) ? "prey" : "explore") : null;
                           const r = cfg.repelSw && cfg.repelSw[fi] > 0;
-                          return [a && "prey/explore", r && "threat"].filter(Boolean).join("+") || "nothing";
+                          return [a, r && "threat"].filter(Boolean).join("+") || "nothing";
                         })()}</div>
                         {entries.map(([name, { cost, dir }]) => (
                           <div key={name} className="flex justify-between">

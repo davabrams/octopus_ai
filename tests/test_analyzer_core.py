@@ -131,6 +131,7 @@ class TestCoreLogic(unittest.TestCase):
           // are indexed by fi. sw entries are sqrt-weights (0 = senses nothing).
           const chain = [[0,0],[1,0],[2,0],[3,0]];  // nFree=3
           const cfg = { restLength:1, wSpring:2, wBend:1, wEffort:3,
+                        wSpringStiffen:1, wEffortStiffen:1,
                         repelTipFraction:1, repelRange:2.5,
                         attractTgt:[[5,0],[5,0],[5,0]], attractSw:[0, 2, 0],
                         repelTgt:[[3,1],[3,1],[3,1]], repelSw:[0, 0, 0] };
@@ -144,14 +145,18 @@ class TestCoreLogic(unittest.TestCase):
           // effort is shown (non-terminal); "every cost shows".
           const c1 = A.nodeCosts(chain, 1, cfg, false, [0,0.5]);
           near(c1.spring.cost, 0); near(c1.bending.cost, 0);
-          near(c1.effort.cost, 0.75);                      // wEffort*|v|^2
+          near(c1.springStiffen.cost, 0);                  // dev^4 = 0 at rest
+          near(c1.effort.cost, 0.75);                      // wEffort*|v|^2 = 3*.25
+          near(c1.effortStiffen.cost, 0.0625);             // wEffortStiffen*|v|^4
           assert.ok(c1.attract.cost === 0 && c1.repel.cost === 0);
 
-          // A node fleeing: repelSw[fi=2]=sqrt(8), threat just below the tip.
+          // A node fleeing: repelSw[fi=2]=sqrt(8); flee RETRACTS toward the body
+          // target repelTgt[2]=[3,1] (below the tip at (3,0)).
           const cfgR = Object.assign({}, cfg, { repelSw:[0, 0, Math.sqrt(8)] });
           const t = A.nodeCosts(chain, 3, cfgR, true, null);   // tip, fi=2
-          near(t.repel.cost, 18.0);                        // 8*1*(2.5-1)^2
-          assert.strictEqual(A.arrowFor(t.repel.dir[0], t.repel.dir[1]), "↑");
+          near(t.repel.cost, 8.0);                         // 8*1*|(3,0)-(3,1)|^2
+          // Direction points TOWARD the body target (down, +y), not away.
+          assert.strictEqual(A.arrowFor(t.repel.dir[0], t.repel.dir[1]), "↓");
           assert.ok(!('effort' in t));                     // terminal, no control
 
           // Graded repel: at EQUAL range the body-adjacent node (fi=0) avoids
@@ -165,10 +170,22 @@ class TestCoreLogic(unittest.TestCase):
           near(rTip.cost / rBody.cost, 0.3);
 
           // Stretched spring pulls the node back toward its previous neighbour.
+          // (cfg has no springSlack -> deadband defaults to 0.)
           const stretched = [[0,0],[1.5,0],[2.5,0],[3.5,0]];
           const s = A.nodeCosts(stretched, 1, cfg, false, null);
           near(s.spring.cost, 0.5);                        // 2 * 0.5^2
           assert.strictEqual(A.arrowFor(s.spring.dir[0], s.spring.dir[1]), "←");
+
+          // Deadbands: within the free zone the spring/bending cost nothing.
+          const cfgDB = Object.assign({}, cfg, { springSlack:0.25, bendDeadzoneDeg:15 });
+          const near2 = [[0,0],[1.2,0],[2.4,0],[3.6,0]];   // seg 1.2, dev 0.2 < slack
+          const d = A.nodeCosts(near2, 1, cfgDB, false, null);
+          near(d.spring.cost, 0); near(d.springStiffen.cost, 0);
+          const far2 = [[0,0],[1.5,0],[2.5,0],[3.5,0]];    // dev 0.5 -> excess 0.25
+          near(A.nodeCosts(far2, 1, cfgDB, false, null).spring.cost, 2 * 0.25 * 0.25);
+          // A small bend (curv 0.1 < 2*rest*sin(7.5deg)=0.26) is free.
+          const bent = [[0,0],[1,0],[2,0.05],[3,0]];
+          near(A.nodeCosts(bent, 2, cfgDB, false, null).bending.cost, 0);
         """)
 
     def test_playback_advance(self):
