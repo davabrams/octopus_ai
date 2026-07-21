@@ -1,274 +1,318 @@
-# octopus_ai
+<div align="center">
 
-A simulation + machine-learning sandbox for octopus camouflage. It models an
-octopus (head → 8 limbs → a grid of suckers per limb) crawling around a 2D
-surface among prey/threat agents, and trains ML models that let the suckers
-**camouflage** — matching the surface color beneath them, one constrained
-step at a time.
+# 🐙 octopus_ai
 
-More rambling at https://davabrams.wordpress.com/
+### A simulation + machine-learning sandbox for octopus **camouflage** and **motor control**
 
-## What's in here
+An octopus — head → 8 arms → a grid of suckers — crawls a 2D surface among prey and threats.
+Its arms *reach, flee, and explore* under real-time trajectory optimization; its suckers
+**camouflage**, matching the surface beneath them one constrained step at a time.
 
-- **Simulator** — an octopus (head/limbs/suckers), a random background
-  surface, and attractor/repeller agents (prey and threats).
-- **Datagen** — rolls the simulator forward and records
-  `(sucker color, surface color)` training pairs.
-- **Training + inference** — Keras models for sucker color change
-  (camouflage), plus TensorBoard output.
-- **Inference server** — a Flask REST server so models can run off-box.
-- **Visualization** — a local matplotlib viewer and a browser (WebSocket)
-  viewer.
+<!-- MEDIA: hero -->
+<p align="center">
+  <img src="docs/media/hero.gif" alt="Octopus crawling and camouflaging among prey and threats" width="720">
+</p>
 
-## Why
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-Keras-FF6F00?logo=tensorflow&logoColor=white)
+![Build](https://img.shields.io/badge/build-Bazel-43A047?logo=bazel&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+![Lint](https://img.shields.io/badge/lint-ruff-D7FF64)
 
-I don't know, but I can't stop.
+*More rambling at [davabrams.wordpress.com](https://davabrams.wordpress.com/)*
+
+</div>
 
 ---
 
-## Setup
+## ✨ Highlights
 
-[Bazel](https://bazel.build) is the primary build/run/test interface. It's
-the polyglot bet: simulator or training pieces can move to C++/Rust/JS behind
-the same `bazel run` commands later without changing how you drive the repo.
+|   |   |
+|---|---|
+| 🎨 **Camouflage** | Each sucker matches the RGB surface beneath it, constrained to change ≤ 0.25 per channel per step — trained Keras models that "drift toward the target slowly." |
+| 🤖 **Motor control** | In `ILQR` mode each arm runs its own compiled TensorFlow Gauss-Newton trajectory optimizer (MPC-style), re-planning every frame. |
+| 🧭 **Node-autonomous sensing** | Every arm node independently *attracts* to nearby prey, *explores* unvisited cells, and *flees* threats by scrunching toward the body — no central controller. |
+| 🐟 **Reactive agents** | Prey flee and threats pursue the nearest sucker; a well-camouflaged octopus can go unnoticed. |
+| 🎞️ **Record & replay** | Headless runs record to DuckDB; a browser analyzer scrubs them frame-by-frame *and* iLQR-iteration-by-iteration. |
+| 🔬 **Inspectable** | Hover any sucker or agent; watch per-node cost breakdowns, ghost horizon trajectories, and an exploration heatmap. |
 
-Today all the code is Python, and **Bazel borrows your venv's interpreter and
-packages** — it does *not* manage the Python deps — so you create the venv
-first either way:
+---
+
+## 🎬 See it in action
+
+<!-- MEDIA: gallery (2×2) -->
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/media/analyzer.png" alt="Browser analyzer" width="100%"><br>
+      <sub><b>Browser analyzer</b> — scrub a recorded run, overlay iLQR plans</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/media/camouflage.png" alt="Camouflage close-up" width="100%"><br>
+      <sub><b>Camouflage</b> — suckers matching the surface, one step at a time</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/media/ilqr-arms.png" alt="iLQR arm trajectories" width="100%"><br>
+      <sub><b>Motor control</b> — per-arm iLQR reach/flee; centerlines + force vectors</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/media/exploration.png" alt="Exploration recency heatmap" width="100%"><br>
+      <sub><b>Exploration</b> — recency heatmap of where the suckers have been</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
+## 🧠 How it works
+
+Two independent tiers ride on one simulator: **motor control** moves the arms and body,
+**camouflage** colors the suckers. Data recorded from the sim trains the color models; a
+browser analyzer replays it.
+
+```mermaid
+flowchart LR
+    subgraph SIM["🦑 Simulator"]
+        direction TB
+        O["Octopus<br/>head → 8 arms → suckers"]
+        A["Agents<br/>prey · threats"]
+        S["Surface"]
+    end
+    SIM -->|"(sucker, surface) pairs"| DG["Datagen"]
+    DG --> TR["Training<br/>Keras / TensorFlow"]
+    TR --> M[("Models<br/>sucker · limb")]
+    M -->|"camouflage colors"| O
+    M -.->|"off-box"| IS["Inference server<br/>Flask"]
+    SIM -->|"record"| DB[("DuckDB<br/>logs/runs/*.duckdb")]
+    DB --> AN["Browser analyzer<br/>Simulate · Playback"]
+```
+
+- **Simulator** (`simulator/`) — a 6-DOF kinematic octopus (head at `(x, y, θ)` → 8 `Limb`s →
+  `16×2` `Sucker`s each, 256 total), a random or image-backed surface, and prey/threat agents.
+- **Motor tier** — `MovementMode.ILQR`: each limb is a chain of nodes; every free node senses
+  agents in its own window and contributes a per-node cost (attract / flee / spring / bend /
+  effort). The body drifts and rotates from the summed arm tension — hunting and fleeing
+  *emerge*, with no body-level agent sensing.
+- **Camouflage tier** — each sucker computes a target color and steps toward it within the
+  per-channel change cap, via a heuristic (`NO_MODEL`) or a trained model (`SUCKER` / `LIMB`).
+- **Record & replay** — `simulator/headless_runner.py` steps a headless sim and writes one
+  DuckDB file per run; `visualizer/analyzer.html` (served by `websocket_server.py`) plays it back.
+
+Deep module-by-module reference lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+---
+
+## 🚀 Quickstart
+
+[Bazel](https://bazel.build) is the primary build/run/test interface — the polyglot bet, so
+pieces can move to C++/Rust/JS behind the same `bazel run` commands later. Today all the code
+is Python, and **Bazel borrows your venv's interpreter and packages** (it does *not* manage the
+Python deps), so create the venv first either way:
 
 ```bash
-/opt/homebrew/bin/python3.12 -m venv .venv   # any Python ≥3.10 works
+/opt/homebrew/bin/python3.12 -m venv .venv   # any Python ≥ 3.10 works
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# sanity check
-python -c "import tensorflow as tf; print(tf.__version__)"
+python -c "import tensorflow as tf; print(tf.__version__)"   # sanity check
 ```
 
-Always `source .venv/bin/activate` before running anything — both `bazel`
-and the raw `python` fallbacks use that interpreter. Full environment notes
-(including Apple-Silicon TensorFlow gotchas) live in [TRAINING.md](TRAINING.md).
+> [!TIP]
+> Always `source .venv/bin/activate` before running anything — both `bazel` and the raw
+> `python` fallbacks use that interpreter. Apple-Silicon TensorFlow gotchas are in
+> **[TRAINING.md](TRAINING.md)**.
+
+**No trained model yet?** Run the heuristic first: set `inference.mode = MLMode.NO_MODEL`
+(the `DEFAULT` profile expects a `SUCKER` model on disk).
 
 ---
 
-## Configuration
+## ▶️ Running things
 
-This is the knob you'll turn most, so it's worth 60 seconds.
+Commands lead with Bazel; the raw `python …` form is an interchangeable fallback. `bazel run`
+reads/writes artifacts (datasets, models) in the repo's `training/` tree — not the sandbox — so
+a dataset generated one way is picked up by the other. (`bazel test` stays hermetic.)
 
-Config is a tree of **frozen dataclasses** — the schema is the source of
-truth in [octopus_ai/config_schema.py](octopus_ai/config_schema.py), and
-[octopus_ai/config.py](octopus_ai/config.py) builds named **profiles** from
-it. You never edit shared mutable state; you *select a profile* (or derive a
-variant) and the entry scripts read it.
-
-### Profiles
-
-| Profile | For |
-|---------|-----|
-| `DEFAULT` | shipped baseline; writes nothing to disk |
-| `VIZ` | watching a run — force arrows on, disk quiet |
-| `DEBUG` | everything on — arrows + SQLite force log + PNG/MP4 capture |
-| `TEST` | deterministic, side-effect free, needs no model on disk |
-| `DATAGEN` | data generation (saves a dataset, no rendering) |
-| `TRAINING` | the training pipeline |
-
-### How to change the config
-
-Each entry script picks a profile on a single line near the top, e.g.
-`CFG = DEFAULT` in [octopus_ai/model.py](octopus_ai/model.py) and
-[visualizer/octo_viz.py](visualizer/octo_viz.py). To change behavior you
-either swap that profile or derive a one-off variant with
-`dataclasses.replace()` (configs are frozen — in-place mutation raises):
-
-```python
-from dataclasses import replace
-from octopus_ai.config import VIZ
-from simulator.simutil import MLMode
-
-# Watch it run, but drive the suckers with the trained SUCKER model:
-CFG = replace(VIZ, inference=replace(VIZ.inference,
-                                     mode=MLMode.SUCKER,
-                                     model=MLMode.SUCKER))
-
-# Or a quick training experiment: 5 epochs instead of 50
-CFG = replace(TRAINING, training=replace(TRAINING.training, epochs=5))
-```
-
-Access is attribute-style everywhere: `cfg.world.x_len`,
-`cfg.octopus.num_arms`, `cfg.training.epochs`.
-
-### Knobs worth knowing
-
-| Where | Knob | Does what |
-|-------|------|-----------|
-| `cfg.run` | `num_iterations` | frames to simulate (120; `-1` = forever) |
-| | `rand_seed` | RNG seed for reproducible runs |
-| `cfg.world` | `x_len` / `y_len` | surface grid size (15×15) |
-| | `surface_grayscale` | grayscale surface vs. classic binary 0/1 |
-| `cfg.agents` | `count` | number of prey/threat agents (5) |
-| | `movement_mode` | only `RANDOM` works today (see Limitations) |
-| `cfg.octopus` | `num_arms` | limbs (8) |
-| `cfg.octopus.limb` | `rows` / `cols` | suckers per limb (16×2 = 32) |
-| `cfg.octopus.sucker` | `max_hue_change` | max color change per step (0.25) |
-| | `adjacency_radius` | neighbor distance for the LIMB model |
-| `cfg.inference` | `mode` | how colors are computed: `NO_MODEL` (heuristic), `SUCKER`, `LIMB` |
-| | `model` | which trained model to load |
-| `cfg.datagen` | `datagen_mode` | generate fresh data this run |
-| | `save_to_disk` / `restore_from_disk` | write / reuse the dataset pickle |
-| | `write_format` | `SUCKER` or `LIMB` (LIMB also captures adjacents) |
-| `cfg.training` | `ml_mode` | `SUCKER` or `LIMB` |
-| | `epochs` / `batch_size` / `test_size` | standard hyperparams |
-| | `run_training` / `run_inference` / `run_eval` | which pipeline stages fire |
-
-> First run with no trained model? Use the heuristic: set
-> `inference.mode = MLMode.NO_MODEL`. `DEFAULT` expects a `SUCKER` model on
-> disk, so a fresh checkout should switch to `NO_MODEL` or train one first.
-
----
-
-## Running things
-
-Commands lead with Bazel; the raw `python …` form is the fallback and stays
-interchangeable. Activate the venv first. `bazel run` reads and writes
-artifacts (dataset pickles, saved models) in the repo's `training/` tree —
-not the sandbox — so a dataset generated one way is picked up by the other.
-(`bazel test` stays hermetic and touches neither.)
-
-### Visualize (matplotlib)
-
-Watch the octopus crawl and camouflage in a native window.
+### Watch it live (matplotlib)
 
 ```bash
 bazel run //visualizer:octo_viz      # or: python visualizer/octo_viz.py
 ```
 
-Needs a GUI session; click the window and press a key to start. The green
-number is the **visibility score** (mean squared color error — lower =
-better camouflage). Pick the profile via `CFG` at the top of the file
-(`VIZ` for arrows, `DEBUG` to also record a video).
+Needs a GUI session — click the window and press a key to start. The number is the
+**visibility score** (mean squared color error; lower = better camouflage).
+
+<!-- MEDIA: matplotlib -->
+<p align="center">
+  <img src="docs/media/matplotlib.png" alt="matplotlib viewer" width="520">
+</p>
 
 ### Record & replay (browser analyzer)
 
 ```bash
-# 1) optionally record a run headlessly (writes logs/runs/<run_id>.duckdb)
-python simulator/headless_runner.py --frames 120
+# 1) record a run headlessly → logs/runs/<run_id>.duckdb
+python simulator/headless_runner.py --frames 120 --explore
 
-# 2) launch the analyzer server, then open http://localhost:8765/ in a browser
-bazel run //visualizer:websocket_server    # or: python visualizer/websocket_server.py
+# 2) launch the analyzer, then open http://localhost:8765/ in a browser
+bazel run //visualizer:websocket_server   # or: python visualizer/websocket_server.py
 ```
 
-The browser analyzer has two modes: **Simulate** runs a fresh headless sim and
-watches it record, and **Playback** scrubs a saved run frame-by-frame — and,
-for iLQR runs, iteration-by-iteration within a frame (ghost horizon poses, cost
-curves, before/after camouflage colors). Runs are stored one DuckDB file each
-under `logs/runs/` and are also queryable directly with `duckdb`/pandas.
+**Simulate** runs a fresh headless sim and watches it record; **Playback** scrubs a saved run
+frame-by-frame — and, for iLQR runs, iteration-by-iteration within a frame: ghost horizon poses,
+convergence curves, per-node cost panels, and before/after camouflage colors. Toggle sucker/agent
+outlines, the exploration overlay, and the iLQR overlay; hover a sucker or an agent to inspect it.
 
-### Generate training data
+<!-- MEDIA: analyzer-detail (side by side: cost panel + pursuit/flee) -->
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/media/cost-panel.png" alt="Per-node cost inspector" width="100%"><br>
+      <sub>Per-node iLQR cost breakdown with force directions</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/media/pursuit-flee.gif" alt="Threats pursuing, prey fleeing" width="100%"><br>
+      <sub>Threats pursue, prey flee, the octopus scrunches away</sub>
+    </td>
+  </tr>
+</table>
 
-```bash
-bazel run //octopus_ai:datagen       # or: python octopus_ai/datagen.py
-```
-
-Rolls the simulator and writes `training/datagen/sucker.pkl`. The integrated
-pipeline below can also generate data inline as its first stage.
-
-### Train a model
-
-Training is driven by the `TRAINING` profile in
-[octopus_ai/model.py](octopus_ai/model.py), which chains **datagen → train →
-save** (and optionally inference/eval):
-
-```bash
-bazel run //octopus_ai:model         # or: python octopus_ai/model.py
-```
-
-Common variations (set on `CFG` at the top of the file):
-
-- **Sucker vs. limb model** — `training.ml_mode = MLMode.SUCKER` (default) or
-  `MLMode.LIMB`. LIMB also needs `datagen.write_format = MLMode.LIMB` so
-  adjacent-sucker context is captured. (LIMB training is experimental.)
-- **Train from a saved dataset** instead of regenerating — set
-  `datagen.datagen_mode = False`, `datagen.restore_from_disk = True`.
-- **Inference sweep / eval** — flip `training.run_inference` /
-  `training.run_eval` on.
-
-The saved model goes to `training/models/{sucker,limb}.keras`. The
-step-by-step walkthrough is in [TRAINING.md](TRAINING.md).
-
-### TensorBoard
-
-Training writes logs when `training.generate_tensorboard` is on:
+### Generate data · train · serve
 
 ```bash
-tensorboard --logdir models/logs/sucker/fit/    # or .../limb/fit/
-```
+# Generate training data → training/datagen/sucker.pkl
+bazel run //octopus_ai:datagen           # or: python octopus_ai/datagen.py
 
-### Inference server
+# Full pipeline: datagen → train → save  (→ training/models/{sucker,limb}.keras)
+bazel run //octopus_ai:model             # or: python octopus_ai/model.py
 
-A standalone Flask server that loads the sucker model and answers prediction
-requests (so inference can run off-box).
+# Training curves
+tensorboard --logdir models/logs/sucker/fit/
 
-```bash
-bazel run //inference_server:server        # http://localhost:8080
-# fallback: cd inference_server && python server.py
-
-# POST a job — c.r = sucker's current color, c_val.r = surface color under it
+# Inference server (loads the sucker model; runs off-box)
+bazel run //inference_server:server      # http://localhost:8080
 curl -X POST http://localhost:8080/jobs \
   -H "Content-Type: application/json" \
   -d '{"job_id": 1, "data": {"c.r": 0.5, "c_val.r": 1.0}}'
-
-curl http://localhost:8080/jobs/1     # fetch result
+curl http://localhost:8080/jobs/1        # fetch result
 ```
 
-Full API in [ARCHITECTURE.md](ARCHITECTURE.md) §7.
+The training walkthrough is in **[TRAINING.md](TRAINING.md)**; the server API in
+**[ARCHITECTURE.md](ARCHITECTURE.md) §7**.
 
 ---
 
-## Testing
+## ⚙️ Configuration
 
-Each test file is its own Bazel target under `//tests`:
+Config is a tree of **frozen dataclasses** — the schema is the source of truth in
+[octopus_ai/config_schema.py](octopus_ai/config_schema.py), and
+[octopus_ai/config.py](octopus_ai/config.py) builds named **profiles** from it. You never edit
+shared state; you *select a profile* (or derive a variant with `dataclasses.replace()`).
 
-```bash
-bazel test //tests/...               # all tests
-bazel test //tests:test_kinematics   # a single file
+<details>
+<summary><b>Profiles</b> — pick one, don't edit shared state</summary>
+
+<br>
+
+| Profile | For |
+|---------|-----|
+| `DEFAULT` | shipped baseline; writes nothing to disk |
+| `VIZ` | watching a run — force arrows on, disk quiet |
+| `VIZ_ILQR` | the iLQR motor demo over an image background |
+| `DEBUG` | everything on — arrows + force log + PNG/MP4 capture |
+| `RECORD` | headless record & replay (writes a DuckDB run + iLQR history) |
+| `TEST` | deterministic, side-effect free, needs no model on disk |
+| `DATAGEN` | data generation (saves a dataset, no rendering) |
+| `TRAINING` | the training pipeline |
+
+</details>
+
+Each entry script picks a profile on one line near the top (e.g. `CFG = …`). Derive a variant
+without touching the shared config:
+
+```python
+from dataclasses import replace
+from octopus_ai.config import VIZ_ILQR
+from simulator.simutil import MLMode
+
+# Watch the iLQR octopus, driven by the trained SUCKER camouflage model:
+CFG = replace(VIZ_ILQR, inference=replace(VIZ_ILQR.inference, mode=MLMode.SUCKER))
 ```
 
-Or the Python runner (adds coverage and single-file selection conveniences):
+Access is attribute-style everywhere: `cfg.world.x_len`, `cfg.octopus.num_arms`,
+`cfg.octopus.limb.ilqr.w_repel`.
+
+<details>
+<summary><b>Knobs worth knowing</b></summary>
+
+<br>
+
+| Where | Knob | Does what |
+|-------|------|-----------|
+| `cfg.run` | `num_iterations` | frames to simulate (`-1` = forever) |
+| `cfg.world` | `x_len` / `y_len` | surface grid size |
+| | `background_image` / `surface_grayscale` | image surface vs. random noise |
+| `cfg.agents` | `count` | number of prey/threat agents |
+| | `movement_mode` | `RANDOM`, `PURSUIT_FLEE` (chase/flee in the sense window), or the visibility-gated spring modes |
+| `cfg.octopus` | `num_arms` | limbs |
+| | `movement_mode` | `RANDOM`, `LUMPED_SPRING`, `SPRING_CHAIN`, or **`ILQR`** |
+| `cfg.octopus.limb` | `rows` / `cols` | suckers per limb |
+| `cfg.octopus.sucker` | `max_hue_change` | max color change per step per channel |
+| `cfg.octopus.limb.ilqr` | `w_reach_terminal` / `w_repel` | attract-to-prey / flee-from-threat strength |
+| | `explore_enabled` | draw idle nodes toward unvisited cells |
+| | `w_spring` / `w_bend` / `w_effort` | arm coherence terms (+ super-linear `*_stiffen` variants) |
+| `cfg.inference` | `mode` / `model` | how colors are computed: `NO_MODEL`, `SUCKER`, `LIMB` |
+| `cfg.training` | `ml_mode`, `epochs`, `batch_size`, `test_size` | training config |
+
+The full set (with every iLQR / exploration knob) is in
+[config_schema.py](octopus_ai/config_schema.py).
+
+</details>
+
+---
+
+## 🧪 Testing & linting
 
 ```bash
-python run_tests.py                  # all tests
+python run_tests.py                  # all tests (preferred)
 python run_tests.py --coverage       # with coverage
 python run_tests.py --test test_kinematics.py
-python run_tests.py --runner bazel   # drive Bazel via the runner
-```
+bazel test //tests/...               # hermetic alternative
 
-Per-file coverage notes are in [tests/README.md](tests/README.md).
-
-## Linting
-
-```bash
 make lint       # ruff check .
 make format     # ruff format .
 ```
 
+Per-file coverage notes are in **[tests/README.md](tests/README.md)**.
+
 ---
 
-## Current limitations
-
-- Four limb movement modes work (`RANDOM`, `LUMPED_SPRING`, `SPRING_CHAIN`,
-  `ILQR`); octopus/agent body movement is `RANDOM`/`REACTIVE` only.
-- The `LIMB` training pipeline is experimental; `SUCKER` is the solid path.
-- `MLMode.FULL` is a placeholder — no model, dataset, or trainer yet.
-- Inference always runs locally; the inference server exists but nothing
-  routes the simulator to it automatically.
-- The analyzer frontend loads React/Babel/Tailwind from a CDN, so it needs
-  internet on first load; vendoring is a known follow-up.
-
-## Going deeper
+## 📚 Going deeper
 
 | Doc | What's in it |
 |-----|--------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | module-by-module reference, data flow, APIs |
-| [TRAINING.md](TRAINING.md) | detailed training/inference workflows + env setup |
-| [CLAUDE.md](CLAUDE.md) | conventions, commands, and known gotchas |
-| [tests/README.md](tests/README.md) | per-file test coverage |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | module-by-module reference, data flow, APIs |
+| **[TRAINING.md](TRAINING.md)** | detailed training/inference workflows + env setup |
+| **[CLAUDE.md](CLAUDE.md)** | conventions, commands, and known gotchas |
+| **[tests/README.md](tests/README.md)** | per-file test coverage |
+
+## 🚧 Current limitations
+
+- Four limb movement modes work (`RANDOM`, `LUMPED_SPRING`, `SPRING_CHAIN`, `ILQR`); agents
+  implement `RANDOM`, `PURSUIT_FLEE`, and the reactive spring modes.
+- The `LIMB` camouflage pipeline is experimental; `SUCKER` is the solid path.
+- `MLMode.FULL` is a placeholder — no model, dataset, or trainer yet.
+- Inference always runs locally; the Flask server exists but nothing routes the simulator to it
+  automatically.
+- The analyzer frontend loads React/Babel/Tailwind from a CDN, so it needs internet on first
+  load; vendoring is a known follow-up.
+
+<div align="center">
+<br>
+
+### Why?
+
+*I don't know, but I can't stop.* 🐙
+
+</div>
