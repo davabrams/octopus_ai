@@ -273,7 +273,7 @@ class LimbConfig:
     cols: int = 2
     min_sucker_distance: float = 0.1  # was octo_min_sucker_distance
     max_sucker_distance: float = 0.3  # was octo_max_sucker_distance
-    sucker_col_spacing: float = 0.1  # LATERAL gap between the `cols` suckers on
+    sucker_col_spacing: float = 0.3  # LATERAL gap between the `cols` suckers on
                                      # ONE node, perpendicular to the centerline
                                      # (the width of the arm). Decoupled from the
                                      # along-arm segment spacing: raise this to

@@ -259,6 +259,26 @@ const STATE_COLORS = ["#64748b", "#38bdf8", "#22c55e", "#f43f5e", "#f59e0b"];
 const STATE_LABELS = ["idle", "exploring", "chasing prey", "avoiding threat", "gripping"];
 function stateColor(code) { return STATE_COLORS[code] || STATE_COLORS[0]; }
 
+// Draw a fleshy CONSTANT-WIDTH limb "skin": a round-capped tube along the
+// centerline (no taper - our suckers are uniform), wide enough to enclose the
+// suckers, rendered as a translucent fill under a dark outline (like clip-art
+// tentacle line-art). halfWorld is the tube half-width in grid cells.
+function drawLimbSkin(ctx, chain, cs, halfWorld, outline) {
+  if (!chain || chain.length < 2) return;
+  const trace = () => {
+    ctx.beginPath();
+    ctx.moveTo(chain[0].x * cs, chain[0].y * cs);
+    for (let i = 1; i < chain.length; i++) ctx.lineTo(chain[i].x * cs, chain[i].y * cs);
+  };
+  const prevCap = ctx.lineCap, prevJoin = ctx.lineJoin;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const fillW = 2 * halfWorld * cs;
+  // Outline (border) first, then the lighter skin fill on top of it.
+  trace(); ctx.strokeStyle = outline; ctx.lineWidth = fillW + 3; ctx.stroke();
+  trace(); ctx.strokeStyle = "rgba(236,232,225,0.30)"; ctx.lineWidth = fillW; ctx.stroke();
+  ctx.lineCap = prevCap; ctx.lineJoin = prevJoin;
+}
+
 function drawWorld(ctx, background, state, view) {
   const cs = view.cellSize;
   const { xLen, yLen } = view;
@@ -311,6 +331,17 @@ function drawWorld(ctx, background, state, view) {
   // pose so plan (ghost) vs applied (solid) reads correctly.
   if (view.ilqr && view.ilqrOverlay) drawIlqrOverlay(ctx, view);
 
+  // Fleshy limb skins (octopus look): a constant-width outlined tube around each
+  // arm's centerline, wide enough to enclose its suckers, drawn UNDER the
+  // suckers/centerline. Half-width tracks the sucker column spacing.
+  if (view.showSkin && state.octopus.limbs) {
+    const halfW = Math.max(0.25, (view.suckerColSpacing || 0.1) / 2 + 0.23);
+    state.octopus.limbs.forEach((limb, limbIdx) => {
+      if (hasSelection && limbIdx !== selLimb) return;
+      drawLimbSkin(ctx, limb, cs, halfW, "#141414");
+    });
+  }
+
   // Limb centerlines.
   if (view.showCenterlines !== false) {
     ctx.lineWidth = 3;
@@ -360,10 +391,23 @@ function drawWorld(ctx, background, state, view) {
       ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
       ctx.fill();
       if (view.showOutlines) {
-        // Color the outline by the node's behavior policy when enabled.
+        // Color the outline by the node's behavior policy when enabled. Give it a
+        // dark backing ring so the state colour reads on ANY background - the
+        // pale limb "skin" otherwise washes a thin coloured ring out.
+        if (view.stateColors && !dimmed) {
+          ctx.strokeStyle = "rgba(15,15,18,0.9)";
+          ctx.lineWidth = 3.5;
+          ctx.stroke();
+        }
         ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)"
           : (view.stateColors ? stateColor(s.state || 0) : "#222");
-        ctx.lineWidth = view.stateColors ? 1.75 : 1;
+        ctx.lineWidth = view.stateColors ? 2.25 : 1;
+        ctx.stroke();
+      } else {
+        // Outlines disabled: stroke in the sucker's OWN fill colour (not grey),
+        // so it reads as a clean solid dot with a crisp edge against the skin.
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
     });
@@ -637,7 +681,8 @@ function App() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [showOutlines, setShowOutlines] = useState(true);
   const [stateColors, setStateColors] = useState(true); // colour by behavior policy
-  const [showCenterlines, setShowCenterlines] = useState(true);
+  const [showSkin, setShowSkin] = useState(true); // fleshy limb outlines (octopus look)
+  const [showCenterlines, setShowCenterlines] = useState(false);
   const [showHead, setShowHead] = useState(true);
   const [showSuckers, setShowSuckers] = useState(true);
   const [showAgents, setShowAgents] = useState(true);
@@ -684,6 +729,7 @@ function App() {
   stateRef.current.pan = pan;
   stateRef.current.showOutlines = showOutlines;
   stateRef.current.stateColors = stateColors;
+  stateRef.current.showSkin = showSkin;
   stateRef.current.showCenterlines = showCenterlines;
   stateRef.current.showHead = showHead;
   stateRef.current.showSuckers = showSuckers;
@@ -863,7 +909,7 @@ function App() {
     [colorMode, showGrid, showSensing, ilqrOverlay, ilqrLimb, ilqrIter,
      ilqrStep, convergence, zoom, pan, showOutlines, showCenterlines,
      showHead, showSuckers, showAgents, tab, setupGrid, setupOctoStart,
-     setupAgents, placementTool, measurePts, measureMode, stateColors]);
+     setupAgents, placementTool, measurePts, measureMode, stateColors, showSkin]);
 
   // ---- play loop ----
   useEffect(() => {
@@ -977,6 +1023,7 @@ function App() {
         sensingRadius: m.config.agent_range_radius,
         jetTriggerRadius: m.config.octo_jet_trigger_radius,
         stateColors: S.stateColors,
+        showSkin: S.showSkin, suckerColSpacing: m.config.octo_sucker_col_spacing,
         ilqr: ilqrCache.current.get(S.frameIdx), ilqrOverlay: S.ilqrOverlay,
         ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, ilqrStep: S.ilqrStep,
         convergence: S.convergence,
@@ -1020,6 +1067,8 @@ function App() {
       colorMode: S.colorMode, showGrid: S.showGrid, showSensing: S.showSensing,
       sensingRadius: (S.meta && S.meta.config.agent_range_radius) || 0,
       stateColors: S.stateColors,
+      showSkin: S.showSkin,
+      suckerColSpacing: (S.meta && S.meta.config.octo_sucker_col_spacing) || 0.1,
       zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
       showOutlines: S.showOutlines, showCenterlines: S.showCenterlines,
       showHead: S.showHead, showSuckers: S.showSuckers, showAgents: S.showAgents,
@@ -1410,6 +1459,9 @@ function App() {
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> outlines <kbd>O</kbd></label>
             <label title="Colour outlines/centerlines/head by behavior policy (node/limb/body)">
               <input type="checkbox" checked={stateColors} onChange={(e) => setStateColors(e.target.checked)} /> state colors
+            </label>
+            <label title="Draw a fleshy outlined limb around each arm's suckers (octopus look)">
+              <input type="checkbox" checked={showSkin} onChange={(e) => setShowSkin(e.target.checked)} /> skin
             </label>
             <label title="Red skeleton line joining each limb's nodes"><input type="checkbox" checked={showCenterlines} onChange={(e) => setShowCenterlines(e.target.checked)} /> centerline</label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
