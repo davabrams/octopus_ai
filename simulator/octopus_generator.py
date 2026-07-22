@@ -803,9 +803,13 @@ class Limb:
             # nearest least-recently-visited cell (whole-body visit map, per-node target).
             # Each node seeks a different local cell, so the arm spreads to cover
             # ground and the springs keep it spaced - drawing every node to one
-            # shared cell balls the whole arm up on it.
+            # shared cell balls the whole arm up on it. A node that senses a THREAT
+            # does NOT explore: threat avoidance outranks explore (the stated
+            # priority), and a gentle explore pull with weight ~= the repel weight
+            # otherwise fights the flee to a standstill (the arm neither scrunches
+            # nor retreats), which is exactly what was observed.
             explored_i = False
-            if attract_sw[i] == 0.0 and explore_on:
+            if attract_sw[i] == 0.0 and repel_sw[i] == 0.0 and explore_on:
                 ept, ecell = self._node_explore_target(
                     node.x, node.y, visit_recency, nthreat)
                 if ept is not None:

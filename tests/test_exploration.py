@@ -105,6 +105,28 @@ class TestExplorationMemory(unittest.TestCase):
         octo2._mark_explored()
         self.assertAlmostEqual(octo2.visit_recency[0, 0], 1.0, places=6)
 
+    def test_threat_suppresses_explore(self):
+        """A node that senses a threat does NOT also hold an explore target:
+        threat avoidance outranks explore. Otherwise the gentle explore pull
+        (weight ~= the repel weight) fights the flee to a standstill and the arm
+        neither scrunches nor retreats."""
+        octo, ag = _octo(explore=True, agents=0)
+        octo.move(ag)  # seed the recency map and node positions
+        # Park a threat right on limb 0's outer centerline so its nodes sense it.
+        l0 = octo.limbs[0]
+        node = l0.center_line[len(l0.center_line) // 2]
+        ag.agents = [Agent(x=float(node.x), y=float(node.y),
+                           agent_type=AgentType.THREAT)]
+        octo.move(ag)
+        meta = l0.last_ilqr_meta
+        rsw = np.asarray(meta["repel_sw"])
+        asw = np.asarray(meta["attract_sw"])
+        threatened = rsw > 0.0
+        self.assertTrue(threatened.any(), "threat should be sensed by some node")
+        # Every threatened node has NO attract (no explore) pulling against the flee.
+        self.assertTrue(np.all(asw[threatened] == 0.0),
+                        "a threatened node is still being pulled to an explore cell")
+
 
 class TestExplorationSeeking(unittest.TestCase):
     def test_coverage_grows_when_exploring(self):

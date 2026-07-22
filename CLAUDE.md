@@ -134,8 +134,12 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   within its sense window (strong) and **flees** the nearest threat within it
   (`repel`, graded so the body-adjacent node recoils hardest and the tip least,
   `octo_ilqr_repel_tip_fraction`). Both can act on different nodes of one arm at
-  once — there is no single per-limb target or "target kind". A node sensing no
-  prey is drawn gently to a stale explore cell (exploration). The body still
+  once — there is no single per-limb target or "target kind". A node sensing
+  neither prey **nor a threat** is drawn gently to a stale explore cell
+  (exploration); a node that senses a threat does **not** explore — threat
+  avoidance outranks explore, else the gentle explore pull (weight ≈ the repel
+  weight) fights the flee to a standstill and the arm neither scrunches nor
+  retreats. The body still
   emerges from the summed base tension. `simulator/ilqr/residuals.py`
   `attract_residual`/`repel_residual`; the per-node sensing loop is in
   `Limb._move_ilqr`. Two refinements to avoid boundary artifacts: (1) the sense
@@ -172,14 +176,15 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   **ticks down linearly** by `1/octo_ilqr_explore_ticks` each frame, so its value
   is `max(1 - frames_since_last_visit / explore_ticks, 0)` and it fully reopens
   exactly `explore_ticks` frames (default 1000) after its last visit. A node that
-  senses no prey is gently drawn
+  senses neither prey nor a threat is gently drawn
   (`w_explore ≪ w_reach_terminal`) to a stale cell chosen **lexicographically**
   (`_node_explore_target`): first the least-recently-visited set (minimum
   recency in `explore_node_radius`, plus a threat penalty in the primary key),
   then the **closest** of that set — recency always beats distance, so a node
   never prefers a near recent cell to a far stale one. The chosen cell is
-  recorded (`explore_cell`, schema v4) for the analyzer's hover box. Prey
-  outranks it per node. See EXPLORATION_PLAN.md.
+  recorded (`explore_cell`, schema v4) for the analyzer's hover box. Prey **and
+  threat** both outrank it per node (a threatened node stops exploring and
+  flees). See EXPLORATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
   constrained to change ≤ `octo_max_hue_change` per step **per channel**. Full
   **RGB**: the surface grid is `(y, x, 3)` and each of `Color.r/g/b` matches its
