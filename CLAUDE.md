@@ -169,8 +169,10 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
 - **Exploration** (`octo_ilqr_explore_enabled`, off by default): a
   least-RECENTLY-visited map, `Octopus.visit_recency` — a cell is **set to 1.0**
   when a sucker is on it (not incremented, so dwell time doesn't matter) and
-  decays by `octo_ilqr_explore_decay` < 1 each frame, so its value is
-  `decay ** frames_since_last_visit`. A node that senses no prey is gently drawn
+  **ticks down linearly** by `1/octo_ilqr_explore_ticks` each frame, so its value
+  is `max(1 - frames_since_last_visit / explore_ticks, 0)` and it fully reopens
+  exactly `explore_ticks` frames (default 1000) after its last visit. A node that
+  senses no prey is gently drawn
   (`w_explore ≪ w_reach_terminal`) to a stale cell chosen **lexicographically**
   (`_node_explore_target`): first the least-recently-visited set (minimum
   recency in `explore_node_radius`, plus a threat penalty in the primary key),

@@ -192,6 +192,10 @@ class Agent(State):
         # 0 idle/wandering, 1 pursuing (threat), 2 fleeing (prey). Recorded for
         # the analyzer's per-agent colour-coding.
         self.behavior = 0
+        # Frames left on the current wander heading (AgentGenerator._increment_
+        # random holds a heading this long instead of re-rolling every frame, so
+        # idle agents roam instead of jittering in place). 0 = re-roll now.
+        self.wander_ttl = 0
 
     def __repr__(self):
         return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}>\n"

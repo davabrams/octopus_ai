@@ -66,8 +66,14 @@ class WorldConfig:
 @dataclass(frozen=True)
 class AgentConfig:
     count: int = 5  # number of AGENTS in the world (ie prey and threat); 0 disables
-    max_velocity: float = 0.1
+    max_velocity: float = 0.25
     max_theta: float = 0.1
+    wander_persistence: int = 12  # RANDOM/idle only: hold a wander heading this
+                                  # many frames before re-rolling it. Re-rolling
+                                  # velocity EVERY frame is symmetric about zero,
+                                  # so agents jitter in place instead of roaming;
+                                  # holding a heading lets them actually travel.
+                                  # 1 = re-roll every frame (old behavior).
     movement_mode: MovementMode = MovementMode.RANDOM
     sensing_radius: float = 5.0  # how far an AGENT senses the octopus.
                                  # Previously agent_range_radius, which also
@@ -240,14 +246,16 @@ class ILQRConfig:
                                       # disables (legacy, flickers); ->1 is very
                                       # smooth but laggier. Only affects explore
                                       # targets, never prey/threat.
-    explore_decay: float = 0.95  # per-frame decay of the recency map. A cell is
-                                 # SET to 1.0 when a sucker is on it (not
-                                 # incremented - dwell doesn't matter), then fades
-                                 # by this each frame, so its value is
-                                 # decay**frames_since_last_visit. Nodes seek the
-                                 # LOWEST (least recently visited). Smaller = the
-                                 # frontier reopens sooner; 1.0 = never fades (a
-                                 # cell stays "visited" forever once touched).
+    explore_ticks: int = 1000  # lifetime of the recency map, in frames. A cell
+                               # is SET to 1.0 when a sucker is on it (not
+                               # incremented - dwell doesn't matter), then ticks
+                               # down LINEARLY by 1/explore_ticks each frame to 0,
+                               # so its value is max(1 - frames_since_visit /
+                               # explore_ticks, 0) and it fully reopens exactly
+                               # explore_ticks frames after the last visit. Nodes
+                               # seek the LOWEST (least recently visited). Larger
+                               # = the octopus remembers where it has been for
+                               # longer; <=0 means "never fades".
     # The explore-target picker is otherwise threat-blind, so the least-recently-visited
     # frontier is exactly the region the threat has kept the octopus out of -
     # the arm reaches for it while the repel barrier shoves back, and the two

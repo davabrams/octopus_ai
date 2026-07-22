@@ -623,8 +623,8 @@ function strokeChain(ctx, chain, cs) {
 
 // Per-cell sucker visit-RECENCY heatmap. explore is a [y][x] grid of recency
 // values (1.0 = touched now, ->0 = long ago, 0 = never); nodes seek the lowest.
-// With decay on (explore_decay < 1) the counts are a RECENCY field: recently
-// visited cells are high, older ones have faded. Ramp each cell from faded
+// The field ticks down linearly over explore_ticks frames: recently visited
+// cells are high, older ones have faded. Ramp each cell from faded
 // light orange (low = least recent) to dark saturated orange (high = most
 // recent); unexplored cells (0) are left clear so coverage reads at a glance.
 function drawExploreOverlay(ctx, explore, cs, xLen, yLen) {

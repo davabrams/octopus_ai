@@ -1045,7 +1045,7 @@ class Octopus:
         # idle arm reaches its tip toward the least-recently-visited cell in reach, so
         # the suckers sweep unexplored areas. Grid is [y][x] like the surface.
         self.explore_enabled = cfg.octopus.limb.ilqr.explore_enabled
-        self.explore_decay = cfg.octopus.limb.ilqr.explore_decay
+        self.explore_ticks = cfg.octopus.limb.ilqr.explore_ticks
         self.visit_recency = np.zeros((cfg.world.y_len, cfg.world.x_len),
                                      dtype=float)
 
@@ -1114,21 +1114,23 @@ class Octopus:
 
     def _mark_explored(self):
         """Refresh the RECENCY of every cell a sucker now occupies to 1.0, after
-        decaying all cells.
+        ticking every cell down.
 
         This is a least-RECENTLY-visited map, not a visit COUNT: a cell is SET to
         1.0 when a sucker is on it (not incremented), so how long the octopus
         dwells on a cell doesn't matter - only WHEN it was last touched. Each
-        frame every cell decays by ``explore_decay`` (< 1), so a cell's value is
-        ``explore_decay ** frames_since_last_visit`` (1.0 = here now, ->0 = long
-        ago, 0 = never). Nodes explore toward the LOWEST value (least recently
-        visited). Dwell no longer inflates a cell, so a long-occupied cell ages
-        exactly like one touched once and left.
+        frame every cell ticks down LINEARLY by ``1/explore_ticks``, so a cell's
+        value is ``max(1 - frames_since_last_visit/explore_ticks, 0)`` - it fully
+        reopens (reaches 0) exactly ``explore_ticks`` frames after the last visit
+        (1.0 = here now, ->0 = long ago, 0 = never). Nodes explore toward the
+        LOWEST value (least recently visited). Dwell no longer inflates a cell, so
+        a long-occupied cell ages exactly like one touched once and left.
         """
         if not self.explore_enabled:
             return
-        if self.explore_decay != 1.0:
-            self.visit_recency *= self.explore_decay
+        if self.explore_ticks > 0:
+            self.visit_recency -= 1.0 / self.explore_ticks
+            np.clip(self.visit_recency, 0.0, 1.0, out=self.visit_recency)
         y_len, x_len = self.visit_recency.shape
         for limb in self.limbs:
             for s in limb.suckers:

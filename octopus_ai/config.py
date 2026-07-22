@@ -252,6 +252,7 @@ def config_to_flat(cfg: Config) -> dict:
         'agent_number_of_agents': cfg.agents.count,
         'agent_max_velocity': cfg.agents.max_velocity,
         'agent_max_theta': cfg.agents.max_theta,
+        'agent_wander_persistence': cfg.agents.wander_persistence,
         'agent_movement_mode': cfg.agents.movement_mode,
         'agent_range_radius': cfg.agents.sensing_radius,  # see note above
         'agent_prey_capture_radius': cfg.agents.prey_capture_radius,
@@ -296,7 +297,7 @@ def config_to_flat(cfg: Config) -> dict:
             cfg.octopus.limb.ilqr.explore_node_radius,
         'octo_ilqr_explore_target_smooth':
             cfg.octopus.limb.ilqr.explore_target_smooth,
-        'octo_ilqr_explore_decay': cfg.octopus.limb.ilqr.explore_decay,
+        'octo_ilqr_explore_ticks': cfg.octopus.limb.ilqr.explore_ticks,
         'octo_ilqr_w_explore_threat_avoid':
             cfg.octopus.limb.ilqr.w_explore_threat_avoid,
         'octo_ilqr_explore_threat_radius':
@@ -378,6 +379,8 @@ def config_from_flat(d: dict) -> Config:
             count=g('agent_number_of_agents', D.agents.count),
             max_velocity=g('agent_max_velocity', D.agents.max_velocity),
             max_theta=g('agent_max_theta', D.agents.max_theta),
+            wander_persistence=g('agent_wander_persistence',
+                                 D.agents.wander_persistence),
             movement_mode=g('agent_movement_mode', D.agents.movement_mode),
             sensing_radius=sensing,
             prey_capture_radius=g('agent_prey_capture_radius',
@@ -495,8 +498,8 @@ def config_from_flat(d: dict) -> Config:
                     explore_target_smooth=g(
                         'octo_ilqr_explore_target_smooth',
                         D.octopus.limb.ilqr.explore_target_smooth),
-                    explore_decay=g('octo_ilqr_explore_decay',
-                                    D.octopus.limb.ilqr.explore_decay),
+                    explore_ticks=g('octo_ilqr_explore_ticks',
+                                    D.octopus.limb.ilqr.explore_ticks),
                     w_explore_threat_avoid=g(
                         'octo_ilqr_w_explore_threat_avoid',
                         D.octopus.limb.ilqr.w_explore_threat_avoid),

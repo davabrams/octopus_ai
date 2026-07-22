@@ -20,7 +20,7 @@ from simulator.octopus_generator import Octopus
 from simulator.simutil import Agent, AgentType, MovementMode
 
 
-def _octo(*, explore=True, agents=0, w_explore=0.5, decay=1.0, seed=0):
+def _octo(*, explore=True, agents=0, w_explore=0.5, ticks=0, seed=0):
     cfg = make_config(
         x_len=20, y_len=20, limb_rows=8, octo_num_arms=6,
         agent_number_of_agents=agents,
@@ -28,7 +28,7 @@ def _octo(*, explore=True, agents=0, w_explore=0.5, decay=1.0, seed=0):
         limb_movement_mode=MovementMode.ILQR,
         octo_ilqr_horizon=4, octo_ilqr_max_iters=3,
         octo_ilqr_explore_enabled=explore, octo_ilqr_w_explore=w_explore,
-        octo_ilqr_explore_decay=decay, record_ilqr_history=True)
+        octo_ilqr_explore_ticks=ticks, record_ilqr_history=True)
     np.random.seed(seed)
     octo = Octopus(cfg)
     ag = AgentGenerator(cfg)
@@ -76,7 +76,7 @@ class TestExplorationMemory(unittest.TestCase):
     def test_recency_sets_not_accumulates(self):
         """A cell under a sucker is SET to 1.0, never incremented, so dwell can't
         inflate it - the map never exceeds 1.0 no matter how long it runs."""
-        octo, ag = _octo(explore=True, agents=0, decay=0.5)
+        octo, ag = _octo(explore=True, agents=0, ticks=2)
         for _ in range(8):
             octo.move(ag)
         self.assertLessEqual(float(octo.visit_recency.max()), 1.0 + 1e-9)
@@ -86,19 +86,20 @@ class TestExplorationMemory(unittest.TestCase):
         for (cy, cx) in cells:
             self.assertAlmostEqual(octo.visit_recency[cy, cx], 1.0, places=6)
 
-    def test_decay_ages_untouched_cells(self):
-        """decay < 1 fades a cell by decay**frames_since_last_visit. A far corner
-        no sucker occupies decays one step per _mark_explored; at decay = 1.0 it
-        never fades (touched-once == touched-forever, pure recency)."""
-        octo, ag = _octo(explore=True, agents=0, decay=0.5)
+    def test_ticks_age_untouched_cells(self):
+        """A cell ticks down LINEARLY by 1/explore_ticks each frame. A far corner
+        no sucker occupies loses 1/ticks per _mark_explored, reaching 0 exactly
+        ``ticks`` frames after its last visit; ticks <= 0 means it never fades
+        (touched-once == touched-forever, pure recency)."""
+        octo, ag = _octo(explore=True, agents=0, ticks=4)  # 0.25 / frame
         octo.move(ag)
         octo.visit_recency[0, 0] = 1.0     # a far corner: no sucker is here
-        octo._mark_explored()              # decays all, re-marks sucker cells
-        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.5, places=6)
+        octo._mark_explored()              # ticks all down, re-marks sucker cells
+        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.75, places=6)
         octo._mark_explored()
-        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.25, places=6)
-        # decay = 1.0: an untouched cell never fades.
-        octo2, ag2 = _octo(explore=True, agents=0, decay=1.0)
+        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.50, places=6)
+        # ticks <= 0: an untouched cell never fades.
+        octo2, ag2 = _octo(explore=True, agents=0, ticks=0)
         octo2.move(ag2)
         octo2.visit_recency[0, 0] = 1.0
         octo2._mark_explored()

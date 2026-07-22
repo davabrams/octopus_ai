@@ -20,6 +20,7 @@ class AgentGenerator:
         self._y_len = cfg.world.y_len
         self.max_velocity = cfg.agents.max_velocity
         self.max_theta = cfg.agents.max_theta
+        self.wander_persistence = max(int(cfg.agents.wander_persistence), 1)
         self.movement_mode = cfg.agents.movement_mode
         # How far an AGENT senses the octopus. The octopus's own sensing
         # radius is octopus.sensing_radius - a separate knob now.
@@ -172,23 +173,35 @@ class AgentGenerator:
         return captured
 
     def _increment_random(self, agent: Agent) -> Agent:
-        """Random walk: step by the current velocity, then re-roll it.
+        """Random walk: step by the current velocity, re-rolling a fresh heading
+        only every ``wander_persistence`` frames.
 
         The velocity ranges are SYMMETRIC about zero. They used to be
         uniform(0, max_velocity), which is never negative - so every agent
         drifted monotonically +x/+y and eventually piled into the top-right
-        corner instead of wandering.
+        corner instead of wandering. Re-rolling that symmetric velocity EVERY
+        frame is a zero-mean random walk, so agents jitter in place; holding a
+        heading for ``wander_persistence`` frames lets them actually roam.
         """
         new_agent = agent
         new_agent.update_kinematics()
 
-        new_agent.vx = np.random.uniform(-self.max_velocity,
-                                         self.max_velocity)
-        new_agent.vy = np.random.uniform(-self.max_velocity,
-                                         self.max_velocity)
-        new_agent.w = np.random.uniform(-self.max_theta * np.pi,
-                                        self.max_theta * np.pi)
+        if new_agent.wander_ttl <= 0:
+            new_agent.vx = np.random.uniform(-self.max_velocity,
+                                             self.max_velocity)
+            new_agent.vy = np.random.uniform(-self.max_velocity,
+                                             self.max_velocity)
+            new_agent.w = np.random.uniform(-self.max_theta * np.pi,
+                                            self.max_theta * np.pi)
+            new_agent.wander_ttl = self.wander_persistence
+        else:
+            new_agent.wander_ttl -= 1
+        pre_x, pre_y = new_agent.x, new_agent.y
         self._clamp_to_grid(new_agent)
+        if new_agent.x != pre_x or new_agent.y != pre_y:
+            # Hit a wall - re-roll a fresh heading next frame instead of pressing
+            # into the edge for the rest of this heading's lifetime.
+            new_agent.wander_ttl = 0
         new_agent.behavior = 0  # idle/wandering (see AgentBehavior codes)
         return new_agent
 
