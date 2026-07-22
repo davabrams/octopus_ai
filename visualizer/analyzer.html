@@ -85,9 +85,13 @@
   }
 
   // Index of the sucker nearest world-coords (wx, wy), or -1 if none.
-  function nearestSucker(suckers, wx, wy, maxDist) {
+  // Nearest {x,y} to (wx,wy) within maxDist; returns its index in `suckers` (or
+  // -1). Optional `filter(s, i)` restricts which entries are eligible (e.g. only
+  // the selected limb's suckers) - the returned index is still into `suckers`.
+  function nearestSucker(suckers, wx, wy, maxDist, filter) {
     let best = -1, bestD = Infinity;
     for (let i = 0; i < suckers.length; i++) {
+      if (filter && !filter(suckers[i], i)) continue;
       const s = suckers[i];
       const d = (s.x - wx) * (s.x - wx) + (s.y - wy) * (s.y - wy);
       if (d < bestD) { bestD = d; best = i; }
@@ -1338,7 +1342,15 @@ function App() {
       setHover(null);
     } else {
       setHoverAgent(null);
-      const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
+      // When a single limb is selected in the overlay, only ITS suckers are
+      // hoverable (the rest are dimmed out and shouldn't grab the inspector).
+      let limbFilter = null;
+      if (ilqrLimb !== "all") {
+        const sPerLimb = meta.anatomy.limb_rows * meta.anatomy.limb_cols;
+        limbFilter = (s, i) =>
+          (s.limb != null ? s.limb : Math.floor(i / sPerLimb)) === ilqrLimb;
+      }
+      const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0, limbFilter);
       setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
       // Ensure this frame's iLQR data is loaded so the hover can show the node's
       // attract-target cell (and the cost panel) without needing the overlay on.
