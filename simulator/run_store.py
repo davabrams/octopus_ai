@@ -396,8 +396,10 @@ class RunStore:
             for s in suck_rows
         ]
 
+        has_beh = _col_exists(con, "agents", "behavior")
+        beh_col = ", behavior" if has_beh else ""
         agent_rows = con.execute(
-            "SELECT agent_id, agent_type, x, y, t, vx, vy FROM agents "
+            f"SELECT agent_id, agent_type, x, y, t, vx, vy{beh_col} FROM agents "
             "WHERE frame = ? ORDER BY agent_id",
             [frame],
         ).fetchall()
@@ -410,6 +412,8 @@ class RunStore:
                 "vx": _r4(a[5]),
                 "vy": _r4(a[6]),
                 "angle": _r4(a[4]),
+                # Per-agent policy (pre-v5 runs lack it -> 0/idle).
+                "behavior": int(a[7]) if has_beh else 0,
             }
             for a in agent_rows
         ]

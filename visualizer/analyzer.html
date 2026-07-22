@@ -482,8 +482,16 @@ function drawWorld(ctx, background, state, view) {
         ctx.lineWidth = 2.5;
         ctx.stroke();
       } else if (view.showOutlines) {
-        ctx.strokeStyle = a.type === "predator" ? "#7a1030" : "#0f4a1a";
-        ctx.lineWidth = 1.5;
+        // Colour-code by behavior policy: an agent actively PURSUING (threat) or
+        // FLEEING (prey) lights up with a bright type-coloured ring; an idle/
+        // wandering one gets a dim dark outline.
+        if ((a.behavior || 0) !== 0) {
+          ctx.strokeStyle = a.type === "predator" ? "#ff69b4" : "#32cd32";
+          ctx.lineWidth = 2.75;
+        } else {
+          ctx.strokeStyle = a.type === "predator" ? "#7a1030" : "#0f4a1a";
+          ctx.lineWidth = 1.5;
+        }
         ctx.stroke();
       }
       if (view.showSensing) {
@@ -521,11 +529,11 @@ function agentBehavior(type, mode) {
   const threat = type === "predator";
   const m = mode || "";
   if (m.includes("PURSUIT_FLEE"))
-    return threat ? "pursues the octopus (ignores camouflage)"
-                  : "flees the octopus (ignores camouflage)";
+    return threat ? "pursues once the octopus is visible enough (threshold)"
+                  : "flees once the octopus is visible enough (threshold)";
   if (m.includes("SPRING_CHAIN") || m.includes("LUMPED_SPRING"))
-    return threat ? "pursues the octopus when it's visible"
-                  : "flees the octopus when it's visible";
+    return threat ? "pursues the octopus, scaled by its visibility"
+                  : "flees the octopus, scaled by its visibility";
   return "wanders (random walk)";
 }
 
@@ -1395,16 +1403,16 @@ function App() {
               const d = Math.hypot(s.x - a.x, s.y - a.y);
               if (d < minD) minD = d;
             });
-            const vis = (curFrame.metadata && curFrame.metadata.visibility_score) || 0;
-            // Actually acting this frame: octopus in range (+ visible, for the
-            // visibility-gated spring modes). PURSUIT_FLEE ignores camouflage.
-            const acting = minD <= senseR &&
-              (mode.includes("PURSUIT_FLEE") ? true
-               : (mode.includes("SPRING") || mode.includes("LUMPED")) ? vis > 1e-6
-               : false);
-            const action = acting ? (threat ? "▸ PURSUING the octopus" : "▸ FLEEING the octopus")
-              : (minD > senseR ? "▸ wandering — octopus out of range"
-                 : "▸ wandering — octopus camouflaged");
+            // Use the RECORDED per-agent behavior (1 pursuing, 2 fleeing, 0
+            // idle) as the source of truth; distance/mode only explain WHY it's
+            // idle. (Pre-v5 runs record 0 -> always reads "wandering".)
+            const beh = a.behavior || 0;
+            const acting = beh !== 0;
+            const action = beh === 1 ? "▸ PURSUING the octopus"
+              : beh === 2 ? "▸ FLEEING the octopus"
+              : mode.includes("RANDOM") ? "▸ wandering (random walk)"
+              : minD > senseR ? "▸ wandering — octopus out of range"
+              : "▸ wandering — octopus camouflaged";
             return (
               <div className="fixed z-50 bg-slate-800 border border-slate-600 rounded shadow-lg px-3 py-2 text-xs pointer-events-none"
                    style={{ left: hoverAgent.cx + 14, top: hoverAgent.cy + 14, maxWidth: 260 }}>

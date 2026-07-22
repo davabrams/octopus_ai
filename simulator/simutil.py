@@ -188,6 +188,10 @@ class Agent(State):
     def __init__(self, x=0.0, y=0.0, t=0.0, vx=0.0, vy=0.0, vel_t=0.0, agent_type=None):
         super().__init__(x, y, t, vx, vy, vel_t)
         self.agent_type = agent_type
+        # Behavior policy, set each step by AgentGenerator._increment_*:
+        # 0 idle/wandering, 1 pursuing (threat), 2 fleeing (prey). Recorded for
+        # the analyzer's per-agent colour-coding.
+        self.behavior = 0
 
     def __repr__(self):
         return f"<Agent\n\tType: {self.agent_type}, \n\tLoc: ({self.x}, {self.y}), \n\tVel: {self.vel}>\n"

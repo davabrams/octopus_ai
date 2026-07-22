@@ -189,6 +189,7 @@ class AgentGenerator:
         new_agent.w = np.random.uniform(-self.max_theta * np.pi,
                                         self.max_theta * np.pi)
         self._clamp_to_grid(new_agent)
+        new_agent.behavior = 0  # idle/wandering (see AgentBehavior codes)
         return new_agent
 
     def _increment_reactive(self, agent: Agent, sucker_xy,
@@ -261,4 +262,7 @@ class AgentGenerator:
         agent.w = 0.0
         agent.update_kinematics()
         self._clamp_to_grid(agent)
+        # Per-agent behavior policy (recorded for the analyzer): a THREAT closing
+        # on the octopus is PURSUING (1), a PREY moving away is FLEEING (2).
+        agent.behavior = 1 if agent.agent_type == AgentType.THREAT else 2
         return agent

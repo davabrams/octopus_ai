@@ -248,6 +248,24 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
             ag.increment_all(octo, visibility=1.0)
         self.assertGreater(nearest_sucker_dist(octo, prey), d0)
 
+    def test_behavior_codes(self):
+        """Per-agent behavior policy is stamped each step: 1 pursuing (threat),
+        2 fleeing (prey), 0 idle/wandering (out of range, or camouflaged)."""
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        threat = Agent(x=octo.x + 3.0, y=octo.y, agent_type=AgentType.THREAT)
+        prey = Agent(x=octo.x, y=octo.y + 3.0, agent_type=AgentType.PREY)
+        far = Agent(x=1.0, y=1.0, agent_type=AgentType.THREAT)  # a far corner
+        ag.agents = [threat, prey, far]
+        ag.increment_all(octo, visibility=1.0)   # visible
+        self.assertEqual(threat.behavior, 1)     # pursuing
+        self.assertEqual(prey.behavior, 2)       # fleeing
+        self.assertEqual(far.behavior, 0)        # out of range -> wandering
+        # Below the notice threshold (camouflaged): the in-range threat wanders.
+        ag.increment_all(octo, visibility=0.0)
+        self.assertEqual(threat.behavior, 0)
+
     def test_threshold_is_the_notice_boundary(self):
         """Visibility just above the threshold pursues (the exact gate)."""
         p = self._params(agent_visibility_threshold=0.1)

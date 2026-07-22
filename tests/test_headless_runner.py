@@ -174,7 +174,7 @@ class TestSerializeStateShape(unittest.TestCase):
         )
         self.assertEqual(
             set(state["agents"][0].keys()),
-            {"id", "x", "y", "type", "vx", "vy", "angle"},
+            {"id", "x", "y", "type", "vx", "vy", "angle", "behavior"},
         )
         self.assertEqual(
             set(state["metadata"].keys()),

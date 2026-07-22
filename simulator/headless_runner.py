@@ -145,6 +145,7 @@ def serialize_state(
                 "vx": float(agent.vx),
                 "vy": float(agent.vy),
                 "angle": float(agent.t),
+                "behavior": int(getattr(agent, "behavior", 0)),
             }
         )
 

@@ -49,7 +49,8 @@ from simulator.simutil import MovementMode
 # v3: suckers.motor_state (per-node motor state for analyzer colour-coding).
 #     Older DBs lack the column; RunStore reads it defensively (default 0).
 # v4: limb_solves.explore_cell (per-node chosen frontier cell for the hover box).
-SCHEMA_VERSION = 4
+# v5: agents.behavior (per-agent policy: idle/pursuing/fleeing).
+SCHEMA_VERSION = 5
 
 DEFAULT_RUNS_DIR = os.path.join(ROOT_DIR, "logs", "runs")
 
@@ -132,6 +133,7 @@ _DDL = [
         agent_type TINYINT NOT NULL,
         x FLOAT NOT NULL, y FLOAT NOT NULL, t FLOAT NOT NULL,
         vx FLOAT NOT NULL, vy FLOAT NOT NULL, w FLOAT NOT NULL,
+        behavior TINYINT NOT NULL DEFAULT 0,
         PRIMARY KEY (run_id, frame, agent_id)
     )
     """,
@@ -178,7 +180,7 @@ _INSERTS = {
     "frames": "INSERT INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "limb_nodes": "INSERT INTO limb_nodes VALUES (?,?,?,?,?,?,?)",
     "suckers": "INSERT INTO suckers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    "agents": "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?)",
+    "agents": "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?,?)",
     "limb_frames": "INSERT INTO limb_frames VALUES (?,?,?,?,?,?,?,?,?)",
     "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "ilqr_iters": "INSERT INTO ilqr_iters VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -426,6 +428,7 @@ class SimRecorder:
                     float(agent.vx),
                     float(agent.vy),
                     float(agent.w),
+                    int(getattr(agent, "behavior", 0)),
                 )
             )
         st["agent_rows"] = agent_rows

@@ -158,7 +158,10 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   is computed each frame (0 idle · 1 exploring · 2 chasing prey · 3
   avoiding/fleeing · 4 gripping/crawling) — `Limb.last_node_state`/
   `last_limb_state`, `Octopus.last_body_state` — recorded (schema v3) and shown
-  as outline/centerline/head colours.
+  as outline/centerline/head colours. **Agents** have their own policy too
+  (`Agent.behavior`: 0 idle/wandering · 1 pursuing · 2 fleeing), set in
+  `AgentGenerator._increment_*` and recorded (schema v5); the analyzer rings an
+  actively-pursuing/fleeing agent bright and dims an idle one.
 - **Agent camouflage-gating:** `PURSUIT_FLEE` threats now pursue only when the
   octopus is visible enough (`agents.visibility_threshold`); below it the octopus
   reads as hidden and agents wander (the reactive spring modes already scale
@@ -346,7 +349,8 @@ unused imports); clean opportunistically, don't let it block work.
    read-only; the server never opens the *active* run's file (it's write-locked
    by the recorder), synthesizing that row from memory instead. Enabling
    `record_ilqr_history` has zero overhead when off but is the bulk of a run's
-   disk (~20 MB at 120 frames vs ~2–3 MB without). `SCHEMA_VERSION` is 4;
+   disk (~20 MB at 120 frames vs ~2–3 MB without). `SCHEMA_VERSION` is 5;
    `RunStore` reads newer columns **defensively** (column-existence checks, not a
-   version gate), so pre-v4 runs still open — they just read back the added
-   fields as defaults (`motor_state`/`body_state` = 0/idle, `explore_cell` = none).
+   version gate), so older runs still open — they just read back the added fields
+   as defaults (`motor_state`/`body_state`/`agents.behavior` = 0/idle,
+   `explore_cell` = none).
