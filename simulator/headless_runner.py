@@ -105,6 +105,12 @@ def serialize_state(
     suckers = []
     for limb_ix, limb in enumerate(octo.limbs):
         limbs.append([{"x": float(pt.x), "y": float(pt.y)} for pt in limb.center_line])
+        # Per-node motor state; a sucker inherits its centreline row's state
+        # (row = sucker_ix % rows). The tip row shows "gripping" (4) when the arm
+        # is crawl-anchored and not already doing something more urgent.
+        node_state = getattr(limb, "last_node_state", None)
+        rows = limb.rows
+        gripping = bool(getattr(limb, "last_gripping", False))
         for sucker_ix, s in enumerate(limb.suckers):
             target = s.get_surf_color_at_this_sucker(surf)
             after_rgb = [float(s.c.r), float(s.c.g), float(s.c.b)]
@@ -113,6 +119,10 @@ def serialize_state(
                 before_rgb = [float(cb.r), float(cb.g), float(cb.b)]
             else:
                 before_rgb = after_rgb
+            row = sucker_ix % rows
+            st = int(node_state[row]) if node_state is not None else 0
+            if gripping and row == rows - 1 and st in (0, 1):
+                st = 4  # gripping tip (overrides idle/explore, not threat/prey)
             suckers.append(
                 {
                     "x": float(s.x),
@@ -120,6 +130,7 @@ def serialize_state(
                     "color": after_rgb,
                     "color_before": before_rgb,
                     "target_color": [float(target.r), float(target.g), float(target.b)],
+                    "state": st,
                 }
             )
 
@@ -143,6 +154,11 @@ def serialize_state(
                      "theta": float(getattr(octo, "theta", 0.0))},
             "limbs": limbs,
             "suckers": suckers,
+            # Behavior policy at the limb and body levels (per-sucker is on each
+            # sucker's "state"). Same code convention; for colour-coding.
+            "limb_states": [int(getattr(limb, "last_limb_state", 0))
+                            for limb in octo.limbs],
+            "body_state": int(getattr(octo, "last_body_state", 0)),
         },
         "agents": agents,
         "metadata": {
@@ -279,6 +295,12 @@ class HeadlessRunner:
                             "prey_captured": int(ag.prey_captured if ag else 0),
                             "frame_ms": frame_ms,
                             "elapsed_s": time.perf_counter() - t0,
+                            # Full per-frame geometry for a live preview: the same
+                            # shape RunStore serves in playback, so the client
+                            # renders it with the same drawWorld path. The server
+                            # coalesces (latest-wins), so this is the newest frame
+                            # only - no per-frame backlog.
+                            "state": last_state,
                         }
                     )
 

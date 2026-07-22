@@ -60,13 +60,25 @@ class SuckerTrainer(Trainer):
         train_state_data, train_gt_data, test_state_data, test_gt_data = \
             train_test_split(state_data, gt_data)
 
-        train_dataset = convert_pytype_to_tf_dataset(
-            np.transpose(np.stack((train_state_data, train_gt_data))),
-            batch_size)
-        test_dataset = convert_pytype_to_tf_dataset(
-            np.transpose(np.stack((test_state_data, test_gt_data))),
-            batch_size)
-        return train_dataset, test_dataset
+        # CONDITIONED: append a per-example max_hue_change budget as a 3rd
+        # feature (x == y here, so both the input and the loss target carry it -
+        # the DeltaColorLayer reads it as the budget, ClampedTargetLoss as the
+        # per-example clamp threshold). Sampled uniformly from the train range so
+        # the net learns to honour any budget passed at inference.
+        conditioned = (self.cfg.training.sucker_delta_model
+                       and self.cfg.training.sucker_hue_change_conditioned)
+        lo, hi = self.cfg.training.sucker_hue_change_train_range
+
+        def _pack(state, gt):
+            arr = np.transpose(np.stack((state, gt)))  # (..., 2) = [current, gt]
+            if conditioned:
+                mhc = np.random.uniform(
+                    lo, hi, size=(*arr.shape[:-1], 1)).astype('float32')
+                arr = np.concatenate([arr, mhc], axis=-1)  # (..., 3)
+            return convert_pytype_to_tf_dataset(arr, batch_size)
+
+        return (_pack(train_state_data, train_gt_data),
+                _pack(test_state_data, test_gt_data))
 
     def train(self, train_dataset, GENERATE_TENSORBOARD=False):
         return self.train_sucker_model(
@@ -126,8 +138,15 @@ class SuckerTrainer(Trainer):
         # - legacy: direct color prediction trained with WeightedSumLoss
         #   (soft constraint penalty + weak MAE pull).
         use_delta = bool(cfg.training.sucker_delta_model)
+        # CONDITIONED: feed max_hue_change to the net as a 3rd input feature and
+        # train across a range of budgets, so one model honours any per-step cap
+        # at inference (the DeltaColorLayer reads the budget from column 2, and
+        # ClampedTargetLoss clamps the target per-example to it). Off = the
+        # fixed-budget model. See sucker_hue_change_conditioned.
+        conditioned = use_delta and bool(cfg.training.sucker_hue_change_conditioned)
         if use_delta:
-            inp = keras.layers.Input(shape=(2,))
+            in_dim = 3 if conditioned else 2  # +max_hue_change feature
+            inp = keras.layers.Input(shape=(in_dim,))
             hidden = keras.layers.Dense(
                 units=5, activation="relu", name="hidden_layer1")(inp)
             hidden = keras.layers.Dense(
@@ -136,10 +155,13 @@ class SuckerTrainer(Trainer):
                 units=5, activation="relu", name="hidden_layer3")(hidden)
             raw = keras.layers.Dense(
                 units=1, activation="linear", name="raw_delta")(hidden)
+            # The layer uses column 2 (budget) when present, else this constant.
             outp = DeltaColorLayer(
                 max_hue_change=float(hue_change_limit),
                 name="prediction_layer")([inp, raw])
             sucker_model = keras.Model(inputs=inp, outputs=outp)
+            # The loss reads a per-example threshold from y_true column 2 when
+            # present (conditioned), else this fixed threshold.
             delta_loss_fn = ClampedTargetLoss(
                 threshold=float(hue_change_limit))
         else:

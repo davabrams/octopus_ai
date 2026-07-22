@@ -23,7 +23,8 @@ from simulator.octopus_generator import Octopus
 from simulator.simutil import MovementMode
 
 
-def _ilqr_octo(*, ring_radius=1.0, num_arms=8, agents=3, seed=1):
+def _ilqr_octo(*, ring_radius=1.0, num_arms=8, agents=3, seed=1,
+               propulsion=None):
     cfg = make_config(
         x_len=14, y_len=14, limb_rows=5, octo_num_arms=num_arms,
         agent_number_of_agents=agents,
@@ -31,7 +32,8 @@ def _ilqr_octo(*, ring_radius=1.0, num_arms=8, agents=3, seed=1):
         limb_movement_mode=MovementMode.ILQR,
         agent_movement_mode=MovementMode.LUMPED_SPRING,  # reactive => strain
         octo_ilqr_horizon=4, octo_ilqr_max_iters=3,
-        octo_ring_radius=ring_radius)
+        octo_ring_radius=ring_radius,
+        **({"octo_propulsion_mode": propulsion} if propulsion else {}))
     np.random.seed(seed)
     octo = Octopus(cfg)
     ag = AgentGenerator(cfg)
@@ -147,11 +149,11 @@ class TestThreatResponse(unittest.TestCase):
     """The body-drift response to prey/threats (two-sided base spring gated on
     a sensed threat, + whole-arm threat sensing)."""
 
-    def _fixed_agent(self, kind, dx, dy):
+    def _fixed_agent(self, kind, dx, dy, propulsion=None):
         """Run with one FROZEN agent offset (dx, dy) from the start; return the
         body's net displacement vector."""
         from simulator.simutil import Agent, AgentType
-        octo, ag = _ilqr_octo(agents=1)
+        octo, ag = _ilqr_octo(agents=1, propulsion=propulsion)
         cx, cy = octo.x, octo.y
         at = AgentType.PREY if kind == "prey" else AgentType.THREAT
         agent = Agent(x=cx + dx, y=cy + dy, agent_type=at)
@@ -177,9 +179,13 @@ class TestThreatResponse(unittest.TestCase):
         self.assertGreater(ddx, 0.02)
 
     def test_body_flees_threat(self):
-        """A fixed threat to the east pushes the body away (-x) — the two-sided
-        base spring pushing when the arm recoils."""
-        ddx, _ = self._fixed_agent("threat", 1.5, 0.0)
+        """A fixed threat to the east pushes the body away (-x). Fleeing is now a
+        REACTION-mode behavior (the siphon JET fires away from a near threat);
+        the legacy INTERNAL base-compression flee was superseded by the
+        external-reaction propulsion model. See Octopus._propel_body."""
+        from simulator.simutil import PropulsionMode
+        ddx, _ = self._fixed_agent("threat", 1.5, 0.0,
+                                   propulsion=PropulsionMode.REACTION)
         self.assertLess(ddx, -0.1)
 
     def test_threat_sensed_per_node(self):

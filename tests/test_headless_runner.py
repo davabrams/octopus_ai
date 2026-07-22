@@ -166,10 +166,11 @@ class TestSerializeStateShape(unittest.TestCase):
             hr.SimRecorder = orig
         state = summary.final_state
         self.assertEqual(set(state.keys()), {"octopus", "agents", "metadata"})
-        self.assertEqual(set(state["octopus"].keys()), {"head", "limbs", "suckers"})
+        self.assertEqual(set(state["octopus"].keys()),
+                         {"head", "limbs", "suckers", "limb_states", "body_state"})
         self.assertEqual(
             set(state["octopus"]["suckers"][0].keys()),
-            {"x", "y", "color", "color_before", "target_color"},
+            {"x", "y", "color", "color_before", "target_color", "state"},
         )
         self.assertEqual(
             set(state["agents"][0].keys()),

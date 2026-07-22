@@ -26,6 +26,8 @@ class AgentGenerator:
         self.range_radius = cfg.agents.sensing_radius
         self.prey_capture_radius = cfg.agents.prey_capture_radius
         self.respawn_captured_prey = cfg.agents.respawn_captured_prey
+        # PURSUIT_FLEE: octopus must be this visible before threats notice it.
+        self.visibility_threshold = cfg.agents.visibility_threshold
         # running tally of prey captured over this generator's lifetime
         self.prey_captured = 0
 
@@ -76,7 +78,11 @@ class AgentGenerator:
         higher = more visible).  In the visibility-gated REACTIVE_MODES this
         controls how strongly agents pursue or flee — a well-camouflaged octopus
         is effectively invisible, so agents wander randomly. PURSUIT_FLEE
-        ignores it (always reacts at full strength inside the sense window).
+        commits FULLY (deterministic pursuit/flee), but only once the octopus is
+        visible enough to be noticed (visibility > visibility_threshold); below
+        that it is treated as hidden and agents wander. So camouflage is
+        protective in every reactive mode - continuously in the spring modes, as
+        a notice/don't-notice threshold in PURSUIT_FLEE.
         """
         if self.movement_mode == MovementMode.RANDOM:
             self.agents = [self._increment_random(agent)
@@ -91,11 +97,15 @@ class AgentGenerator:
                 [[s.x, s.y] for limb in octo.limbs for s in limb.suckers],
                 dtype=float,
             )
-            # PURSUIT_FLEE reacts regardless of camouflage: force full reaction
-            # weight so agents commit to pursuing/fleeing inside the sense
-            # window. The reactive spring modes stay visibility-gated.
-            react_vis = (1.0 if self.movement_mode == MovementMode.PURSUIT_FLEE
-                         else visibility)
+            # PURSUIT_FLEE commits to a full-strength (deterministic) reaction,
+            # but ONLY once the octopus is visible enough to be noticed; while it
+            # stays below the threshold it is treated as hidden (react_vis 0 ->
+            # wander), so camouflage is protective. The reactive spring modes
+            # scale continuously with visibility instead.
+            if self.movement_mode == MovementMode.PURSUIT_FLEE:
+                react_vis = 1.0 if visibility > self.visibility_threshold else 0.0
+            else:
+                react_vis = visibility
             self.agents = [self._increment_reactive(agent, sucker_xy,
                                                     react_vis)
                            for agent in self.agents]

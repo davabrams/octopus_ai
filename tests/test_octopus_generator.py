@@ -11,13 +11,46 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from simulator.octopus_generator import Sucker, Limb, Octopus
+from simulator.octopus_generator import Sucker, Limb, Octopus, _sense_ramp
 from simulator.simutil import (
     State, Color, MLMode, InferenceLocation, MovementMode,
     Agent, AgentType, agent_influence_vector,
 )
 from simulator.surface_generator import RandomSurface
 from helpers import make_config
+
+
+class TestSenseRamp(unittest.TestCase):
+    """The agent-sensing weight ramp (_sense_ramp): smooths the hard on/off at
+    the sense radius R that used to bunch nodes at the threshold."""
+
+    R = 5.0
+
+    def test_zero_at_and_beyond_radius(self):
+        self.assertEqual(_sense_ramp(self.R, self.R, 0.3), 0.0)
+        self.assertEqual(_sense_ramp(self.R + 1.0, self.R, 0.3), 0.0)
+
+    def test_full_inside_the_plateau(self):
+        # Full weight for d <= R*(1-band).
+        self.assertEqual(_sense_ramp(self.R * 0.7 - 0.01, self.R, 0.3), 1.0)
+        self.assertEqual(_sense_ramp(0.0, self.R, 0.3), 1.0)
+
+    def test_no_hard_edge_just_inside_radius(self):
+        # THE fix: a node just inside R must feel ~0 force, not full force, so it
+        # doesn't jump relative to its neighbour just outside.
+        self.assertLess(_sense_ramp(self.R - 0.01, self.R, 0.3), 0.01)
+
+    def test_continuous_and_monotone_across_the_band(self):
+        ds = np.linspace(self.R * 0.7, self.R, 40)
+        vals = [_sense_ramp(float(d), self.R, 0.3) for d in ds]
+        # non-increasing and no big jumps (smooth)
+        for a, b in zip(vals, vals[1:]):
+            self.assertGreaterEqual(a, b - 1e-9)
+            self.assertLess(abs(a - b), 0.1)
+
+    def test_band_zero_restores_hard_cutoff(self):
+        self.assertEqual(_sense_ramp(self.R - 0.01, self.R, 0.0), 1.0)
+        self.assertEqual(_sense_ramp(self.R, self.R, 0.0), 0.0)
 
 
 class TestSucker(unittest.TestCase):
@@ -61,16 +94,15 @@ class TestSucker(unittest.TestCase):
         self.mock_surface.get_val.assert_called_with(5, 5)
 
     def test_find_color_change_heuristic(self):
-        """Test heuristic color change logic"""
-        self.sucker.c.r = 0.5
-        surface_color = 0.8
-        max_change = 0.1
-
-        result = self.sucker._find_color_change(surface_color, max_change)
-
-        # Should move towards surface color within max change limit
-        self.assertLessEqual(abs(result - 0.5), max_change)
-        self.assertGreater(result, 0.5)
+        """A colour step moves toward the target, capped at max_hue_change."""
+        self.sucker.max_hue_change = 0.1   # explicit, independent of the config default
+        # Signature is (c_start, c_target): step from 0.5 toward the surface 0.8.
+        result = self.sucker._find_color_change(0.5, 0.8)
+        self.assertLessEqual(abs(result - 0.5), 0.1 + 1e-9)  # capped at max_hue_change
+        self.assertGreater(result, 0.5)                       # moved toward the target
+        # A tighter cap yields a smaller step.
+        self.sucker.max_hue_change = 0.02
+        self.assertAlmostEqual(self.sucker._find_color_change(0.5, 0.8), 0.52, places=6)
 
 
 class TestLimb(unittest.TestCase):

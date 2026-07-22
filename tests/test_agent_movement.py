@@ -190,8 +190,10 @@ class TestReactiveAgentMovement(unittest.TestCase):
 
 
 class TestPursuitFleeAgentMovement(unittest.TestCase):
-    """PURSUIT_FLEE: threats pursue, prey flee, inside the sense window,
-    IGNORING camouflage (unlike the visibility-gated spring modes)."""
+    """PURSUIT_FLEE: threats pursue and prey flee at full (deterministic)
+    strength inside the sense window - but ONLY once the octopus is visible
+    enough (visibility > visibility_threshold). A well-camouflaged octopus is
+    left alone: camouflage is protective."""
 
     def _params(self, **over):
         base = dict(
@@ -202,13 +204,13 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
             octo_movement_mode=MovementMode.RANDOM,
             limb_movement_mode=MovementMode.RANDOM,
             agent_movement_mode=MovementMode.PURSUIT_FLEE,
+            agent_visibility_threshold=0.05,
         )
         base.update(over)
         return make_config(**base)
 
-    def test_threat_pursues_even_when_camouflaged(self):
-        """visibility=0 (fully camouflaged) still pursues - the whole point of
-        PURSUIT_FLEE vs the visibility-gated reactive modes."""
+    def test_threat_pursues_a_visible_octopus(self):
+        """Above the threshold the threat commits to pursuit and closes in."""
         p = self._params()
         octo = Octopus(p)
         ag = AgentGenerator(p)
@@ -216,10 +218,26 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
         ag.agents = [threat]
         d0 = nearest_sucker_dist(octo, threat)
         for _ in range(5):
-            ag.increment_all(octo, visibility=0.0)
+            ag.increment_all(octo, visibility=1.0)  # clearly visible
         self.assertLess(nearest_sucker_dist(octo, threat), d0)
 
-    def test_prey_flees_even_when_camouflaged(self):
+    def test_camouflaged_octopus_is_not_pursued(self):
+        """Below the threshold (well hidden) threats wander, not pursue."""
+        p = self._params()
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        threat = Agent(x=octo.x + 3.0, y=octo.y, agent_type=AgentType.THREAT)
+        ag.agents = [threat]
+        np.random.seed(7)
+        dists = [nearest_sucker_dist(octo, threat)]
+        for _ in range(20):
+            ag.increment_all(octo, visibility=0.0)  # perfectly hidden
+            dists.append(nearest_sucker_dist(octo, threat))
+        decreases = sum(1 for i in range(1, len(dists))
+                        if dists[i] < dists[i - 1])
+        self.assertLess(decreases, len(dists) - 1)  # NOT steady pursuit
+
+    def test_prey_flees_a_visible_octopus(self):
         p = self._params()
         octo = Octopus(p)
         ag = AgentGenerator(p)
@@ -227,11 +245,23 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
         ag.agents = [prey]
         d0 = nearest_sucker_dist(octo, prey)
         for _ in range(5):
-            ag.increment_all(octo, visibility=0.0)
+            ag.increment_all(octo, visibility=1.0)
         self.assertGreater(nearest_sucker_dist(octo, prey), d0)
 
+    def test_threshold_is_the_notice_boundary(self):
+        """Visibility just above the threshold pursues (the exact gate)."""
+        p = self._params(agent_visibility_threshold=0.1)
+        octo = Octopus(p)
+        ag = AgentGenerator(p)
+        threat = Agent(x=octo.x + 3.0, y=octo.y, agent_type=AgentType.THREAT)
+        ag.agents = [threat]
+        d0 = nearest_sucker_dist(octo, threat)
+        for _ in range(5):
+            ag.increment_all(octo, visibility=0.2)  # above 0.1 -> pursues
+        self.assertLess(nearest_sucker_dist(octo, threat), d0)
+
     def test_only_acts_in_sense_window(self):
-        """A threat beyond its sense window wanders (does not steadily close)."""
+        """A VISIBLE octopus beyond the sense window still isn't pursued."""
         p = self._params(agent_range_radius=2)
         octo = Octopus(p)
         ag = AgentGenerator(p)
@@ -240,7 +270,7 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
         np.random.seed(11)
         dists = [nearest_sucker_dist(octo, far)]
         for _ in range(20):
-            ag.increment_all(octo, visibility=0.0)
+            ag.increment_all(octo, visibility=1.0)  # visible, but out of range
             dists.append(nearest_sucker_dist(octo, far))
         decreases = sum(1 for i in range(1, len(dists))
                         if dists[i] < dists[i - 1])
@@ -250,10 +280,11 @@ class TestPursuitFleeAgentMovement(unittest.TestCase):
         p = self._params()
         octo = Octopus(p)
         ag = AgentGenerator(p)
-        # Prey pinned in a corner, fleeing - must clamp to the grid, not walk off.
+        # Prey pinned in a corner, fleeing a VISIBLE octopus - must clamp to the
+        # grid, not walk off.
         ag.agents = [Agent(x=1.0, y=1.0, agent_type=AgentType.PREY)]
         for _ in range(80):
-            ag.increment_all(octo, visibility=0.0)
+            ag.increment_all(octo, visibility=1.0)
         a = ag.agents[0]
         self.assertGreaterEqual(a.x, 0.0)
         self.assertGreaterEqual(a.y, 0.0)

@@ -46,7 +46,10 @@ from simulator.simutil import MovementMode
 
 # v2: limb_solves stores per-node attract/repel targets+weights (node-autonomous
 # sensing) instead of one target/target_kind/threat per limb.
-SCHEMA_VERSION = 2
+# v3: suckers.motor_state (per-node motor state for analyzer colour-coding).
+#     Older DBs lack the column; RunStore reads it defensively (default 0).
+# v4: limb_solves.explore_cell (per-node chosen frontier cell for the hover box).
+SCHEMA_VERSION = 4
 
 DEFAULT_RUNS_DIR = os.path.join(ROOT_DIR, "logs", "runs")
 
@@ -72,7 +75,7 @@ _DDL = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS explore_map (   -- per-frame sucker visit counts
+    CREATE TABLE IF NOT EXISTS explore_map (   -- per-frame sucker visit recency
         run_id VARCHAR NOT NULL, frame INTEGER NOT NULL,
         counts FLOAT[] NOT NULL,               -- flattened (y_len*x_len), [y][x]
         PRIMARY KEY (run_id, frame)
@@ -97,6 +100,7 @@ _DDL = [
         visibility_before FLOAT NOT NULL,
         visibility_after  FLOAT NOT NULL,
         wall_ms FLOAT,
+        body_state TINYINT NOT NULL DEFAULT 0,
         PRIMARY KEY (run_id, frame)
     )
     """,
@@ -117,6 +121,7 @@ _DDL = [
         r_after  FLOAT NOT NULL, g_after  FLOAT NOT NULL, b_after  FLOAT NOT NULL,
         r_target FLOAT NOT NULL, g_target FLOAT NOT NULL, b_target FLOAT NOT NULL,
         err_before FLOAT NOT NULL, err_after FLOAT NOT NULL,
+        motor_state TINYINT NOT NULL DEFAULT 0,
         PRIMARY KEY (run_id, frame, limb_ix, sucker_ix)
     )
     """,
@@ -135,6 +140,7 @@ _DDL = [
         run_id VARCHAR NOT NULL, frame INTEGER NOT NULL, limb_ix TINYINT NOT NULL,
         tension_x FLOAT, tension_y FLOAT, net_x FLOAT, net_y FLOAT,
         arm_length FLOAT,
+        motor_state TINYINT NOT NULL DEFAULT 0,
         PRIMARY KEY (run_id, frame, limb_ix)
     )
     """,
@@ -149,6 +155,7 @@ _DDL = [
         u_init FLOAT[],
         iterations INTEGER NOT NULL, converged BOOLEAN NOT NULL,
         final_cost DOUBLE NOT NULL,
+        explore_cell FLOAT[],   -- (n,2) flattened per-node chosen frontier cell
         PRIMARY KEY (run_id, frame, limb_ix)
     )
     """,
@@ -168,12 +175,12 @@ _DDL = [
 # INSERT templates keyed by table; column order matches the DDL above.
 _INSERTS = {
     "surface": "INSERT INTO surface VALUES (?,?,?,?,?,?)",
-    "frames": "INSERT INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "frames": "INSERT INTO frames VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "limb_nodes": "INSERT INTO limb_nodes VALUES (?,?,?,?,?,?,?)",
-    "suckers": "INSERT INTO suckers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "suckers": "INSERT INTO suckers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "agents": "INSERT INTO agents VALUES (?,?,?,?,?,?,?,?,?,?)",
-    "limb_frames": "INSERT INTO limb_frames VALUES (?,?,?,?,?,?,?,?)",
-    "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "limb_frames": "INSERT INTO limb_frames VALUES (?,?,?,?,?,?,?,?,?)",
+    "limb_solves": "INSERT INTO limb_solves VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     "ilqr_iters": "INSERT INTO ilqr_iters VALUES (?,?,?,?,?,?,?,?,?,?,?)",
     "explore_map": "INSERT INTO explore_map VALUES (?,?,?)",
 }
@@ -315,8 +322,9 @@ class SimRecorder:
         # Head + body forces.
         st["head"] = (float(octo.x), float(octo.y))
         st["head_theta"] = float(getattr(octo, "theta", 0.0))
-        if self._has_explore and getattr(octo, "visit_counts", None) is not None:
-            st["explore"] = np.asarray(octo.visit_counts,
+        st["body_state"] = int(getattr(octo, "last_body_state", 0))
+        if self._has_explore and getattr(octo, "visit_recency", None) is not None:
+            st["explore"] = np.asarray(octo.visit_recency,
                                        dtype=np.float32).reshape(-1).tolist()
         bf = np.asarray(octo.last_body_force, dtype=float)
         bd = np.asarray(octo.last_body_drift, dtype=float)
@@ -353,6 +361,7 @@ class SimRecorder:
                     float(net[0]),
                     float(net[1]),
                     float(limb.last_arm_length),
+                    int(getattr(limb, "last_limb_state", 0)),
                 )
             )
         st["limb_nodes"] = limb_node_rows
@@ -369,6 +378,20 @@ class SimRecorder:
         st["sucker_xy"] = np.array(
             [[s.x, s.y] for (_, _, s) in suckers], dtype=np.float64
         )
+        # Per-sucker motor state (mirrors serialize_state): a sucker inherits its
+        # centreline row's state; the tip row shows "gripping" (4) when anchored.
+        sucker_state = []
+        for limb in octo.limbs:
+            ns = getattr(limb, "last_node_state", None)
+            rows = limb.rows
+            gripping = bool(getattr(limb, "last_gripping", False))
+            for sucker_ix in range(len(limb.suckers)):
+                row = sucker_ix % rows
+                s_state = int(ns[row]) if ns is not None else 0
+                if gripping and row == rows - 1 and s_state in (0, 1):
+                    s_state = 4
+                sucker_state.append(s_state)
+        st["sucker_state"] = sucker_state
         st["before"] = np.array(
             [[s.c.r, s.c.g, s.c.b] for (_, _, s) in suckers], dtype=np.float32
         )
@@ -432,6 +455,8 @@ class SimRecorder:
                     int(meta["iterations"]),
                     bool(meta["converged"]),
                     float(meta["final_cost"]),
+                    (_as_float_list(meta["explore_cell"])
+                     if meta.get("explore_cell") is not None else None),
                 )
             )
             for rec in history or []:
@@ -501,10 +526,12 @@ class SimRecorder:
                 vis_before,
                 vis_after,
                 None if wall_ms is None else float(wall_ms),
+                st.get("body_state", 0),
             )
         )
 
         # Complete sucker rows (one INSERT each, fully populated).
+        sucker_state = st.get("sucker_state")
         sucker_rows = []
         for i, (limb_ix, sucker_ix) in enumerate(st["sucker_meta"]):
             xy = st["sucker_xy"][i]
@@ -530,6 +557,7 @@ class SimRecorder:
                     float(t[2]),
                     float(err_before[i]),
                     float(err_after[i]),
+                    int(sucker_state[i]) if sucker_state is not None else 0,
                 )
             )
         self._buffers["suckers"].extend(sucker_rows)

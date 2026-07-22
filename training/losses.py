@@ -189,7 +189,16 @@ class DeltaColorLayer(keras.layers.Layer):
     def call(self, inputs):
         model_input, raw = inputs
         prev = model_input[:, 0:1]
-        delta = self.max_hue_change * tf.tanh(raw)
+        # CONDITIONED mode: if the input carries a third column it is the
+        # per-example max_hue_change (budget), so the same layer honours any
+        # budget passed at inference. Otherwise use the fixed build-time value.
+        # Either way delta = budget * tanh(raw), so the constraint holds by
+        # construction (see sucker_hue_change_conditioned).
+        if model_input.shape[-1] is not None and model_input.shape[-1] >= 3:
+            budget = model_input[:, 2:3]
+        else:
+            budget = self.max_hue_change
+        delta = budget * tf.tanh(raw)
         return tf.clip_by_value(prev + delta, 0.0, 1.0)
 
     def get_config(self):
@@ -228,7 +237,14 @@ class ClampedTargetLoss(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
         prev = y_true[:, 0]
         surf = y_true[:, 1]
-        step = tf.clip_by_value(surf - prev, -self.threshold, self.threshold)
+        # CONDITIONED training: a third column is the per-example budget, so the
+        # legal target is clamped at that sample's own max_hue_change (matching
+        # the conditioned DeltaColorLayer). Otherwise use the fixed threshold.
+        if y_true.shape[-1] is not None and y_true.shape[-1] >= 3:
+            thr = y_true[:, 2]
+        else:
+            thr = self.threshold
+        step = tf.clip_by_value(surf - prev, -thr, thr)
         target = tf.clip_by_value(prev + step, 0.0, 1.0)
         pred = tf.squeeze(y_pred, axis=-1)
         return tf.square(pred - target)

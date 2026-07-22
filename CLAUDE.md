@@ -57,7 +57,12 @@ costs, and full per-iteration iLQR trajectories). `simulator/run_store.py` is
 the read-only query layer. `visualizer/analyzer.html` is the browser analyzer
 (Simulate + Playback) served by the rewritten `websocket_server.py` (v2
 protocol; the old live-streaming `octopus-visualizer.html` is gone, its URL now
-serves the analyzer).
+serves the analyzer). The analyzer also has a **live preview** (the server
+streams each frame's geometry in the `simulate_progress` broadcast — same shape
+as playback — so the canvas animates while recording), **state-colour** outlines
+(behavior policy), a **measure** tool (`M`, click two points for distance +
+angle), a **jet-radius** ring under the sensing overlay, and a **hover box** on
+the cell a sucker's node is attracting toward (`explore_cell`/`attract_tgt`).
 
 ## Configuration — IMPORTANT
 
@@ -130,22 +135,63 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   (`repel`, graded so the body-adjacent node recoils hardest and the tip least,
   `octo_ilqr_repel_tip_fraction`). Both can act on different nodes of one arm at
   once — there is no single per-limb target or "target kind". A node sensing no
-  prey is drawn gently to the limb's least-explored cell (exploration). The body
-  still emerges from the summed base tension. `simulator/ilqr/residuals.py`
+  prey is drawn gently to a stale explore cell (exploration). The body still
+  emerges from the summed base tension. `simulator/ilqr/residuals.py`
   `attract_residual`/`repel_residual`; the per-node sensing loop is in
-  `Limb._move_ilqr`.
-- **Exploration** (`octo_ilqr_explore_enabled`, off by default): cells are
-  marked explored by the **suckers** (`Octopus.visit_counts`, recency-decayed by
-  `octo_ilqr_explore_decay` < 1); a node that senses no prey is gently drawn to
-  the least-explored reachable cell (`w_explore ≪ w_reach_terminal`), threat-
-  aware. Prey outranks it per node. See EXPLORATION_PLAN.md.
+  `Limb._move_ilqr`. Two refinements to avoid boundary artifacts: (1) the sense
+  weight **smoothstep-ramps** to 0 at the window edge (`sense_ramp_band`) instead
+  of a hard on/off (`_sense_ramp`), so nodes don't bunch at the radius; (2) flee
+  aims at a point one `repel_step` **toward the body** (not the body centre), so
+  the retraction magnitude comes from the threat-proximity weight and is
+  **independent of how far the node is from the body** — far tips no longer get
+  yanked in explosively.
+- **Propulsion** (`octopus.propulsion_mode`, `simutil.PropulsionMode`): how the
+  body's centre of mass translates. `INTERNAL` = the legacy summed-arm-tension
+  drift (`_drift_body_by_tension`), non-physical (internal forces can't move a
+  free body). `REACTION` (`_propel_body`, what `VIZ_ILQR`/analyzer use) =
+  external-reaction: **crawl** (a tip that's *planted*, i.e. world-stationary
+  under `crawl_plant_speed`, and pulling, hauls the body toward its grip, capped
+  by `crawl_grip_limit`) + **jet** (a threat within `jet_trigger_radius` fires a
+  siphon burst away from it, decaying by `jet_decay`, capped at
+  `max_jet_velocity`). Rotation (summed torque → θ) is shared by both.
+- **Behavior policy** (analyzer colour-coding): a per-node/limb/body state code
+  is computed each frame (0 idle · 1 exploring · 2 chasing prey · 3
+  avoiding/fleeing · 4 gripping/crawling) — `Limb.last_node_state`/
+  `last_limb_state`, `Octopus.last_body_state` — recorded (schema v3) and shown
+  as outline/centerline/head colours.
+- **Agent camouflage-gating:** `PURSUIT_FLEE` threats now pursue only when the
+  octopus is visible enough (`agents.visibility_threshold`); below it the octopus
+  reads as hidden and agents wander (the reactive spring modes already scale
+  continuously with visibility). So camouflage is protective.
+- **Exploration** (`octo_ilqr_explore_enabled`, off by default): a
+  least-RECENTLY-visited map, `Octopus.visit_recency` — a cell is **set to 1.0**
+  when a sucker is on it (not incremented, so dwell time doesn't matter) and
+  decays by `octo_ilqr_explore_decay` < 1 each frame, so its value is
+  `decay ** frames_since_last_visit`. A node that senses no prey is gently drawn
+  (`w_explore ≪ w_reach_terminal`) to a stale cell chosen **lexicographically**
+  (`_node_explore_target`): first the least-recently-visited set (minimum
+  recency in `explore_node_radius`, plus a threat penalty in the primary key),
+  then the **closest** of that set — recency always beats distance, so a node
+  never prefers a near recent cell to a far stale one. The chosen cell is
+  recorded (`explore_cell`, schema v4) for the analyzer's hover box. Prey
+  outranks it per node. See EXPLORATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
-  constrained to change ≤ `octo_max_hue_change` (0.25) per step **per
-  channel**. Full **RGB**: the surface grid is `(y, x, 3)` and each of
-  `Color.r/g/b` matches its channel independently (grayscale surfaces are the
-  special case r=g=b). The `SUCKER`/`LIMB` models are single-channel and are
-  applied per channel. `world.background_image` loads an image as the surface;
+  constrained to change ≤ `octo_max_hue_change` per step **per channel**. Full
+  **RGB**: the surface grid is `(y, x, 3)` and each of `Color.r/g/b` matches its
+  channel independently (grayscale surfaces are the special case r=g=b). The
+  `SUCKER`/`LIMB` models are single-channel and are applied per channel.
+  `world.background_image` loads an image as the surface;
   `world.surface_grayscale` picks grayscale vs colour random noise.
+  `max_hue_change` is enforced in **both** paths: `NO_MODEL` clamps the step
+  directly, and the `SUCKER` model's output is **re-clamped** to it at inference
+  (the trained model bakes in its *training-time* cap, so this is what lets a
+  smaller config value actually slow camouflage without retraining). It is
+  propagated to every `Sucker` in `_refresh_sucker_locations` — a `Sucker(0,0)`
+  built without config keeps a 0.25 fallback, so before this the knob silently
+  did nothing. **Opt-in:** `training.sucker_hue_change_conditioned` trains the
+  sucker net on `max_hue_change` as a 3rd input (over a sampled range), so one
+  model honours any budget passed at inference (`DeltaColorLayer` reads it from
+  input column 2; inference detects a 3-input model and skips the re-clamp).
 - **Setting colors:** `octo.set_color(surf, inference_mode, model)` computes
   colors in parallel and applies them (fixed July 2026). The
   equivalent explicit form, used where the caller wants the matrix too:
@@ -278,7 +324,9 @@ unused imports); clean opportunistically, don't let it block work.
    is `solver.py` + `arm.py` + `residuals.py` (the cost library — new cost terms
    go there). The old `nodemesh.py` + `costs.py` gradient-relaxation prototype
    was **deleted** July 2026 (incompatible paradigm, never wired in). See
-   ARCHITECTURE.md §4.5 and §11 for the compute-placement rationale.
+   ARCHITECTURE.md §4.5 and §11 for the compute-placement rationale. Note
+   `PropulsionMode` (how the *body* translates: `INTERNAL`/`REACTION`) is a
+   SEPARATE axis from `MovementMode` (how a *limb* moves) — see Key Concepts.
 5. `InferenceLocation.REMOTE` exists but nothing routes inference to the
    server yet — wiring it up means giving `Sucker.find_color` (or a layer
    above it) an HTTP client path.
@@ -298,4 +346,7 @@ unused imports); clean opportunistically, don't let it block work.
    read-only; the server never opens the *active* run's file (it's write-locked
    by the recorder), synthesizing that row from memory instead. Enabling
    `record_ilqr_history` has zero overhead when off but is the bulk of a run's
-   disk (~20 MB at 120 frames vs ~2–3 MB without).
+   disk (~20 MB at 120 frames vs ~2–3 MB without). `SCHEMA_VERSION` is 4;
+   `RunStore` reads newer columns **defensively** (column-existence checks, not a
+   version gate), so pre-v4 runs still open — they just read back the added
+   fields as defaults (`motor_state`/`body_state` = 0/idle, `explore_cell` = none).

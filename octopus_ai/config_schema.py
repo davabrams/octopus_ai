@@ -25,7 +25,7 @@ than by reading comments.
 from dataclasses import dataclass, field, replace
 from typing import Dict, Optional
 
-from simulator.simutil import InferenceLocation, MLMode, MovementMode
+from simulator.simutil import InferenceLocation, MLMode, MovementMode, PropulsionMode
 
 
 # ---------------------------------------------------------------- paths ---
@@ -76,6 +76,18 @@ class AgentConfig:
     prey_capture_radius: float = 0.3  # a PREY within this distance of any
                                       # sucker is captured; 0 disables
     respawn_captured_prey: bool = False
+    visibility_threshold: float = 0.05  # PURSUIT_FLEE only: the octopus must be
+                                        # at least this VISIBLE (mean squared
+                                        # camouflage error, ~0 = perfectly hidden)
+                                        # before threats notice and commit to
+                                        # pursuit; below it the octopus is
+                                        # effectively invisible and agents wander.
+                                        # So camouflage is protective - a hidden
+                                        # octopus is left alone, a poorly-matched
+                                        # (or moving-into-new-terrain) one gets
+                                        # hunted. The visibility-gated REACTIVE
+                                        # modes ignore this (they already scale
+                                        # continuously with visibility).
 
 
 # ------------------------------------------------- limb movement models ---
@@ -140,15 +152,23 @@ class ILQRConfig:
                                    # at its ring point) to the body's ROTATION.
                                    # Torque and linear tension share the same
                                    # base-reaction source, so they live together.
-    w_spring: float = 2.0        # segment spacing toward rest length (linear)
+    w_spring: float = 4.0        # segment spacing toward rest length (linear).
+                                 # Raised from 2.0 to hold sucker spacing more
+                                 # firmly so explore-reaching nodes can't ball up
+                                 # at the arm tip (they crowded when the spring
+                                 # was soft; see the analyzer's per-node costs)
     w_spring_stiffen: float = 30.0  # super-linear (cubic-force) spring term: a
                                     # soft wall against large stretch/compression
                                     # so a strong attractor can't ball up or
                                     # stretch the chain (min seg ~= rest)
-    spring_slack: float = 0.25   # deadband: a segment may deviate +-this from
+    spring_slack: float = 0.00   # deadband: a segment may deviate +-this from
                                  # rest length for FREE (nodes move paying only
-                                 # effort within the slack)
-    w_bend: float = 1.0          # straightness (anti-crumple)
+                                 # effort within the slack). Narrowed from 0.25:
+                                 # the wide free zone let tip nodes compress
+                                 # together at zero cost and bunch up
+    w_bend: float = 2.0          # straightness (anti-crumple). Raised from 1.0 to
+                                 # keep the arm shaft straighter and the suckers
+                                 # more evenly spread from base to tip
     bend_deadzone_deg: float = 15.0  # free bend per node before bending engages
     w_effort_stiffen: float = 5.0  # super-linear (cubic-force) velocity penalty:
                                    # forbids a node teleporting across the field
@@ -161,29 +181,74 @@ class ILQRConfig:
                                  # total far more than its scalar suggests - push
                                  # it too high and the gentle explore pull loses.
     w_reach_run: float = 0.1     # weak per-step tip pull toward the target
-    w_reach_terminal: float = 6.0  # strong terminal tip pull (dominates)
-    w_repel: float = 8.0         # threat avoidance strength
+    w_reach_terminal: float = 3.0  # terminal tip pull toward prey. Halved from
+                                   # 6.0: at 6 (vs w_spring=4) the reach cost
+                                   # (weight x distance^2) dwarfed the spring, so
+                                   # iLQR bunched nodes onto the prey/sense edge
+                                   # rather than letting the chain hold spacing
+    sense_ramp_band: float = 0.3  # smooth the HARD edge at the agent sense radius
+                                  # R. Prey attract used to switch on at full
+                                  # weight the instant a node crossed R (and 0 just
+                                  # outside), so boundary nodes felt a huge pull
+                                  # while their neighbours felt none -> bunching at
+                                  # the threshold. Instead the sense weight is full
+                                  # for d <= R*(1-band) and smoothstep-ramps to 0 at
+                                  # d = R (applied to BOTH prey attract and threat
+                                  # repel). This is the fraction of R that ramps;
+                                  # 0 restores the hard cutoff, 1 ramps over all R.
+    w_repel: float = 1.0         # threat avoidance strength (flee URGENCY). With
+                                 # the repel-target fix below the cost no longer
+                                 # scales with |node-body|^2, so this is now the
+                                 # clean priority of fleeing vs the other terms.
+    repel_step: float = 1.0      # flee retraction: a fleeing node aims at a point
+                                 # this far TOWARD the body (capped at the body),
+                                 # NOT at the body centre. So the repel residual
+                                 # magnitude is `repel_step` (constant), and the
+                                 # force MAGNITUDE comes from the threat-proximity
+                                 # WEIGHT (w_repel * sense-ramp), decoupled from how
+                                 # far the node is from the body. Fixes the old
+                                 # cost ~ w*|node-body|^2, which yanked far tips
+                                 # explosively (and let far nodes catch up to near
+                                 # ones -> bunching); now every threatened node
+                                 # retracts toward the body at a body-distance-
+                                 # INDEPENDENT rate, preserving spacing. Same
+                                 # aim-a-short-step trick the explore target uses.
     repel_radius: float = 2.5    # threat keep-out radius
     repel_tip_fraction: float = 0.3  # tip's threat-avoidance vs the body-
                                      # adjacent node's: protect the body, not the
                                      # limb tip - base end recoils hardest (1.0),
                                      # tip least (this fraction)
     # Exploration (off by default): a node sensing no prey is drawn GENTLY to its
-    # OWN nearest least-visited cell (cells are marked explored by the SUCKERS;
+    # OWN nearest least-recently-visited cell (cells are marked explored by the SUCKERS;
     # the visit map is whole-body/shared, the attraction is PER-NODE so the arm
     # spreads to cover ground). w_explore << w_reach_terminal and prey preempts
     # it per node, so exploration never outranks hunting.
     explore_enabled: bool = False
-    w_explore: float = 0.5       # gentle per-node pull toward its nearest
+    w_explore: float = 1.5       # gentle per-node pull toward its nearest
                                  # unexplored cell (vs 6.0 for prey)
-    explore_node_radius: float = 3.0  # how far each node looks for its own
-                                      # least-visited cell; small = local search
+    explore_node_radius: float = 6.0  # how far each node looks for its own
+                                      # least-recently-visited cell; small = local search
                                       # = arm stays spread (no balling on one cell)
-    explore_decay: float = 0.95  # per-frame decay of visit counts; < 1.0 turns
-                                 # "least visited" into "least RECENTLY visited"
-                                 # and makes the overlay read as recency (recent
-                                 # cells bright, old ones fade). 1.0 = cumulative.
-    # The explore-target picker is otherwise threat-blind, so the least-visited
+    explore_target_smooth: float = 0.85  # EMA smoothing of each node's explore
+                                      # target, in [0, 1). The least-recently-visited cell
+                                      # is a strict argmin over a visit map that
+                                      # changes every frame, so it flip-flops
+                                      # between adjacent cells frame-to-frame and
+                                      # the free arm TIP snaps back and forth
+                                      # (high-frequency flicker). Low-pass the
+                                      # target: tgt = s*prev + (1-s)*raw. 0
+                                      # disables (legacy, flickers); ->1 is very
+                                      # smooth but laggier. Only affects explore
+                                      # targets, never prey/threat.
+    explore_decay: float = 0.95  # per-frame decay of the recency map. A cell is
+                                 # SET to 1.0 when a sucker is on it (not
+                                 # incremented - dwell doesn't matter), then fades
+                                 # by this each frame, so its value is
+                                 # decay**frames_since_last_visit. Nodes seek the
+                                 # LOWEST (least recently visited). Smaller = the
+                                 # frontier reopens sooner; 1.0 = never fades (a
+                                 # cell stays "visited" forever once touched).
+    # The explore-target picker is otherwise threat-blind, so the least-recently-visited
     # frontier is exactly the region the threat has kept the octopus out of -
     # the arm reaches for it while the repel barrier shoves back, and the two
     # cancel into a stall. Penalize explore cells near a sensed threat so the
@@ -196,7 +261,7 @@ class ILQRConfig:
 # ---------------------------------------------------------------- limbs ---
 @dataclass(frozen=True)
 class SuckerConfig:
-    max_hue_change: float = 0.25  # max rgb change per step; the constraint
+    max_hue_change: float = 0.01  # max rgb change per step; the constraint
                                   # threshold (was octo_max_hue_change)
     adjacency_radius: float = 1.0  # how close two suckers must be to count
                                    # as neighbours for the LIMB model
@@ -208,6 +273,14 @@ class LimbConfig:
     cols: int = 2
     min_sucker_distance: float = 0.1  # was octo_min_sucker_distance
     max_sucker_distance: float = 0.3  # was octo_max_sucker_distance
+    sucker_col_spacing: float = 0.1  # LATERAL gap between the `cols` suckers on
+                                     # ONE node, perpendicular to the centerline
+                                     # (the width of the arm). Decoupled from the
+                                     # along-arm segment spacing: raise this to
+                                     # spread the suckers on a node apart WITHOUT
+                                     # changing arm length. Was implicitly
+                                     # sucker_distance (pinned at min_sucker_
+                                     # distance in ILQR), so 0.1 keeps the look.
     movement_mode: MovementMode = MovementMode.RANDOM
     # Mode-specific knobs, nested under the mode that reads them.
     random: RandomDriftConfig = field(default_factory=RandomDriftConfig)
@@ -234,6 +307,37 @@ class OctopusConfig:
     max_body_angular_velocity: float = 0.1  # per-frame cap on body rotation
                                             # (rad); the angular twin of
                                             # max_body_velocity.
+    # --- propulsion (how the body's CoM translates) ---------------------
+    # INTERNAL reproduces the legacy summed-tension drift exactly; REACTION
+    # switches to the external-reaction model (crawl + jet) in _propel_body.
+    propulsion_mode: PropulsionMode = PropulsionMode.INTERNAL
+    crawl_grip_limit: float = 0.15  # REACTION only: per-arm friction/adhesion
+                                    # thrust budget. An anchored arm hauls the
+                                    # body toward its grip up to this; beyond it
+                                    # the sucker SLIPS and adds no more thrust
+                                    # (the external-reaction cap the internal
+                                    # model lacks).
+    crawl_plant_speed: float = 0.08  # REACTION only: a tip that moved less than
+                                     # this between frames counts as PLANTED
+                                     # (gripping); a faster tip is swinging/
+                                     # reaching and provides no crawl reaction,
+                                     # so a lone reach no longer glides the body.
+    jet_enabled: bool = True         # REACTION only: fire a siphon jet on threat
+    jet_trigger_radius: float = 8.0  # a threat within this of the body CENTRE
+                                     # fires the escape jet. Kept SEPARATE from
+                                     # (and wider than) the arm sensing_radius:
+                                     # the arms sense from their extended tips, so
+                                     # they recoil from a threat well before it is
+                                     # within sensing_radius of the body centre -
+                                     # the body should flee just as early, not
+                                     # wait for the threat to reach point-blank.
+    jet_impulse: float = 0.9         # velocity added to the jet burst each frame
+                                     # a threat is within jet_trigger_radius of
+                                     # the body (accumulates up to max_jet_velocity)
+    jet_decay: float = 0.6           # per-frame decay of jet velocity as the
+                                     # mantle refills (0 = one-shot, 1 = never)
+    max_jet_velocity: float = 1.2    # escape-speed cap; >> max_body_velocity so
+                                     # a jet burst clearly outruns a crawl
     limb: LimbConfig = field(default_factory=LimbConfig)
     sucker: SuckerConfig = field(default_factory=SuckerConfig)
 
@@ -299,6 +403,20 @@ class TrainingConfig:
                                      # colour DELTA (constraint enforced by
                                      # architecture); False = legacy direct
                                      # prediction with WeightedSumLoss
+    sucker_hue_change_conditioned: bool = False  # (delta model only) CONDITION
+                                     # the sucker net on max_hue_change: it takes
+                                     # (current, surface, max_hue_change) and is
+                                     # trained across a range of budgets (each
+                                     # sample drawn from [min,max]), so ONE model
+                                     # honours any per-step cap passed at
+                                     # inference - the network learns to spend a
+                                     # small budget greedily vs a large one
+                                     # smoothly. Off = the fixed-budget model
+                                     # (inference re-clamps to the config value,
+                                     # see Octopus._find_color_batched).
+    sucker_hue_change_train_range: tuple = (0.01, 0.5)  # (min, max) budget range
+                                     # sampled per training example when
+                                     # sucker_hue_change_conditioned is on.
 
     save_model_to_disk: bool = True
     restore_model_from_disk: bool = False

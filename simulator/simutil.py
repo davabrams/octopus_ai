@@ -23,6 +23,23 @@ class MovementMode(Enum):
                            # visibility-gated reactive modes); wanders otherwise.
 
 
+class PropulsionMode(Enum):
+    """How the body's centre of mass is translated (see Octopus._propel_body).
+
+    INTERNAL: the legacy coupling - the body drifts along the summed base
+        tension of its arms (simulator/octopus_generator._drift_body_by_tension).
+        Simple, but non-physical: internal arm tension cannot move a free body's
+        centre of mass (the forces are internal and cancel), so a lone arm
+        reaching into open water glides the whole body after it.
+    REACTION: external-reaction propulsion (_propel_body). The body moves only
+        via forces the environment can react against - suckers gripping the
+        substrate (friction-limited CRAWL) and water expelled through the siphon
+        (JET escape). An unanchored reach produces no translation.
+    """
+    INTERNAL: int = 0
+    REACTION: int = 1
+
+
 class AgentType(Enum):
     """Enum stores the two types of agents"""
     PREY = 0

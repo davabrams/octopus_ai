@@ -52,6 +52,27 @@ def _frames_has_theta(con) -> bool:
     return bool(rows)
 
 
+def _suckers_has_state(con) -> bool:
+    """Whether the suckers table carries motor_state (runs recorded before the
+    motor-state colour-coding lack it; they read back as state = 0 = idle)."""
+    rows = con.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'suckers' AND column_name = 'motor_state'"
+    ).fetchall()
+    return bool(rows)
+
+
+def _col_exists(con, table: str, column: str) -> bool:
+    """Whether `table` has `column` (for graceful reads of pre-v3 runs that
+    lack the limb/body behavior-policy columns)."""
+    rows = con.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = ? AND column_name = ?",
+        [table, column],
+    ).fetchall()
+    return bool(rows)
+
+
 def _table_exists(con, table: str) -> bool:
     """Whether a table exists (runs recorded before it was added won't have
     it - e.g. explore_map on pre-exploration runs)."""
@@ -317,15 +338,20 @@ class RunStore:
     # ---- builders --------------------------------------------------------
     def _build_state(self, con, run_id, frame, has_theta=True) -> dict:
         theta_col = ", head_theta" if has_theta else ""
+        has_body_state = _col_exists(con, "frames", "body_state")
+        bstate_col = ", body_state" if has_body_state else ""
         fr = con.execute(
             "SELECT head_x, head_y, visibility_before, visibility_after, "
-            f"prey_captured_total, prey_captured_frame{theta_col} FROM frames "
-            "WHERE frame = ?",
+            f"prey_captured_total, prey_captured_frame{theta_col}{bstate_col} "
+            "FROM frames WHERE frame = ?",
             [frame],
         ).fetchone()
         if fr is None:
             raise FrameOutOfRangeError(frame, None)
         head_theta = _r4(fr[6]) if has_theta else 0.0
+        # body_state is the last selected column when present (after the optional
+        # theta col), so its index shifts with has_theta.
+        body_state = int(fr[7 if has_theta else 6]) if has_body_state else 0
 
         # Limb centerlines, grouped by limb in node order.
         node_rows = con.execute(
@@ -338,11 +364,23 @@ class RunStore:
             limbs.setdefault(limb_ix, []).append({"x": _r4(x), "y": _r4(y)})
         limb_list = [limbs[k] for k in sorted(limbs)]
 
+        # Per-limb behavior policy (pre-v3 runs lack the column -> all 0/idle).
+        limb_states = []
+        if _col_exists(con, "limb_frames", "motor_state"):
+            ls_rows = con.execute(
+                "SELECT motor_state FROM limb_frames WHERE frame = ? "
+                "ORDER BY limb_ix",
+                [frame],
+            ).fetchall()
+            limb_states = [int(r[0]) for r in ls_rows]
+
         # Suckers, flat in (limb, sucker) order.
+        has_state = _suckers_has_state(con)
+        state_col = ", motor_state" if has_state else ""
         suck_rows = con.execute(
             "SELECT limb_ix, x, y, r_after, g_after, b_after, r_before, "
-            "g_before, b_before, r_target, g_target, b_target FROM suckers "
-            "WHERE frame = ? ORDER BY limb_ix, sucker_ix",
+            f"g_before, b_before, r_target, g_target, b_target{state_col} "
+            "FROM suckers WHERE frame = ? ORDER BY limb_ix, sucker_ix",
             [frame],
         ).fetchall()
         suckers = [
@@ -353,6 +391,7 @@ class RunStore:
                 "color": [_r4(s[3]), _r4(s[4]), _r4(s[5])],
                 "color_before": [_r4(s[6]), _r4(s[7]), _r4(s[8])],
                 "target_color": [_r4(s[9]), _r4(s[10]), _r4(s[11])],
+                "state": int(s[12]) if has_state else 0,
             }
             for s in suck_rows
         ]
@@ -380,6 +419,8 @@ class RunStore:
                 "head": {"x": _r4(fr[0]), "y": _r4(fr[1]), "theta": head_theta},
                 "limbs": limb_list,
                 "suckers": suckers,
+                "limb_states": limb_states,
+                "body_state": body_state,
             },
             "agents": agents,
             "metadata": {
@@ -392,10 +433,12 @@ class RunStore:
         }
 
     def _build_ilqr(self, con, run_id, frame, horizon, n_free) -> list:
+        has_ec = _col_exists(con, "limb_solves", "explore_cell")
+        ec_col = ", explore_cell" if has_ec else ""
         solves = con.execute(
             "SELECT limb_ix, base_x, base_y, attract_tgt, attract_sw, "
             "repel_tgt, repel_sw, threat_active, iterations, "
-            "converged, final_cost FROM limb_solves WHERE frame = ? "
+            f"converged, final_cost{ec_col} FROM limb_solves WHERE frame = ? "
             "ORDER BY limb_ix",
             [frame],
         ).fetchall()
@@ -437,6 +480,11 @@ class RunStore:
                         "repel_tgt": _pairs(s[5]),
                         "repel_sw": [_r4(v) for v in s[6]],
                         "threat_active": bool(s[7]),
+                        # Per-node chosen frontier cell (None where not exploring
+                        # or on pre-v4 runs) - the real explore target for the
+                        # analyzer's hover box.
+                        "explore_cell": (_pairs_nullable(s[11])
+                                         if has_ec and len(s) > 11 else []),
                     },
                     "iterations": iteration_list,
                 }
@@ -449,6 +497,21 @@ def _pairs(flat) -> list:
     if flat is None:
         return []
     return [[_r4(flat[i]), _r4(flat[i + 1])] for i in range(0, len(flat), 2)]
+
+
+def _pairs_nullable(flat) -> list:
+    """Like _pairs but a NaN pair (a node that wasn't exploring) -> None, so the
+    result is JSON-safe (NaN is not valid JSON) and the client can skip it."""
+    if flat is None:
+        return []
+    out = []
+    for i in range(0, len(flat), 2):
+        x, y = flat[i], flat[i + 1]
+        # DuckDB reads a stored NaN back as either NaN or NULL(None); treat both
+        # as "no cell" so the client falls back cleanly.
+        blank = x is None or y is None or x != x or y != y  # x!=x: NaN
+        out.append(None if blank else [_r4(x), _r4(y)])
+    return out
 
 
 def _reshape_traj(flat, horizon, n_free) -> list:

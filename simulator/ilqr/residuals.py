@@ -115,12 +115,15 @@ def repel_residual(x: tf.Tensor, targets: tf.Tensor, node_sw) -> tf.Tensor:
 
     A fleeing octopus arm does not extend away from the threat - it pulls IN
     toward the body. So the flee force points node -> body, NOT node -> away-
-    from-threat. ``targets`` is ``(n_free, 2)`` = the body centre (same for every
-    node); ``node_sw`` is the ``(n_free,)`` per-node sqrt-weight, 0 where the node
-    senses no threat and larger the closer its sensed threat is (so the arm pulls
-    in harder the nearer the danger). Same form as attract_residual - flee is
-    just an attract whose target is the body and whose weight is threat
-    proximity.
+    from-threat. ``targets`` is ``(n_free, 2)`` = a point one ``repel_step`` TOWARD
+    the body from each node (NOT the body centre), so the residual magnitude is a
+    constant ``repel_step`` and the flee force is body-distance-INDEPENDENT -
+    every threatened node retracts toward the body at the same rate (set by the
+    weight), which preserves spacing instead of yanking far tips in hardest.
+    ``node_sw`` is the ``(n_free,)`` per-node sqrt-weight, 0 where the node senses
+    no threat and larger the closer its sensed threat is (so the arm pulls in
+    harder the nearer the danger). Same form as attract_residual - flee is just an
+    attract toward a body-ward point whose weight is threat proximity.
     """
     free = tf.reshape(x, (-1, 2))       # (n_free, 2)
     tgt = tf.reshape(targets, (-1, 2))  # (n_free, 2)

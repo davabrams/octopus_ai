@@ -252,6 +252,13 @@ function cellSizeFor(xLen, yLen, availW, availH) {
 
 // Draw one frame's world into ctx. `view` carries the anatomy + cellSize +
 // overlay options. Reuses the old page's draw code, upgraded for RGB + iLQR.
+// Behavior-policy palette, shared by node (sucker outline), limb (centerline)
+// and body (head) levels. Codes: 0 idle/resting, 1 exploring/foraging, 2 chasing
+// prey, 3 avoiding threat/fleeing, 4 gripping/crawling.
+const STATE_COLORS = ["#64748b", "#38bdf8", "#22c55e", "#f43f5e", "#f59e0b"];
+const STATE_LABELS = ["idle", "exploring", "chasing prey", "avoiding threat", "gripping"];
+function stateColor(code) { return STATE_COLORS[code] || STATE_COLORS[0]; }
+
 function drawWorld(ctx, background, state, view) {
   const cs = view.cellSize;
   const { xLen, yLen } = view;
@@ -307,8 +314,10 @@ function drawWorld(ctx, background, state, view) {
   // Limb centerlines.
   if (view.showCenterlines !== false) {
     ctx.lineWidth = 3;
+    const limbStates = state.octopus.limb_states;
     state.octopus.limbs.forEach((limb, limbIdx) => {
-      ctx.strokeStyle = hasSelection && limbIdx !== selLimb ? "rgba(255,68,68,0.2)" : "#ff4444";
+      ctx.strokeStyle = hasSelection && limbIdx !== selLimb ? "rgba(255,68,68,0.2)"
+        : (view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444");
       if (limb.length > 1) {
         ctx.beginPath();
         ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
@@ -321,7 +330,9 @@ function drawWorld(ctx, background, state, view) {
   // Head.
   if (view.showHead !== false) {
     const hx = state.octopus.head.x * cs, hy = state.octopus.head.y * cs;
-    ctx.fillStyle = hasSelection ? "rgba(255,102,102,0.25)" : "#ff6666";
+    ctx.fillStyle = hasSelection ? "rgba(255,102,102,0.25)"
+      : (view.stateColors && typeof state.octopus.body_state === "number"
+         ? stateColor(state.octopus.body_state) : "#ff6666");
     ctx.beginPath();
     ctx.arc(hx, hy, cs * 0.4, 0, 2 * Math.PI);
     ctx.fill();
@@ -349,8 +360,10 @@ function drawWorld(ctx, background, state, view) {
       ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
       ctx.fill();
       if (view.showOutlines) {
-        ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)" : "#222";
-        ctx.lineWidth = 1;
+        // Color the outline by the node's behavior policy when enabled.
+        ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)"
+          : (view.stateColors ? stateColor(s.state || 0) : "#222");
+        ctx.lineWidth = view.stateColors ? 1.75 : 1;
         ctx.stroke();
       }
     });
@@ -363,6 +376,34 @@ function drawWorld(ctx, background, state, view) {
       ctx.beginPath();
       ctx.arc(s.x * cs, s.y * cs, cs * 0.28, 0, 2 * Math.PI);
       ctx.stroke();
+      // Outline the cell this sucker's NODE is attracting toward (prey/explore
+      // target), if any. Maps sucker -> its centreline row -> free-node index,
+      // then reads the recorded per-node attract target from the iLQR data.
+      if (view.ilqr && view.limbRows) {
+        const perLimb = view.limbRows * (view.limbCols || 1);
+        const limbIdx = s.limb != null ? s.limb : Math.floor(view.hoverSucker / perLimb);
+        const fi = ((view.hoverSucker % perLimb) % view.limbRows) - 1; // -1 = base
+        const ld = fi >= 0 ? view.ilqr.find((l) => l.limb === limbIdx) : null;
+        const tgt = ld && ld.final && ld.final.attract_tgt ? ld.final.attract_tgt[fi] : null;
+        const asw = ld && ld.final && ld.final.attract_sw ? (ld.final.attract_sw[fi] || 0) : 0;
+        // Prefer the recorded frontier CELL for explore nodes (the real target);
+        // fall back to the attract point (prey/threat, or pre-v4 runs).
+        const ecell = ld && ld.final && ld.final.explore_cell ? ld.final.explore_cell[fi] : null;
+        const cell = ecell || tgt;
+        if (cell && asw > 0) {
+          const tcx = Math.round(cell[0]), tcy = Math.round(cell[1]);
+          ctx.strokeStyle = "#38bdf8";   // sky, matching the exploring policy color
+          ctx.lineWidth = 2;
+          ctx.strokeRect((tcx - 0.5) * cs, (tcy - 0.5) * cs, cs, cs);
+          // a thin line from the sucker to the target cell centre
+          ctx.strokeStyle = "rgba(56,189,248,0.5)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(s.x * cs, s.y * cs);
+          ctx.lineTo(tcx * cs, tcy * cs);
+          ctx.stroke();
+        }
+      }
     }
   }
 
@@ -394,6 +435,19 @@ function drawWorld(ctx, background, state, view) {
         ctx.setLineDash([]);
       }
     });
+  }
+
+  // Jet-escape trigger radius around the BODY (a threat inside this fires the
+  // siphon jet). Shown with the sensing overlay; amber to match the jet.
+  if (view.showSensing && view.jetTriggerRadius && state.octopus.head) {
+    const hx = state.octopus.head.x * cs, hy = state.octopus.head.y * cs;
+    ctx.strokeStyle = "rgba(245,158,11,0.7)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(hx, hy, view.jetTriggerRadius * cs, 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.restore(); // cell-centre shift
@@ -498,7 +552,8 @@ function strokeChain(ctx, chain, cs) {
   ctx.stroke();
 }
 
-// Per-cell sucker visit-count heatmap. explore is a [y][x] grid of counts.
+// Per-cell sucker visit-RECENCY heatmap. explore is a [y][x] grid of recency
+// values (1.0 = touched now, ->0 = long ago, 0 = never); nodes seek the lowest.
 // With decay on (explore_decay < 1) the counts are a RECENCY field: recently
 // visited cells are high, older ones have faded. Ramp each cell from faded
 // light orange (low = least recent) to dark saturated orange (high = most
@@ -581,11 +636,14 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [showOutlines, setShowOutlines] = useState(true);
+  const [stateColors, setStateColors] = useState(true); // colour by behavior policy
   const [showCenterlines, setShowCenterlines] = useState(true);
   const [showHead, setShowHead] = useState(true);
   const [showSuckers, setShowSuckers] = useState(true);
   const [showAgents, setShowAgents] = useState(true);
   const [ctxMenu, setCtxMenu] = useState(null); // {x, y} or null
+  const [measureMode, setMeasureMode] = useState(false); // ruler tool active
+  const [measurePts, setMeasurePts] = useState([]); // up to 2 world pts {wx,wy}
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
@@ -601,7 +659,8 @@ function App() {
   const canvasRef = useRef(null);
   const frameCache = useRef(C.makeLru(400));
   const ilqrCache = useRef(C.makeLru(40));
-  const exploreCache = useRef(C.makeLru(60)); // per-frame visit-count grids
+  const exploreCache = useRef(C.makeLru(60)); // per-frame visit-recency grids
+  const lastExploreRef = useRef(null); // last-drawn grid, held while fetching
   const dirtyRef = useRef(true);
   const stateRef = useRef({}); // live-drawn refs (NOT React state churn)
   const pendingReq = useRef(new Map());
@@ -624,6 +683,7 @@ function App() {
   stateRef.current.zoom = zoom;
   stateRef.current.pan = pan;
   stateRef.current.showOutlines = showOutlines;
+  stateRef.current.stateColors = stateColors;
   stateRef.current.showCenterlines = showCenterlines;
   stateRef.current.showHead = showHead;
   stateRef.current.showSuckers = showSuckers;
@@ -633,6 +693,8 @@ function App() {
   stateRef.current.setupOctoStart = setupOctoStart;
   stateRef.current.setupAgents = setupAgents;
   stateRef.current.placementTool = placementTool;
+  stateRef.current.simRunning = sim.running;
+  stateRef.current.measurePts = measurePts;
 
   // ---- websocket ----
   const send = useCallback((type, data, cb) => {
@@ -673,6 +735,13 @@ function App() {
       setRuns(data.runs);
     } else if (type === "simulate_progress") {
       setSim((s) => ({ ...s, progress: data, running: true }));
+      // Live preview: render the newest frame's geometry as it arrives (same
+      // shape as playback frames). Stashed on the ref the RAF draw loop reads.
+      if (data.state) {
+        stateRef.current.liveFrame = data.state;
+        stateRef.current.liveFrameNum = data.frame;
+        dirtyRef.current = true;
+      }
     } else if (type === "simulate_complete") {
       setSim((s) => ({ ...s, running: false, progress: null }));
       // draw final_state immediately, then auto-select in playback
@@ -724,6 +793,7 @@ function App() {
     frameCache.current = C.makeLru(400);
     ilqrCache.current = C.makeLru(40);
     exploreCache.current = C.makeLru(60);
+    lastExploreRef.current = null;   // don't carry a prior run's overlay
     setFrameIdx(0);
     setPlaying(false);
     send("load_run", { run_id: runId }, (msg) => {
@@ -781,7 +851,10 @@ function App() {
 
   useEffect(() => {
     if (!meta || !exploreOverlay) return;
-    ensureExplore(meta.run_id, frameIdx);
+    // Fetch the current frame plus a couple ahead so playback rarely outruns the
+    // recency grid (the draw loop also holds the last grid to bridge any gap).
+    const max = meta.frames_recorded - 1;
+    for (let d = 0; d <= 2; d++) ensureExplore(meta.run_id, Math.min(frameIdx + d, max));
     dirtyRef.current = true;
   }, [meta, frameIdx, exploreOverlay, ensureExplore]);
 
@@ -790,7 +863,7 @@ function App() {
     [colorMode, showGrid, showSensing, ilqrOverlay, ilqrLimb, ilqrIter,
      ilqrStep, convergence, zoom, pan, showOutlines, showCenterlines,
      showHead, showSuckers, showAgents, tab, setupGrid, setupOctoStart,
-     setupAgents, placementTool]);
+     setupAgents, placementTool, measurePts, measureMode, stateColors]);
 
   // ---- play loop ----
   useEffect(() => {
@@ -814,8 +887,14 @@ function App() {
       const cv = canvasRef.current;
       const S = stateRef.current;
       if (!cv) { dirtyRef.current = false; return; }
-      // Setup preview when on simulate tab with no run loaded
-      if (S.tab === "simulate" && !S.meta) {
+      // Live preview has TOP priority while a simulation is running - even if a
+      // previous run is still loaded in playback (S.meta set). Without this the
+      // draw loop would fall through to the loaded run and never show the sim.
+      if (S.simRunning && S.liveFrame) { dirtyRef.current = false; drawLiveFrame(cv, S); return; }
+      // Setup preview: on the simulate tab with no run loaded, OR while a run is
+      // starting up (simRunning but no frame yet) - so we never show a stale
+      // playback run once the user has kicked off a new simulation.
+      if ((S.tab === "simulate" && !S.meta) || S.simRunning) {
         dirtyRef.current = false;
         const g = S.setupGrid || { x: 30, y: 30 };
         const availH = Math.min(window.innerHeight * 0.55, 500);
@@ -884,17 +963,28 @@ function App() {
       cv.width = m.config.x_len * cs;
       cv.height = m.config.y_len * cs;
       const ctx = cv.getContext("2d");
+      // Hold the last-loaded recency grid while the current frame's is still in
+      // flight, so the overlay doesn't blink off (flicker) as playback outruns
+      // the async fetch. Fresh grid, when present, replaces the held one.
+      let exploreGrid = exploreCache.current.get(S.frameIdx);
+      if (S.exploreOverlay) {
+        if (exploreGrid) lastExploreRef.current = exploreGrid;
+        else exploreGrid = lastExploreRef.current;
+      }
       drawWorld(ctx, S.background, state, {
         cellSize: cs, xLen: m.config.x_len, yLen: m.config.y_len,
         colorMode: S.colorMode, showGrid: S.showGrid, showSensing: S.showSensing,
         sensingRadius: m.config.agent_range_radius,
+        jetTriggerRadius: m.config.octo_jet_trigger_radius,
+        stateColors: S.stateColors,
         ilqr: ilqrCache.current.get(S.frameIdx), ilqrOverlay: S.ilqrOverlay,
         ilqrLimb: S.ilqrLimb, ilqrIter: S.ilqrIter, ilqrStep: S.ilqrStep,
         convergence: S.convergence,
         hoverSucker: (S.hover && S.hover.frame === S.frameIdx) ? S.hover.sucker : null,
         hoverAgent: (S.hoverAgent && S.hoverAgent.frame === S.frameIdx) ? S.hoverAgent.agent : null,
         selectedLimb: S.ilqrLimb,
-        explore: exploreCache.current.get(S.frameIdx), exploreOverlay: S.exploreOverlay,
+        limbRows: m.anatomy.limb_rows, limbCols: m.anatomy.limb_cols,
+        explore: exploreGrid, exploreOverlay: S.exploreOverlay,
         zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
         showOutlines: S.showOutlines,
         showCenterlines: S.showCenterlines,
@@ -902,6 +992,7 @@ function App() {
         showSuckers: S.showSuckers,
         showAgents: S.showAgents,
       });
+      drawMeasureOverlay(ctx, S, cs);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -913,6 +1004,60 @@ function App() {
     const cs = cellSizeFor(xLen, yLen, cv.parentElement.clientWidth - 8, 560);
     cv.width = xLen * cs; cv.height = yLen * cs;
     drawWorld(cv.getContext("2d"), null, fs, { cellSize: cs, xLen, yLen, colorMode: "after", showGrid: false });
+  }
+
+  // Live preview during a run: draw the newest streamed frame with the same
+  // drawWorld path playback uses. Background is null (the surface grid isn't
+  // streamed) so the octopus + agents render on a clean canvas; the suckers
+  // still carry their camouflage colours. Honours the same view toggles.
+  function drawLiveFrame(cv, S) {
+    const g = S.setupGrid || { x: 30, y: 30 };
+    const availH = Math.min(window.innerHeight * 0.55, 500);
+    const cs = cellSizeFor(g.x, g.y, cv.parentElement.clientWidth - 8, availH);
+    cv.width = g.x * cs; cv.height = g.y * cs;
+    drawWorld(cv.getContext("2d"), null, S.liveFrame, {
+      cellSize: cs, xLen: g.x, yLen: g.y,
+      colorMode: S.colorMode, showGrid: S.showGrid, showSensing: S.showSensing,
+      sensingRadius: (S.meta && S.meta.config.agent_range_radius) || 0,
+      stateColors: S.stateColors,
+      zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
+      showOutlines: S.showOutlines, showCenterlines: S.showCenterlines,
+      showHead: S.showHead, showSuckers: S.showSuckers, showAgents: S.showAgents,
+    });
+    drawMeasureOverlay(cv.getContext("2d"), S, cs);
+  }
+
+  // Ruler overlay: the measure tool's two world points, the segment between
+  // them, and a distance/angle label. Dots + line are drawn in the same
+  // zoom/pan transform as the world so they track pan/zoom; the label is drawn
+  // in screen space so it stays legible. Angle uses the sim convention
+  // (atan2(dy, dx) with world y increasing downward), matching node angles.
+  function drawMeasureOverlay(ctx, S, cs) {
+    const pts = S.measurePts || [];
+    if (!pts.length) return;
+    const zm = S.zoom || 1, px = (S.pan && S.pan.x) || 0, py = (S.pan && S.pan.y) || 0;
+    const sx = (p) => (p.wx + 0.5) * cs, sy = (p) => (p.wy + 0.5) * cs;
+    ctx.save();
+    ctx.translate(px, py); ctx.scale(zm, zm);
+    ctx.strokeStyle = "#fbbf24"; ctx.fillStyle = "#fbbf24"; ctx.lineWidth = 1.5 / zm;
+    if (pts.length === 2) {
+      ctx.beginPath(); ctx.moveTo(sx(pts[0]), sy(pts[0])); ctx.lineTo(sx(pts[1]), sy(pts[1])); ctx.stroke();
+    }
+    pts.forEach((p) => {
+      ctx.beginPath(); ctx.arc(sx(p), sy(p), 4 / zm, 0, 2 * Math.PI); ctx.fill();
+    });
+    ctx.restore();
+    if (pts.length === 2) {
+      const dx = pts[1].wx - pts[0].wx, dy = pts[1].wy - pts[0].wy;
+      const dist = Math.hypot(dx, dy), ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      const mx = px + zm * ((0.5 * (pts[0].wx + pts[1].wx) + 0.5) * cs);
+      const my = py + zm * ((0.5 * (pts[0].wy + pts[1].wy) + 0.5) * cs);
+      const txt = `${dist.toFixed(2)} u   ${ang.toFixed(1)}°`;
+      ctx.font = "bold 13px monospace"; ctx.textAlign = "left";
+      const w = ctx.measureText(txt).width;
+      ctx.fillStyle = "rgba(15,23,42,0.85)"; ctx.fillRect(mx + 8, my - 17, w + 8, 19);
+      ctx.fillStyle = "#fbbf24"; ctx.fillText(txt, mx + 12, my - 3);
+    }
   }
 
   // ---- keyboard ----
@@ -939,6 +1084,7 @@ function App() {
       else if (k === "g" || k === "G") setShowGrid((v) => !v);
       else if (k === "d" || k === "D") setShowSensing((v) => !v);
       else if (k === "o" || k === "O") setShowOutlines((v) => !v);
+      else if (k === "m" || k === "M") { setMeasureMode((v) => !v); setMeasurePts([]); }
       else if (k === "0") { setZoom(1); setPan({ x: 0, y: 0 }); }
     };
     window.addEventListener("keydown", onKey);
@@ -948,6 +1094,12 @@ function App() {
   // ---- simulate ----
   const startSimulate = () => {
     setSim((s) => ({ ...s, running: true, progress: null }));
+    // Drop any prior run's live frame so this run starts from the placement
+    // preview and doesn't flash the previous octopus until frame 1 arrives.
+    stateRef.current.liveFrame = null;
+    stateRef.current.liveFrameNum = null;
+    stateRef.current.simRunning = true;   // ref may lag the setSim re-render
+    dirtyRef.current = true;               // redraw now (show setup preview)
     const configOverrides = { x_len: setupGrid.x, y_len: setupGrid.y };
     if (setupBgImage) configOverrides.background_image = setupBgImage.path;
     const setup = {};
@@ -1022,8 +1174,31 @@ function App() {
       return nz;
     });
   };
+  // Map a mouse event to world coords, honouring cell size + zoom/pan. Uses the
+  // playback grid when a run is loaded, else the setup grid (live/preview).
+  const screenToWorld = (e) => {
+    const cv = canvasRef.current;
+    if (!cv) return null;
+    const rect = cv.getBoundingClientRect();
+    const xLen = meta ? meta.config.x_len : ((setupGrid && setupGrid.x) || 30);
+    const cs = cv.width / xLen;
+    return {
+      wx: (e.clientX - rect.left - pan.x) / zoom / cs - 0.5,
+      wy: (e.clientY - rect.top - pan.y) / zoom / cs - 0.5,
+    };
+  };
   const onMouseDown = (e) => {
     if (e.button !== 0) return;
+    // Measure tool: click point A then B (a 3rd click starts a new measurement);
+    // record world coords instead of starting a pan-drag.
+    if (measureMode) {
+      const p = screenToWorld(e);
+      if (p) {
+        setMeasurePts((pts) => (pts.length >= 2 ? [p] : [...pts, p]));
+        dirtyRef.current = true;
+      }
+      return;
+    }
     dragging.current = true;
     dragStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
   };
@@ -1059,6 +1234,9 @@ function App() {
       setHoverAgent(null);
       const si = C.nearestSucker(state.octopus.suckers, wx, wy, 1.0);
       setHover(si >= 0 ? { sucker: si, frame: frameIdx } : null);
+      // Ensure this frame's iLQR data is loaded so the hover can show the node's
+      // attract-target cell (and the cost panel) without needing the overlay on.
+      if (si >= 0 && meta && meta.has_ilqr_history) ensureIlqr(meta.run_id, frameIdx);
     }
     dirtyRef.current = true;
   };
@@ -1121,9 +1299,9 @@ function App() {
         <div className="flex-1 min-w-0">
           <div className="bg-black rounded p-1 overflow-hidden"
                style={{ cursor: (tab === "simulate" && placementTool) ? "crosshair" : (dragging.current ? "grabbing" : "grab") }}>
-            <canvas ref={canvasRef} style={{ display: "block" }}
+            <canvas ref={canvasRef} style={{ display: "block", cursor: measureMode ? "crosshair" : "default" }}
                     onMouseMove={onCanvasMove}
-                    onClick={tab === "simulate" && placementTool ? onSetupClick : undefined}
+                    onClick={tab === "simulate" && placementTool && !measureMode ? onSetupClick : undefined}
                     onMouseDown={onMouseDown} onMouseUp={onMouseUp}
                     onMouseLeave={() => { setHover(null); setHoverAgent(null); dragging.current = false; }}
                     onWheel={onWheel} onContextMenu={onContextMenu} />
@@ -1230,17 +1408,50 @@ function App() {
           {/* debug controls */}
           <div className="flex items-center gap-3 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> outlines <kbd>O</kbd></label>
+            <label title="Colour outlines/centerlines/head by behavior policy (node/limb/body)">
+              <input type="checkbox" checked={stateColors} onChange={(e) => setStateColors(e.target.checked)} /> state colors
+            </label>
             <label title="Red skeleton line joining each limb's nodes"><input type="checkbox" checked={showCenterlines} onChange={(e) => setShowCenterlines(e.target.checked)} /> centerline</label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
             {meta && meta.has_explore && (
-              <label title="Per-cell sucker visit-count heatmap (exploration priority)">
+              <label title="Per-cell sucker visit-RECENCY heatmap (bright = visited recently; nodes explore toward the least-recently-visited cells)">
                 <input type="checkbox" checked={exploreOverlay} onChange={(e) => setExploreOverlay(e.target.checked)} /> exploration
               </label>
+            )}
+            <label title="Click two points on the canvas to read distance (grid units) and angle">
+              <input type="checkbox" checked={measureMode}
+                     onChange={(e) => { setMeasureMode(e.target.checked); setMeasurePts([]); }} /> measure <kbd>M</kbd>
+            </label>
+            {measureMode && (
+              <span className="text-amber-400">
+                {measurePts.length === 0 ? "click point A"
+                  : measurePts.length === 1 ? "click point B"
+                  : (() => {
+                      const dx = measurePts[1].wx - measurePts[0].wx, dy = measurePts[1].wy - measurePts[0].wy;
+                      return `d = ${Math.hypot(dx, dy).toFixed(2)} u   θ = ${(Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1)}°`;
+                    })()}
+                {measurePts.length > 0 && (
+                  <button className="ml-2 bg-slate-700 px-1 rounded" onClick={() => setMeasurePts([])}>clear</button>
+                )}
+              </span>
             )}
             <span className="text-slate-400">zoom: {zoom.toFixed(1)}x</span>
             <button className="bg-slate-700 px-2 py-0.5 rounded" onClick={resetView}>reset view <kbd>0</kbd></button>
           </div>
+
+          {/* behavior-policy colour legend */}
+          {stateColors && (
+            <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
+              <span className="text-slate-500">policy (node · limb · body):</span>
+              {STATE_LABELS.map((label, i) => (
+                <span key={label} className="flex items-center gap-1">
+                  <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: STATE_COLORS[i] }} />
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* charts */}
           {meta && (
@@ -1505,7 +1716,7 @@ function App() {
             <div><kbd>Space</kbd> play · <kbd>←/→</kbd> ±1 · <kbd>Shift+←/→</kbd> ±10</div>
             <div><kbd>[</kbd><kbd>]</kbd> iter · <kbd>{"{"}</kbd><kbd>{"}"}</kbd> step · <kbd>|</kbd> all steps · <kbd>I</kbd> overlay · <kbd>L</kbd> limb</div>
             <div><kbd>V</kbd> converge · <kbd>C</kbd> color mode · <kbd>G</kbd> grid · <kbd>D</kbd> sensing</div>
-            <div><kbd>O</kbd> outlines · <kbd>0</kbd> reset view · scroll = zoom · drag = pan</div>
+            <div><kbd>O</kbd> outlines · <kbd>M</kbd> measure · <kbd>0</kbd> reset view · scroll = zoom · drag = pan</div>
             <div className="mt-1">color mode: <span className="text-sky-400">{colorMode}</span></div>
           </div>
         </div>

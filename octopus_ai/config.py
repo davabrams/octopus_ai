@@ -43,7 +43,7 @@ from octopus_ai.config_schema import (  # noqa: F401  (re-exported for convenien
     TrainingConfig,
     WorldConfig,
 )
-from simulator.simutil import MLMode, MovementMode
+from simulator.simutil import MLMode, MovementMode, PropulsionMode
 
 # Under `bazel run`, __file__ points into the sandboxed runfiles tree, so
 # artifact paths (datasets, saved models) would resolve there instead of the
@@ -145,8 +145,18 @@ VIZ_ILQR = replace(
                   x_len=30, y_len=30),
     octopus=replace(
         VIZ.octopus,
-        movement_mode=MovementMode.ILQR,   # body drifts by the arms' pull
-        limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR),
+        movement_mode=MovementMode.ILQR,
+        # The body translates by the external-reaction propulsion model
+        # (friction-limited crawl + siphon jet on threat), not the legacy
+        # internal summed-tension drift: watch a threat appear and the body jet
+        # straight away from it. See Octopus._propel_body / PropulsionMode.
+        propulsion_mode=PropulsionMode.REACTION,
+        # Exploration ON so idle arms reach for the least-explored cells instead
+        # of hanging slack - that reach is what plants a tip and lets the CRAWL
+        # haul the body, so the octopus forages/wanders even with no prey or
+        # threat nearby (without it a quiescent scene shows no locomotion).
+        limb=replace(VIZ.octopus.limb, movement_mode=MovementMode.ILQR,
+                     ilqr=replace(VIZ.octopus.limb.ilqr, explore_enabled=True)),
     ),
     # Agents react to the octopus: THREATs pursue it, PREY flee, inside their
     # sense window (ignoring camouflage). Makes the hunt/flee dynamics visible
@@ -246,6 +256,7 @@ def config_to_flat(cfg: Config) -> dict:
         'agent_range_radius': cfg.agents.sensing_radius,  # see note above
         'agent_prey_capture_radius': cfg.agents.prey_capture_radius,
         'agent_respawn_captured_prey': cfg.agents.respawn_captured_prey,
+        'agent_visibility_threshold': cfg.agents.visibility_threshold,
 
         # Octopus parameters
         'octo_max_body_velocity': cfg.octopus.max_body_velocity,
@@ -273,7 +284,9 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_w_effort': cfg.octopus.limb.ilqr.w_effort,
         'octo_ilqr_w_reach_run': cfg.octopus.limb.ilqr.w_reach_run,
         'octo_ilqr_w_reach_terminal': cfg.octopus.limb.ilqr.w_reach_terminal,
+        'octo_ilqr_sense_ramp_band': cfg.octopus.limb.ilqr.sense_ramp_band,
         'octo_ilqr_w_repel': cfg.octopus.limb.ilqr.w_repel,
+        'octo_ilqr_repel_step': cfg.octopus.limb.ilqr.repel_step,
         'octo_ilqr_repel_radius': cfg.octopus.limb.ilqr.repel_radius,
         'octo_ilqr_repel_tip_fraction':
             cfg.octopus.limb.ilqr.repel_tip_fraction,
@@ -281,6 +294,8 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ilqr_w_explore': cfg.octopus.limb.ilqr.w_explore,
         'octo_ilqr_explore_node_radius':
             cfg.octopus.limb.ilqr.explore_node_radius,
+        'octo_ilqr_explore_target_smooth':
+            cfg.octopus.limb.ilqr.explore_target_smooth,
         'octo_ilqr_explore_decay': cfg.octopus.limb.ilqr.explore_decay,
         'octo_ilqr_w_explore_threat_avoid':
             cfg.octopus.limb.ilqr.w_explore_threat_avoid,
@@ -291,8 +306,17 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_ring_radius': cfg.octopus.ring_radius,
         'octo_max_body_angular_velocity':
             cfg.octopus.max_body_angular_velocity,
+        'octo_propulsion_mode': cfg.octopus.propulsion_mode,
+        'octo_crawl_grip_limit': cfg.octopus.crawl_grip_limit,
+        'octo_crawl_plant_speed': cfg.octopus.crawl_plant_speed,
+        'octo_jet_enabled': cfg.octopus.jet_enabled,
+        'octo_jet_trigger_radius': cfg.octopus.jet_trigger_radius,
+        'octo_jet_impulse': cfg.octopus.jet_impulse,
+        'octo_jet_decay': cfg.octopus.jet_decay,
+        'octo_max_jet_velocity': cfg.octopus.max_jet_velocity,
         'octo_max_sucker_distance': cfg.octopus.limb.max_sucker_distance,
         'octo_min_sucker_distance': cfg.octopus.limb.min_sucker_distance,
+        'octo_sucker_col_spacing': cfg.octopus.limb.sucker_col_spacing,
         'octo_movement_mode': cfg.octopus.movement_mode,
         'octo_threading': cfg.run.threading,
 
@@ -304,6 +328,8 @@ def config_to_flat(cfg: Config) -> dict:
         # Sucker parameters
         'octo_max_hue_change': cfg.octopus.sucker.max_hue_change,
         'sucker_delta_model': cfg.training.sucker_delta_model,
+        'sucker_hue_change_conditioned':
+            cfg.training.sucker_hue_change_conditioned,
         'datagen_randomize_colors_interval':
             cfg.datagen.randomize_colors_interval,
 
@@ -358,6 +384,8 @@ def config_from_flat(d: dict) -> Config:
                                   D.agents.prey_capture_radius),
             respawn_captured_prey=g('agent_respawn_captured_prey',
                                     D.agents.respawn_captured_prey),
+            visibility_threshold=g('agent_visibility_threshold',
+                                   D.agents.visibility_threshold),
         ),
         octopus=OctopusConfig(
             num_arms=g('octo_num_arms', D.octopus.num_arms),
@@ -368,6 +396,19 @@ def config_from_flat(d: dict) -> Config:
             ring_radius=g('octo_ring_radius', D.octopus.ring_radius),
             max_body_angular_velocity=g('octo_max_body_angular_velocity',
                                         D.octopus.max_body_angular_velocity),
+            propulsion_mode=g('octo_propulsion_mode',
+                              D.octopus.propulsion_mode),
+            crawl_grip_limit=g('octo_crawl_grip_limit',
+                               D.octopus.crawl_grip_limit),
+            crawl_plant_speed=g('octo_crawl_plant_speed',
+                                D.octopus.crawl_plant_speed),
+            jet_enabled=g('octo_jet_enabled', D.octopus.jet_enabled),
+            jet_trigger_radius=g('octo_jet_trigger_radius',
+                                 D.octopus.jet_trigger_radius),
+            jet_impulse=g('octo_jet_impulse', D.octopus.jet_impulse),
+            jet_decay=g('octo_jet_decay', D.octopus.jet_decay),
+            max_jet_velocity=g('octo_max_jet_velocity',
+                               D.octopus.max_jet_velocity),
             limb=LimbConfig(
                 rows=g('limb_rows', D.octopus.limb.rows),
                 cols=g('limb_cols', D.octopus.limb.cols),
@@ -375,6 +416,8 @@ def config_from_flat(d: dict) -> Config:
                                       D.octopus.limb.min_sucker_distance),
                 max_sucker_distance=g('octo_max_sucker_distance',
                                       D.octopus.limb.max_sucker_distance),
+                sucker_col_spacing=g('octo_sucker_col_spacing',
+                                     D.octopus.limb.sucker_col_spacing),
                 movement_mode=g('limb_movement_mode',
                                 D.octopus.limb.movement_mode),
                 random=RandomDriftConfig(
@@ -431,8 +474,12 @@ def config_from_flat(d: dict) -> Config:
                                   D.octopus.limb.ilqr.w_reach_run),
                     w_reach_terminal=g('octo_ilqr_w_reach_terminal',
                                        D.octopus.limb.ilqr.w_reach_terminal),
+                    sense_ramp_band=g('octo_ilqr_sense_ramp_band',
+                                      D.octopus.limb.ilqr.sense_ramp_band),
                     w_repel=g('octo_ilqr_w_repel',
                               D.octopus.limb.ilqr.w_repel),
+                    repel_step=g('octo_ilqr_repel_step',
+                                 D.octopus.limb.ilqr.repel_step),
                     repel_radius=g('octo_ilqr_repel_radius',
                                    D.octopus.limb.ilqr.repel_radius),
                     repel_tip_fraction=g(
@@ -445,6 +492,9 @@ def config_from_flat(d: dict) -> Config:
                     explore_node_radius=g(
                         'octo_ilqr_explore_node_radius',
                         D.octopus.limb.ilqr.explore_node_radius),
+                    explore_target_smooth=g(
+                        'octo_ilqr_explore_target_smooth',
+                        D.octopus.limb.ilqr.explore_target_smooth),
                     explore_decay=g('octo_ilqr_explore_decay',
                                     D.octopus.limb.ilqr.explore_decay),
                     w_explore_threat_avoid=g(
@@ -501,6 +551,9 @@ def config_from_flat(d: dict) -> Config:
                                      D.training.constraint_loss_weight),
             sucker_delta_model=g('sucker_delta_model',
                                  D.training.sucker_delta_model),
+            sucker_hue_change_conditioned=g(
+                'sucker_hue_change_conditioned',
+                D.training.sucker_hue_change_conditioned),
         ),
         paths=DEFAULT_PATHS,
     )

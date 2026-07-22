@@ -340,7 +340,11 @@ class OctopusSimulationServer:
                              info["visibility_score"], 4),
                          "prey_captured": info["prey_captured"],
                          "elapsed_s": round(info["elapsed_s"], 4),
-                         "frame_ms": round(info["frame_ms"], 4)}})
+                         "frame_ms": round(info["frame_ms"], 4),
+                         # Latest frame geometry for the live preview (the
+                         # coalesced newest frame only). Same shape as playback's
+                         # frame_data.state, so the client renders it identically.
+                         "state": info.get("state")}})
 
     async def _h_simulate_cancel(self, ws, req_id, data):
         if self._active is None:

@@ -59,7 +59,7 @@ class TestExplorationMemory(unittest.TestCase):
         for limb in octo.limbs:
             for s in limb.suckers:
                 sucker_cells.add((round(s.y), round(s.x)))
-        marked = set(zip(*np.nonzero(octo.visit_counts), strict=True))
+        marked = set(zip(*np.nonzero(octo.visit_recency), strict=True))
         # Every marked cell is a sucker cell (marking is sucker-driven).
         self.assertTrue(marked)
         self.assertTrue(marked.issubset(sucker_cells))
@@ -69,25 +69,40 @@ class TestExplorationMemory(unittest.TestCase):
         octo, ag = _octo(explore=False, agents=0)
         for _ in range(5):
             octo.move(ag)
-        self.assertEqual(octo.visit_counts.sum(), 0.0)
+        self.assertEqual(octo.visit_recency.sum(), 0.0)
         # No agents and explore off => no node senses anything => no attraction.
         self.assertFalse(_attract_sw(octo).any())
 
-    def test_decay_ages_counts(self):
-        """decay < 1 fades old visits: revisited cells accumulate fractional
-        counts (0.5*n + 1), which never happens at decay = 1.0 (pure integers)."""
+    def test_recency_sets_not_accumulates(self):
+        """A cell under a sucker is SET to 1.0, never incremented, so dwell can't
+        inflate it - the map never exceeds 1.0 no matter how long it runs."""
         octo, ag = _octo(explore=True, agents=0, decay=0.5)
-        for _ in range(4):
+        for _ in range(8):
             octo.move(ag)
-        vc = octo.visit_counts[octo.visit_counts > 0]
-        self.assertTrue(np.any(np.abs(vc - np.round(vc)) > 1e-6),
-                        "decay did not produce fractional (aged) counts")
-        # Sanity: at decay=1.0 the same map is all integers.
+        self.assertLessEqual(float(octo.visit_recency.max()), 1.0 + 1e-9)
+        # Cells the suckers are on right now read exactly 1.0 (freshest).
+        cells = {(min(max(round(s.y), 0), 19), min(max(round(s.x), 0), 19))
+                 for limb in octo.limbs for s in limb.suckers}
+        for (cy, cx) in cells:
+            self.assertAlmostEqual(octo.visit_recency[cy, cx], 1.0, places=6)
+
+    def test_decay_ages_untouched_cells(self):
+        """decay < 1 fades a cell by decay**frames_since_last_visit. A far corner
+        no sucker occupies decays one step per _mark_explored; at decay = 1.0 it
+        never fades (touched-once == touched-forever, pure recency)."""
+        octo, ag = _octo(explore=True, agents=0, decay=0.5)
+        octo.move(ag)
+        octo.visit_recency[0, 0] = 1.0     # a far corner: no sucker is here
+        octo._mark_explored()              # decays all, re-marks sucker cells
+        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.5, places=6)
+        octo._mark_explored()
+        self.assertAlmostEqual(octo.visit_recency[0, 0], 0.25, places=6)
+        # decay = 1.0: an untouched cell never fades.
         octo2, ag2 = _octo(explore=True, agents=0, decay=1.0)
-        for _ in range(4):
-            octo2.move(ag2)
-        vc2 = octo2.visit_counts[octo2.visit_counts > 0]
-        self.assertTrue(np.all(np.abs(vc2 - np.round(vc2)) < 1e-6))
+        octo2.move(ag2)
+        octo2.visit_recency[0, 0] = 1.0
+        octo2._mark_explored()
+        self.assertAlmostEqual(octo2.visit_recency[0, 0], 1.0, places=6)
 
 
 class TestExplorationSeeking(unittest.TestCase):
@@ -98,8 +113,8 @@ class TestExplorationSeeking(unittest.TestCase):
         for f in range(30):
             octo.move(ag)
             if f == 0:
-                first = int((octo.visit_counts > 0).sum())
-        last = int((octo.visit_counts > 0).sum())
+                first = int((octo.visit_recency > 0).sum())
+        last = int((octo.visit_recency > 0).sum())
         self.assertGreater(last, first)
 
     def test_idle_octopus_moves_when_exploring(self):
@@ -114,34 +129,34 @@ class TestExplorationSeeking(unittest.TestCase):
                          octo.limbs[0].center_line[-1].y])
         self.assertGreater(np.linalg.norm(tip1 - tip0), 0.3)
 
-    def test_explore_target_is_least_visited_reachable_cell(self):
-        """The selector returns a low-visit cell within reach, biased local."""
+    def test_explore_target_is_nearest_least_recently_visited_cell(self):
+        """LEXICOGRAPHIC selection: the chosen cell has the MINIMUM recency in
+        reach, and is the CLOSEST of that least-recently-visited set (recency
+        wins over distance - never prefer a near recent cell to a far stale one).
+        """
         octo, ag = _octo(explore=True, agents=0)
-        octo.move(ag)  # seed the map
+        octo.move(ag)  # seed the recency map
         limb = octo.limbs[0]
-        base = limb.center_line[0]
-        tip = limb.center_line[-1]
-        target = limb._ilqr_explore_target(base.x, base.y, tip,
-                                           octo.visit_counts)
-        self.assertIsNotNone(target)
-        reach = (limb.rows - 1) * limb.max_sucker_distance
-        # In reach of the base...
-        self.assertLessEqual(np.hypot(target[0] - base.x, target[1] - base.y),
-                             reach + 1.0)
-        # ...and no OTHER reachable cell is strictly better (least-visited +
-        # locality) - i.e. it is the argmin the arm will chase.
-        tx, ty = round(target[0]), round(target[1])
-        best = (octo.visit_counts[ty, tx] +
-                limb.explore_locality * np.hypot(tx - tip.x, ty - tip.y))
-        y_len, x_len = octo.visit_counts.shape
-        for cy in range(max(0, ty - 1), min(y_len, ty + 2)):
-            for cx in range(max(0, tx - 1), min(x_len, tx + 2)):
-                if np.hypot(cx - base.x, cy - base.y) > reach:
-                    continue
-                score = (octo.visit_counts[cy, cx] +
-                         limb.explore_locality * np.hypot(cx - tip.x,
-                                                          cy - tip.y))
-                self.assertGreaterEqual(score, best - 1e-6)
+        node = limb.center_line[1]  # a free node
+        _, cell = limb._node_explore_target(node.x, node.y,
+                                            octo.visit_recency, None)
+        self.assertIsNotNone(cell)
+        cx, cy = int(round(cell[0])), int(round(cell[1]))
+        reach = limb.explore_node_radius
+        vr = octo.visit_recency
+        y_len, x_len = vr.shape
+        reachable = [(float(vr[gy, gx]), np.hypot(gx - node.x, gy - node.y),
+                      gx, gy)
+                     for gy in range(y_len) for gx in range(x_len)
+                     if np.hypot(gx - node.x, gy - node.y) <= reach]
+        min_r = min(r for r, _, _, _ in reachable)
+        # Chosen cell is at the minimum recency...
+        self.assertAlmostEqual(float(vr[cy, cx]), min_r, places=6)
+        # ...and is the closest among the min-recency set.
+        chosen_d = np.hypot(cx - node.x, cy - node.y)
+        for r, d, _gx, _gy in reachable:
+            if abs(r - min_r) <= 1e-6:
+                self.assertLessEqual(chosen_d, d + 1e-9)
 
     def test_explore_target_avoids_a_threat(self):
         """A sensed threat pushes the explore goal off the cell it would
@@ -149,18 +164,17 @@ class TestExplorationSeeking(unittest.TestCase):
         octo, ag = _octo(explore=True, agents=0)
         octo.move(ag)  # seed geometry + map
         limb = octo.limbs[0]
-        base = limb.center_line[0]
-        tip = limb.center_line[-1]
+        node = limb.center_line[1]
         # Where it goes with no threat...
-        free_target = limb._ilqr_explore_target(base.x, base.y, tip,
-                                                octo.visit_counts)
-        self.assertIsNotNone(free_target)
+        _, free_cell = limb._node_explore_target(node.x, node.y,
+                                                 octo.visit_recency, None)
+        self.assertIsNotNone(free_cell)
         # ...drop a threat right on that cell; the goal must move off it.
-        threat = [free_target[0], free_target[1]]
-        avoided = limb._ilqr_explore_target(base.x, base.y, tip,
-                                            octo.visit_counts, threat=threat)
+        threat = [free_cell[0], free_cell[1]]
+        _, avoided = limb._node_explore_target(node.x, node.y,
+                                               octo.visit_recency, threat)
         self.assertIsNotNone(avoided)
-        d_free = np.hypot(free_target[0] - threat[0], free_target[1] - threat[1])
+        d_free = np.hypot(free_cell[0] - threat[0], free_cell[1] - threat[1])
         d_avoid = np.hypot(avoided[0] - threat[0], avoided[1] - threat[1])
         self.assertGreater(d_avoid, d_free)
 

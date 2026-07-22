@@ -7,6 +7,7 @@ import numpy as np
 from simulator.surface_generator import RandomSurface
 from simulator.simutil import (
     MovementMode,
+    PropulsionMode,
     Agent,
     AgentType,
     Color,
@@ -109,6 +110,25 @@ class Sucker:
         return dist
 
 
+def _sense_ramp(d: float, R: float, band: float) -> float:
+    """Smooth agent-sensing weight in [0, 1] as a function of distance ``d`` to
+    the agent, given the sense radius ``R``.
+
+    Removes the hard on/off at ``R`` that bunched nodes at the threshold (one
+    just inside felt a full-strength force, its neighbour just outside felt
+    none). Full weight (1.0) for ``d <= R*(1-band)``, then a C1 smoothstep down
+    to 0 at ``d = R`` (and 0 beyond). ``band`` is the fraction of ``R`` over
+    which it ramps; ``band == 0`` reproduces the old hard cutoff.
+    """
+    if d >= R:
+        return 0.0
+    inner = R * (1.0 - band)
+    if band <= 0.0 or d <= inner:
+        return 1.0
+    s = (R - d) / (R - inner)          # 1 at the inner edge -> 0 at R
+    return float(s * s * (3.0 - 2.0 * s))  # smoothstep (zero slope at both ends)
+
+
 class Limb:
     """
     Stores limb spline, and includes methods to change the limb spline.
@@ -125,6 +145,9 @@ class Limb:
         self.max_sucker_distance = limb.max_sucker_distance
         self.min_sucker_distance = limb.min_sucker_distance
         self.sucker_distance = self.min_sucker_distance
+        # Lateral gap between the cols suckers on one node (arm width), decoupled
+        # from the along-arm segment spacing (self.sucker_distance).
+        self.sucker_col_spacing = limb.sucker_col_spacing
         self.rows = limb.rows
         self.cols = limb.cols
         self.center_line = [CenterPoint() for _ in range(self.rows)]
@@ -144,18 +167,22 @@ class Limb:
         self.chain_move_k = limb.chain.move_k
         self.ilqr_cfg = limb.ilqr
         # Exploration: when this arm senses no prey, its tip softly reaches the
-        # least-explored cell within reach (exploration feature).
+        # least-recently-visited cell within reach (exploration feature).
         self.explore_enabled = limb.ilqr.explore_enabled
         self.w_explore = limb.ilqr.w_explore
-        self.explore_locality = 0.3  # bias each node's explore cell toward the
-                                     # node so it seeks its NEAREST unexplored one
         self.explore_node_radius = limb.ilqr.explore_node_radius  # how far a node
-                                     # looks for its own least-visited cell (small
+                                     # looks for its own least-recently-visited cell (small
                                      # = local = arm stays spread, no balling)
         # Steer the explore GOAL away from a sensed threat (the picker is
         # otherwise threat-blind and would aim into the keep-out zone).
         self.w_explore_threat_avoid = limb.ilqr.w_explore_threat_avoid
         self.explore_threat_radius = limb.ilqr.explore_threat_radius
+        # Per-free-node EMA of the explore target, to damp the frame-to-frame
+        # argmin flip that otherwise flickers the tips. NaN = no held target
+        # (the node isn't exploring, or just started); reseeded on re-entry.
+        self.explore_target_smooth = limb.ilqr.explore_target_smooth
+        self._explore_ema = np.full((max(self.rows - 1, 0), 2), np.nan,
+                                    dtype=float)
 
         # How close two suckers must be to count as neighbours for the LIMB
         # model; datagen builds its training adjacents with this.
@@ -163,7 +190,21 @@ class Limb:
         # How far THIS ARM senses agents. Distinct from the agent's own
         # sensing radius, which it used to be forced to equal.
         self.agent_range_radius = cfg.octopus.sensing_radius
+        # Smooths the hard on/off at the sense radius (see _sense_ramp).
+        self.sense_ramp_band = limb.ilqr.sense_ramp_band
+        # Flee retraction step toward the body (see the repel block in _move_ilqr).
+        self.repel_step = limb.ilqr.repel_step
         self.threading = cfg.run.threading
+
+        # Behavior-policy state codes, shared across the three levels (node/limb/
+        # body) for analyzer colour-coding. 0=idle/resting, 1=exploring/foraging,
+        # 2=chasing prey, 3=avoiding threat/fleeing, 4=gripping/crawling.
+        #   last_node_state: one code per centreline row (suckers inherit their
+        #     row's); set each _move_ilqr, grip set on the tip by _propel_body.
+        #   last_limb_state: this whole arm's policy (aggregate of its nodes).
+        self.last_node_state = np.zeros(self.rows, dtype=np.int8)
+        self.last_limb_state = 0
+        self.last_gripping = False
 
         # Last-frame force capture (populated by _move_lumped_spring).
         # Shared source of truth for on-screen arrows and the force DB.
@@ -195,6 +236,9 @@ class Limb:
         # Offset of this arm's base from the body center last frame (the moment
         # arm the body integrates into torque); rebound each _move_ilqr.
         self.last_base_offset = np.zeros(2, dtype=float)
+        # Previous-frame tip position, for the REACTION propulsion plant test
+        # (a tip that barely moved is gripping = anchored). None until first move.
+        self._propel_prev_tip = None
 
         # Opt-in per-iteration iLQR recording (record & replay). When on, each
         # _move_ilqr solve captures its solve history + per-solve metadata for
@@ -225,6 +269,12 @@ class Limb:
         if not self.suckers:
             #the very first time we hit this, generate all sucker objects
             self.suckers = [Sucker(0, 0) for _ in range(self.cols * self.rows)]
+            # Propagate the configured per-step colour-change cap to each sucker
+            # (they are built via Sucker(0, 0) with no config, so they would
+            # otherwise keep the 0.25 fallback and ignore octopus.sucker.
+            # max_hue_change - which is why lowering it had no effect).
+            for s in self.suckers:
+                s.max_hue_change = self.max_hue_change
         for row in range(self.rows):
             pt = self.center_line[row]
             x = pt.x
@@ -234,7 +284,7 @@ class Limb:
 
             for col in range(self.cols):
                 col_offset = col - ((self.cols - 1) / 2)
-                offset = self.sucker_distance * col_offset
+                offset = self.sucker_col_spacing * col_offset
 
                 x_prime = x + offset * np.cos(t)
                 y_prime = y + offset * np.sin(t)
@@ -249,7 +299,7 @@ class Limb:
     def move(self, x_octo: float, y_octo: float,
              agents: list = None, coordinated_influence=None,
              body_theta: float = 0.0, body_dtheta: float = 0.0,
-             visit_counts=None):
+             visit_recency=None):
         """Move the limb, then refresh sucker locations.
 
         x_octo, y_octo: the (possibly just-moved) body position; the arm
@@ -274,7 +324,7 @@ class Limb:
             self._move_spring_chain(x_octo, y_octo, agents)
         elif self.movement_mode == MovementMode.ILQR:
             self._move_ilqr(x_octo, y_octo, agents, body_theta, body_dtheta,
-                            visit_counts)
+                            visit_recency)
         else:
             assert False, "Unknown movement mode"
 
@@ -546,100 +596,78 @@ class Limb:
         return (np.array(prey, dtype=float).reshape(-1, 2),
                 np.array(threat, dtype=float).reshape(-1, 2))
 
-    def _ilqr_explore_target(self, base_x, base_y, tip, visit_counts,
-                             threat=None):
-        """Least-explored reachable cell as [x, y], or None.
+    def _node_explore_target(self, nx, ny, visit_recency, threat):
+        """This node's least-recently-visited reachable cell, nearest of those.
 
-        Searches the cells this arm's tip can reach (within ~arm length of the
-        base) and returns the one that minimizes
-        ``visit_count + explore_locality * distance-to-current-tip
-        + threat_penalty`` - i.e. the least-visited cell, biased toward the
-        current tip so the arm sweeps smoothly, and pushed off cells near a
-        sensed ``threat`` [x, y]. Without the threat term the least-visited
-        frontier is exactly the region the threat has kept the octopus out of,
-        so the arm reaches into the keep-out zone and stalls against the repel
-        barrier; the penalty moves the goal to the safe side. The visit map is
-        shared, so as one arm covers a region the others are drawn elsewhere
-        (emergent coverage, no direct coupling).
-        """
-        reach = (self.rows - 1) * self.max_sucker_distance
-        y_len, x_len = visit_counts.shape
-        x_lo = max(0, int(np.floor(base_x - reach)))
-        x_hi = min(x_len - 1, int(np.ceil(base_x + reach)))
-        y_lo = max(0, int(np.floor(base_y - reach)))
-        y_hi = min(y_len - 1, int(np.ceil(base_y + reach)))
-        best = None
-        best_score = None
-        reach_sq = reach * reach
-        for cy in range(y_lo, y_hi + 1):
-            for cx in range(x_lo, x_hi + 1):
-                if (cx - base_x) ** 2 + (cy - base_y) ** 2 > reach_sq:
-                    continue  # out of reach
-                d_tip = np.hypot(cx - tip.x, cy - tip.y)
-                score = visit_counts[cy, cx] + self.explore_locality * d_tip
-                if threat is not None:
-                    d_threat = np.hypot(cx - threat[0], cy - threat[1])
-                    if d_threat < self.explore_threat_radius:
-                        score += self.w_explore_threat_avoid * (
-                            self.explore_threat_radius - d_threat)
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best = (cx, cy)
-        return [float(best[0]), float(best[1])] if best is not None else None
-
-    def _node_explore_target(self, nx, ny, visit_counts, threat):
-        """This node's OWN nearest least-visited cell (per-node exploration).
-
-        Searches a small neighborhood (``explore_node_radius``) of the node,
-        scored by ``visit_count + explore_locality*dist-to-node + threat
-        penalty``, and returns the least-visited cell as [x, y] (or None).
-        Per-node (each node its own nearest cell) so the arm spreads to cover
-        ground rather than balling on one shared cell; the super-linear spring
-        (spring_stiffen) holds the chain spacing against the pull. The visit map
-        is whole-body/shared, so the nodes divide coverage.
+        LEXICOGRAPHIC, not a weighted sum: FIRST find the maximum least-time-
+        explored set (the lowest recency in reach - typically all the never-
+        visited cells, recency 0), THEN of THAT set pick the closest to the node.
+        So a node always prefers a far UNvisited cell over a near recently-
+        visited one; distance only breaks ties among equally-stale cells. A
+        threat penalty is folded into the primary key so cells near a sensed
+        threat aren't in the stale set (exploration stays out of danger).
+        Per-node (each searches its own neighborhood) so the arm spreads to cover
+        ground; the visit map is whole-body/shared, so nodes divide coverage.
         """
         reach = self.explore_node_radius
-        y_len, x_len = visit_counts.shape
+        y_len, x_len = visit_recency.shape
         x_lo = max(0, int(np.floor(nx - reach)))
         x_hi = min(x_len - 1, int(np.ceil(nx + reach)))
         y_lo = max(0, int(np.floor(ny - reach)))
         y_hi = min(y_len - 1, int(np.ceil(ny + reach)))
-        best = None
-        best_score = None
         reach_sq = reach * reach
+        # Primary key per cell = recency + threat penalty (both "staleness cost");
+        # secondary = squared distance to the node.
+        cells = []  # (primary, dsq, cx, cy)
+        min_primary = None
         for cy in range(y_lo, y_hi + 1):
             for cx in range(x_lo, x_hi + 1):
-                d = (cx - nx) ** 2 + (cy - ny) ** 2
-                if d > reach_sq:
+                dsq = (cx - nx) ** 2 + (cy - ny) ** 2
+                if dsq > reach_sq:
                     continue
-                score = (visit_counts[cy, cx]
-                         + self.explore_locality * np.sqrt(d))
+                primary = float(visit_recency[cy, cx])
                 if threat is not None:
                     d_threat = np.hypot(cx - threat[0], cy - threat[1])
                     if d_threat < self.explore_threat_radius:
-                        score += self.w_explore_threat_avoid * (
+                        primary += self.w_explore_threat_avoid * (
                             self.explore_threat_radius - d_threat)
-                if best_score is None or score < best_score:
-                    best_score = score
+                cells.append((primary, dsq, cx, cy))
+                if min_primary is None or primary < min_primary:
+                    min_primary = primary
+        # Of the least-recently-visited set (primary within a hair of the min),
+        # take the closest. EPS admits exact float ties (never-visited cells are
+        # all 0; cells last touched the same frame share a decay power).
+        best = None
+        best_dsq = None
+        if min_primary is not None:
+            eps = 1e-6
+            for primary, dsq, cx, cy in cells:
+                if primary <= min_primary + eps and (best_dsq is None
+                                                     or dsq < best_dsq):
+                    best_dsq = dsq
                     best = (cx, cy)
         if best is None:
-            return None
+            return None, None
         # Aim ONE rest-length toward the chosen cell, not at the cell itself
         # (which can be several units off): attracting straight to a far cell
         # demands the arm stretch to span each node's own distant target - no
         # spring can hold 0.3 spacing AND put nodes on 3-unit-apart cells. A
         # short nudge keeps the pull at the spacing scale; the super-linear
         # spring then holds the chain and the arm drifts to cover ground.
+        # Returns (stepped attract target, chosen cell): the target drives the
+        # solver; the cell is the actual frontier the node picked (recorded so
+        # the analyzer can show where it's really heading, not just the nudge).
         dx, dy = best[0] - nx, best[1] - ny
         d = np.hypot(dx, dy)
         if d < 1e-9:
-            return None
+            return None, None
         step = self.max_sucker_distance
-        return [float(nx + dx / d * step), float(ny + dy / d * step)]
+        target = [float(nx + dx / d * step), float(ny + dy / d * step)]
+        return target, (float(best[0]), float(best[1]))
 
     def _move_ilqr(self, x_octo: float, y_octo: float, agents: list = None,
                    body_theta: float = 0.0, body_dtheta: float = 0.0,
-                   visit_counts=None):
+                   visit_recency=None):
         """Per-limb iLQR reach, receding-horizon (MPC) style.
 
         Each frame the arm re-plans a short trajectory toward its target with
@@ -710,7 +738,7 @@ class Limb:
         # (strong) and FLEES the nearest THREAT by retracting toward the body
         # ("scrunch up") - the flee force points node -> body, weighted by how
         # close the threat is (graded body>tip). A node sensing no prey is drawn
-        # gently to its own nearest least-explored cell. A node that senses
+        # gently to its own nearest least-recently-visited cell. A node that senses
         # nothing doesn't pull. Both can act on different nodes at once; the body
         # still emerges from the summed base tension.
         R = self.agent_range_radius
@@ -722,39 +750,102 @@ class Limb:
         repel_sw = np.zeros(n_free, dtype=np.float32)
         sw_prey = float(np.sqrt(self.ilqr_cfg.w_reach_terminal))
         sw_explore = float(np.sqrt(self.w_explore))
-        explore_on = self.explore_enabled and visit_counts is not None
+        explore_on = self.explore_enabled and visit_recency is not None
+        # Per-node motor state for the analyzer (row 0 = base = idle). 0 idle,
+        # 1 exploring, 2 chasing prey, 3 avoiding threat (grip=4 set in _propel_body).
+        states = np.zeros(self.rows, dtype=np.int8)
+        # The actual frontier CELL each exploring node picked (NaN where a node
+        # isn't exploring), recorded so the analyzer's hover box lands on the real
+        # target rather than the 0.3-stepped attract point.
+        explore_cell = np.full((n_free, 2), np.nan, dtype=np.float32)
         for i in range(n_free):
             node = self.center_line[i + 1]
+            prey_i = False
             # This node's nearest threat within its window: flee = retract toward
-            # the BODY CENTRE, weight scaling with threat proximity (0 at the edge
-            # of the window, max at contact). Steers its exploration away too.
+            # the BODY, with the force MAGNITUDE set by threat proximity (the
+            # ramp weight), NOT by how far the node is from the body.
             nthreat = None
             if len(threat_xy):
                 dtn = np.hypot(threat_xy[:, 0] - node.x, threat_xy[:, 1] - node.y)
                 k = int(np.argmin(dtn))
                 if dtn[k] <= R:
                     nthreat = threat_xy[k]
-                    pen = (R - dtn[k]) / R      # 0 at window edge -> 1 at contact
-                    repel_tgt[i] = (x_octo, y_octo)      # flee toward the body
-                    repel_sw[i] = float(np.sqrt(w_repel * pen))
-            # Nearest PREY within the window -> strong attract.
+                    # Smooth ramp (full inside, smoothstep to 0 at R) instead of a
+                    # hard edge, so a node crossing the window doesn't jump from no
+                    # force to full force and pile up at the threshold.
+                    ramp = _sense_ramp(float(dtn[k]), R, self.sense_ramp_band)
+                    # Aim at a point ONE `repel_step` toward the body (capped at the
+                    # body), not the body centre: the residual magnitude is then
+                    # `repel_step` (constant), so the flee cost is w_repel*ramp*
+                    # step^2 - body-distance-INDEPENDENT. Targeting the body centre
+                    # made the cost ~ w_repel*ramp*|node-body|^2, which yanked far
+                    # tips explosively and let them catch up to inner nodes (bunch).
+                    bx, by = x_octo - node.x, y_octo - node.y  # node -> body
+                    dbody = float(np.hypot(bx, by))
+                    if dbody > 1e-9:
+                        s = min(self.repel_step, dbody)
+                        repel_tgt[i] = (node.x + bx / dbody * s,
+                                        node.y + by / dbody * s)
+                    else:
+                        repel_tgt[i] = (x_octo, y_octo)
+                    repel_sw[i] = float(np.sqrt(w_repel * ramp))
+            # Nearest PREY within the window -> strong attract, ramped the same way
+            # (was full weight the instant d <= R, which bunched boundary nodes).
             if len(prey_xy):
                 dp = np.hypot(prey_xy[:, 0] - node.x, prey_xy[:, 1] - node.y)
                 j = int(np.argmin(dp))
                 if dp[j] <= R:
+                    ramp = _sense_ramp(float(dp[j]), R, self.sense_ramp_band)
                     attract_tgt[i] = prey_xy[j]
-                    attract_sw[i] = sw_prey
+                    attract_sw[i] = sw_prey * float(np.sqrt(ramp))
+                    prey_i = True
             # Else EXPLORE, PER NODE: this node is drawn (gently) to ITS OWN
-            # nearest least-visited cell (whole-body visit map, per-node target).
+            # nearest least-recently-visited cell (whole-body visit map, per-node target).
             # Each node seeks a different local cell, so the arm spreads to cover
             # ground and the springs keep it spaced - drawing every node to one
             # shared cell balls the whole arm up on it.
+            explored_i = False
             if attract_sw[i] == 0.0 and explore_on:
-                ept = self._node_explore_target(node.x, node.y, visit_counts,
-                                                nthreat)
+                ept, ecell = self._node_explore_target(
+                    node.x, node.y, visit_recency, nthreat)
                 if ept is not None:
-                    attract_tgt[i] = ept
+                    explore_cell[i] = ecell
+                    ept = np.asarray(ept, dtype=float)
+                    prev = self._explore_ema[i]
+                    if np.isnan(prev[0]):
+                        smoothed = ept                       # seed fresh
+                    else:
+                        s = self.explore_target_smooth
+                        smoothed = s * prev + (1.0 - s) * ept  # low-pass
+                    self._explore_ema[i] = smoothed
+                    attract_tgt[i] = smoothed
                     attract_sw[i] = sw_explore
+                    explored_i = True
+            if not explored_i:
+                # Node isn't holding an explore target (prey/threat took it, or
+                # none) -> drop the EMA so a later re-entry reseeds cleanly.
+                self._explore_ema[i] = np.nan
+            # Motor state for this node (threat avoidance outranks prey outranks
+            # explore); row i+1 because row 0 is the pinned base.
+            if repel_sw[i] > 0.0:
+                states[i + 1] = 3      # avoiding threat
+            elif prey_i:
+                states[i + 1] = 2      # chasing prey
+            elif explored_i:
+                states[i + 1] = 1      # exploring
+        self.last_node_state = states
+        # Limb policy = the whole arm's dominant behavior (avoiding > chasing >
+        # gripping > exploring > idle). Grip comes from _propel_body (last frame).
+        if (states == 3).any():
+            self.last_limb_state = 3
+        elif (states == 2).any():
+            self.last_limb_state = 2
+        elif self.last_gripping:
+            self.last_limb_state = 4
+        elif (states == 1).any():
+            self.last_limb_state = 1
+        else:
+            self.last_limb_state = 0
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below
         # builds a fresh array, so this reference stays stable for recording.
@@ -797,6 +888,7 @@ class Limb:
                 "attract_sw": attract_sw,     # (n_free,)
                 "repel_tgt": repel_tgt,       # (n_free, 2)
                 "repel_sw": repel_sw,         # (n_free,)
+                "explore_cell": explore_cell,  # (n_free, 2), NaN where not exploring
                 "threat_active": bool((repel_sw > 0.0).any()),
                 "x0": x0,                 # (2*n_free,) float32
                 "u_init": u_init,         # (horizon, 2*n_free) float32 | None
@@ -929,13 +1021,32 @@ class Octopus:
         self.max_body_angular_velocity = cfg.octopus.max_body_angular_velocity
         self.body_torque_gain = cfg.octopus.limb.ilqr.body_torque_gain
 
+        # Propulsion (how the CoM translates). INTERNAL = legacy summed-tension
+        # drift; REACTION = external-reaction crawl + jet (see _propel_body).
+        self.propulsion_mode = cfg.octopus.propulsion_mode
+        self.sensing_radius = cfg.octopus.sensing_radius
+        self.crawl_grip_limit = cfg.octopus.crawl_grip_limit
+        self.crawl_plant_speed = cfg.octopus.crawl_plant_speed
+        self.jet_enabled = cfg.octopus.jet_enabled
+        self.jet_trigger_radius = cfg.octopus.jet_trigger_radius
+        self.jet_impulse = cfg.octopus.jet_impulse
+        self.jet_decay = cfg.octopus.jet_decay
+        self.max_jet_velocity = cfg.octopus.max_jet_velocity
+        # Persistent jet velocity (decays each frame; refreshed on threat).
+        self._jet_v = np.zeros(2, dtype=float)
+        self.last_jet_v = np.zeros(2, dtype=float)      # diagnostics
+        self.last_crawl_thrust = np.zeros(2, dtype=float)
+        # Body behavior policy (shared code convention): 0 resting, 3 fleeing
+        # (jet active), 4 crawling (crawl thrust). Set in _propel_body.
+        self.last_body_state = 0
+
         # Exploration memory (exploration feature). A per-cell visit count over
         # the world grid, marked by the SUCKERS (not the body) each frame; each
-        # idle arm reaches its tip toward the least-explored cell in reach, so
+        # idle arm reaches its tip toward the least-recently-visited cell in reach, so
         # the suckers sweep unexplored areas. Grid is [y][x] like the surface.
         self.explore_enabled = cfg.octopus.limb.ilqr.explore_enabled
         self.explore_decay = cfg.octopus.limb.ilqr.explore_decay
-        self.visit_counts = np.zeros((cfg.world.y_len, cfg.world.x_len),
+        self.visit_recency = np.zeros((cfg.world.y_len, cfg.world.x_len),
                                      dtype=float)
 
         # Last-frame body force capture (populated by _move_lumped_spring):
@@ -978,38 +1089,52 @@ class Octopus:
             self.x += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
             self.y += np.random.uniform(-self.max_body_velocity, self.max_body_velocity)
         elif self.movement_mode in agent_modes:
-            # These modes share body dynamics: drift by summed arm base tension.
-            # For LUMPED_SPRING the tension is computed live; SPRING_CHAIN and
-            # ILQR each stored their base reaction in last_tension on the
-            # previous frame. First frame (all-zero) just doesn't move.
-            coordinated_influence = self._drift_body_by_tension()
+            # These modes share body dynamics. For LUMPED_SPRING the tension is
+            # computed live; SPRING_CHAIN and ILQR each stored their base
+            # reaction in last_tension on the previous frame. First frame
+            # (all-zero) just doesn't move. Rotation (summed torque) is shared;
+            # the two propulsion modes differ only in how the CoM TRANSLATES.
+            if self.propulsion_mode == PropulsionMode.REACTION:
+                coordinated_influence = self._propel_body(agents)
+            else:
+                coordinated_influence = self._drift_body_by_tension()
         else:
             assert False, "Unknown movement mode"
 
         for l in self.limbs:
             l.move(self.x, self.y, agents, coordinated_influence,
                    body_theta=self.theta, body_dtheta=self.last_body_dtheta,
-                   visit_counts=self.visit_counts if self.explore_enabled
+                   visit_recency=self.visit_recency if self.explore_enabled
                    else None)
 
         # Mark where the SUCKERS are as explored (after they moved). The idle
-        # arms read last frame's map to seek the least-explored cells, so this
+        # arms read last frame's map to seek the least-recently-visited cells, so this
         # runs after the moves - a one-frame lag, like the rest of the loop.
         self._mark_explored()
 
     def _mark_explored(self):
-        """Increment the visit count of every cell a sucker now occupies
-        (optionally decaying old counts first for a recency bias)."""
+        """Refresh the RECENCY of every cell a sucker now occupies to 1.0, after
+        decaying all cells.
+
+        This is a least-RECENTLY-visited map, not a visit COUNT: a cell is SET to
+        1.0 when a sucker is on it (not incremented), so how long the octopus
+        dwells on a cell doesn't matter - only WHEN it was last touched. Each
+        frame every cell decays by ``explore_decay`` (< 1), so a cell's value is
+        ``explore_decay ** frames_since_last_visit`` (1.0 = here now, ->0 = long
+        ago, 0 = never). Nodes explore toward the LOWEST value (least recently
+        visited). Dwell no longer inflates a cell, so a long-occupied cell ages
+        exactly like one touched once and left.
+        """
         if not self.explore_enabled:
             return
         if self.explore_decay != 1.0:
-            self.visit_counts *= self.explore_decay
-        y_len, x_len = self.visit_counts.shape
+            self.visit_recency *= self.explore_decay
+        y_len, x_len = self.visit_recency.shape
         for limb in self.limbs:
             for s in limb.suckers:
                 cx = min(max(int(round(s.x)), 0), x_len - 1)
                 cy = min(max(int(round(s.y)), 0), y_len - 1)
-                self.visit_counts[cy, cx] += 1.0
+                self.visit_recency[cy, cx] = 1.0
 
     def _drift_body_by_tension(self):
         """Drift the body by the summed base tension of its arms.
@@ -1070,6 +1195,130 @@ class Octopus:
         self.last_body_torque = float(torque)
         self.last_body_dtheta = float(dtheta)
         return None
+
+    def _propel_body(self, agents):
+        """External-reaction propulsion: friction-limited CRAWL + siphon JET.
+
+        Physical alternative to _drift_body_by_tension (selected by
+        PropulsionMode.REACTION). A free body's centre of mass cannot be moved
+        by its arms' INTERNAL tension - those forces are internal and cancel.
+        The body translates only via a force the environment reacts against:
+
+        CRAWL. Each arm whose tip is PLANTED (world-stationary between frames =
+          gripping the substrate, not swinging) and PULLING hauls the body
+          toward its grip point. The thrust is capped per arm at
+          crawl_grip_limit; past that the sucker SLIPS and yields no more force
+          (the friction/adhesion budget the internal model never had). An arm
+          reaching into open water has a fast-moving tip -> not planted ->
+          contributes nothing, so a lone reach no longer glides the whole body.
+          Net crawl is the summed thrust, eased in and capped by
+          max_body_velocity, and its direction is decoupled from body
+          orientation (theta), as in a real crawling octopus.
+
+        JET. A threat within sensing_radius of the body fires a siphon jet
+          straight away from it - a momentum burst (max_jet_velocity >> crawl
+          speed) that decays over frames as the mantle refills (jet_decay). The
+          fast escape, produced by expelling water rather than by arm mechanics.
+
+        Rotation is unchanged: theta still integrates the summed arm torque, so
+        the fan keeps re-orienting regardless of which force is translating the
+        body. Returns None (same contract as _drift_body_by_tension).
+        """
+        stored_tension_modes = (MovementMode.SPRING_CHAIN, MovementMode.ILQR)
+
+        # --- CRAWL: friction-limited thrust from planted, pulling arms -------
+        crawl = np.zeros(2, dtype=float)
+        torque = 0.0
+        body_xy = np.array([self.x, self.y], dtype=float)
+        for limb in self.limbs:
+            if self.movement_mode in stored_tension_modes:
+                f = np.asarray(limb.last_tension, dtype=float)
+            else:
+                f = np.asarray(limb.tension_vector(), dtype=float)
+            # Torque about the body centre (unchanged angular twin).
+            r = np.asarray(limb.last_base_offset, dtype=float)
+            torque += float(r[0] * f[1] - r[1] * f[0])
+
+            # Grip point = arm tip; skip arms that expose no centreline.
+            cl = getattr(limb, "center_line", None)
+            if not cl:
+                continue
+            limb.last_gripping = False   # reset; set True only if it hauls below
+            tip = np.array([cl[-1].x, cl[-1].y], dtype=float)
+            prev = limb._propel_prev_tip
+            limb._propel_prev_tip = tip
+            pull = float(np.hypot(f[0], f[1]))
+            if prev is None or pull <= 1e-9:
+                continue  # no history yet, or a slack arm (no grip force)
+            if float(np.hypot(*(tip - prev))) >= self.crawl_plant_speed:
+                continue  # a swinging/reaching tip is not anchored -> no thrust
+            to_grip = tip - body_xy
+            d = float(np.hypot(to_grip[0], to_grip[1]))
+            if d < 1e-9:
+                continue
+            thrust = min(pull, self.crawl_grip_limit)  # friction/adhesion cap
+            crawl += thrust * to_grip / d
+            limb.last_gripping = True    # planted + pulling = anchored/hauling
+
+        crawl_step = np.zeros(2, dtype=float)
+        mag = float(np.hypot(crawl[0], crawl[1]))
+        if mag > 1e-9:
+            step = min(self.max_body_velocity, mag)
+            crawl_step = np.array([step * crawl[0] / mag, step * crawl[1] / mag])
+
+        # --- JET: momentum burst away from a near threat, decaying each frame -
+        self._jet_v = self._jet_v * self.jet_decay
+        if self.jet_enabled:
+            away = self._nearest_threat_escape(agents)
+            if away is not None:
+                self._jet_v = self._jet_v + self.jet_impulse * away
+                jmag = float(np.hypot(self._jet_v[0], self._jet_v[1]))
+                if jmag > self.max_jet_velocity:
+                    self._jet_v = self._jet_v * (self.max_jet_velocity / jmag)
+        if float(np.hypot(self._jet_v[0], self._jet_v[1])) < 1e-4:
+            self._jet_v = np.zeros(2, dtype=float)  # settle to rest cleanly
+
+        drift = crawl_step + self._jet_v
+        self.x += drift[0]
+        self.y += drift[1]
+
+        # Angular: rotate by summed torque, capped (identical to the drift model).
+        dtheta = self.body_torque_gain * torque
+        cap = self.max_body_angular_velocity
+        dtheta = max(-cap, min(cap, dtheta))
+        self.theta = float((self.theta + dtheta) % (2.0 * np.pi))
+
+        self.last_crawl_thrust = crawl_step.copy()
+        self.last_jet_v = self._jet_v.copy()
+        self.last_body_force = crawl.copy()
+        self.last_body_drift = drift.copy()
+        self.last_body_torque = float(torque)
+        self.last_body_dtheta = float(dtheta)
+        # Body policy: fleeing (jet) outranks crawling outranks resting.
+        if float(np.hypot(self._jet_v[0], self._jet_v[1])) > 1e-3:
+            self.last_body_state = 3       # fleeing (jet burst active)
+        elif float(np.hypot(crawl_step[0], crawl_step[1])) > 1e-6:
+            self.last_body_state = 4       # crawling
+        else:
+            self.last_body_state = 0       # resting
+        return None
+
+    def _nearest_threat_escape(self, agents):
+        """Unit vector from the nearest threat (within jet_trigger_radius of the
+        body) toward the body - the siphon-jet escape direction. None if no
+        threat is close enough to trigger a jet."""
+        best_d = self.jet_trigger_radius
+        away = None
+        bx, by = self.x, self.y
+        for ag in (agents or []):
+            if ag.agent_type != AgentType.THREAT:
+                continue
+            dx, dy = bx - ag.x, by - ag.y
+            d = float(np.hypot(dx, dy))
+            if 1e-9 < d < best_d:
+                best_d = d
+                away = np.array([dx / d, dy / d], dtype=float)
+        return away
 
     def find_color(
             self,
@@ -1178,16 +1427,29 @@ class Octopus:
             dc = tf.clip_by_value(surf_c - cur, -d_max, d_max)
             new_c = tf.clip_by_value(cur + dc, 0.0, 1.0)  # (N, 3)
         else:  # MLMode.SUCKER
-            # The sucker model is a single-channel (current, surface) -> new
-            # map; apply it to each RGB channel independently.
-            channels = [
-                tf.reshape(
-                    model(tf.stack([cur[:, ch], surf_c[:, ch]], axis=1),
-                          training=False),
-                    [-1])
-                for ch in range(3)
-            ]
+            # The sucker model is a single-channel map applied to each RGB
+            # channel independently. Per-sucker colour-change budget (config).
+            d_max = tf.constant([s.max_hue_change for s in suckers],
+                                dtype=tf.float32)  # (N,)
+            # A CONDITIONED model (trained with sucker_hue_change_conditioned)
+            # takes (current, surface, max_hue_change) and honours the budget by
+            # construction, so feed it and don't re-clamp. A plain model takes
+            # (current, surface); we re-clamp its step to the config budget so the
+            # knob works at inference without retraining (fixed-budget path).
+            conditioned = (getattr(model, "input_shape", None) is not None
+                           and model.input_shape[-1] == 3)
+            channels = []
+            for ch in range(3):
+                feats = [cur[:, ch], surf_c[:, ch]]
+                if conditioned:
+                    feats.append(d_max)
+                channels.append(tf.reshape(
+                    model(tf.stack(feats, axis=1), training=False), [-1]))
             new_c = tf.stack(channels, axis=1)  # (N, 3)
+            if not conditioned:
+                dm = d_max[:, None]  # (N, 1)
+                new_c = tf.clip_by_value(
+                    cur + tf.clip_by_value(new_c - cur, -dm, dm), 0.0, 1.0)
 
         # Single host pull, then scatter back into Color objects, rebuilding
         # the per-limb nesting in order.
