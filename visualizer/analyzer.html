@@ -372,10 +372,6 @@ function drawWorld(ctx, background, state, view) {
   const selLimb = view.selectedLimb; // number or "all"
   const hasSelection = selLimb !== "all" && selLimb != null;
 
-  // iLQR overlay (ghost horizon poses + tip path), drawn UNDER the applied
-  // pose so plan (ghost) vs applied (solid) reads correctly.
-  if (view.ilqr && view.ilqrOverlay) drawIlqrOverlay(ctx, view);
-
   // Fleshy limb skins (octopus look): a constant-width outlined tube around each
   // arm's centerline, wide enough to enclose its suckers, drawn UNDER the
   // suckers/centerline. Half-width tracks the sucker column spacing.
@@ -392,8 +388,9 @@ function drawWorld(ctx, background, state, view) {
     ctx.lineWidth = 3;
     const limbStates = state.octopus.limb_states;
     state.octopus.limbs.forEach((limb, limbIdx) => {
-      ctx.strokeStyle = hasSelection && limbIdx !== selLimb ? "rgba(255,68,68,0.2)"
-        : (view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444");
+      // With a limb selected, show only ITS centerline (like the skin).
+      if (hasSelection && limbIdx !== selLimb) return;
+      ctx.strokeStyle = view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444";
       if (limb.length > 1) {
         ctx.beginPath();
         ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
@@ -546,6 +543,10 @@ function drawWorld(ctx, background, state, view) {
     ctx.stroke();
     ctx.setLineDash([]);
   }
+
+  // iLQR overlay (ghost horizon poses + tip path) drawn LAST, so the plan lines
+  // sit ON TOP of everything (skin, suckers, hover ring) and are never occluded.
+  if (view.ilqr && view.ilqrOverlay) drawIlqrOverlay(ctx, view);
 
   ctx.restore(); // cell-centre shift
   ctx.restore(); // zoom/pan transform
