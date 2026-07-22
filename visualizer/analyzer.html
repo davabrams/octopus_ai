@@ -259,6 +259,30 @@ const STATE_COLORS = ["#64748b", "#38bdf8", "#22c55e", "#f43f5e", "#f59e0b"];
 const STATE_LABELS = ["idle", "exploring", "chasing prey", "avoiding threat", "gripping"];
 function stateColor(code) { return STATE_COLORS[code] || STATE_COLORS[0]; }
 
+// The iLQR weight/config block C.nodeCosts needs, pulled from the run's recorded
+// flat config (with the same fallbacks the inspector has always used). The
+// per-node sensing arrays (attract/repel tgt+sw) are per-limb and get merged in
+// by the caller from limbData.final. Shared by the single-node inspector and the
+// per-limb cost table so their reconstructions can't drift apart.
+function ilqrWeightCfg(meta) {
+  if (!meta) return null;
+  const c = meta.config;
+  return {
+    restLength: c.octo_max_sucker_distance || 0.3,
+    wSpring: c.octo_ilqr_w_spring || 2.0,
+    wSpringStiffen: c.octo_ilqr_w_spring_stiffen != null ? c.octo_ilqr_w_spring_stiffen : 30.0,
+    springSlack: c.octo_ilqr_spring_slack != null ? c.octo_ilqr_spring_slack : 0.25,
+    bendDeadzoneDeg: c.octo_ilqr_bend_deadzone_deg != null ? c.octo_ilqr_bend_deadzone_deg : 15.0,
+    wEffortStiffen: c.octo_ilqr_w_effort_stiffen != null ? c.octo_ilqr_w_effort_stiffen : 5.0,
+    wBend: c.octo_ilqr_w_bend || 1.0,
+    wReachRun: c.octo_ilqr_w_reach_run || 0.1,
+    wReachTerminal: c.octo_ilqr_w_reach_terminal || 6.0,
+    wExplore: c.octo_ilqr_w_explore || 0.5,
+    wEffort: c.octo_ilqr_w_effort || 0.1,
+    repelTipFraction: c.octo_ilqr_repel_tip_fraction != null ? c.octo_ilqr_repel_tip_fraction : 0.3,
+  };
+}
+
 // Playback cache sizing. Frame geometry (~50KB/frame) and recency grids (small)
 // cache the WHOLE run up to a memory-safe ceiling, so scrubbing/replay stays in
 // RAM. iLQR data is heavy (per-iteration trajectories), so it stays a generous
@@ -1734,23 +1758,7 @@ function App() {
                     // nodeIdx in chain: 0=base, so chain index = nodeIdx
                     const ci = C.clampIdx(nodeIdx, chain.length);
                     const cfg = meta ? {
-                      restLength: meta.config.octo_max_sucker_distance || 0.3,
-                      wSpring: meta.config.octo_ilqr_w_spring || 2.0,
-                      wSpringStiffen: meta.config.octo_ilqr_w_spring_stiffen != null
-                        ? meta.config.octo_ilqr_w_spring_stiffen : 30.0,
-                      springSlack: meta.config.octo_ilqr_spring_slack != null
-                        ? meta.config.octo_ilqr_spring_slack : 0.25,
-                      bendDeadzoneDeg: meta.config.octo_ilqr_bend_deadzone_deg != null
-                        ? meta.config.octo_ilqr_bend_deadzone_deg : 15.0,
-                      wEffortStiffen: meta.config.octo_ilqr_w_effort_stiffen != null
-                        ? meta.config.octo_ilqr_w_effort_stiffen : 5.0,
-                      wBend: meta.config.octo_ilqr_w_bend || 1.0,
-                      wReachRun: meta.config.octo_ilqr_w_reach_run || 0.1,
-                      wReachTerminal: meta.config.octo_ilqr_w_reach_terminal || 6.0,
-                      wExplore: meta.config.octo_ilqr_w_explore || 0.5,
-                      wEffort: meta.config.octo_ilqr_w_effort || 0.1,
-                      repelTipFraction: meta.config.octo_ilqr_repel_tip_fraction != null
-                        ? meta.config.octo_ilqr_repel_tip_fraction : 0.3,
+                      ...ilqrWeightCfg(meta),
                       // Per-node sensing arrays (node-autonomous attract/repel).
                       attractTgt: limbData.final.attract_tgt,
                       attractSw: limbData.final.attract_sw,
@@ -1795,6 +1803,112 @@ function App() {
               })()}
             </div>
           )}
+
+          {/* per-limb node cost table: when a single limb is selected in the
+              iLQR overlay dropdown, list every node in order with its cost
+              breakdown + motor state, so the whole arm reads at a glance
+              (the sucker inspector above is one node on hover). */}
+          {ilqrLimb !== "all" && meta && curFrame && curIlqr && (() => {
+            const limbData = curIlqr.find((l) => l.limb === ilqrLimb);
+            if (!limbData || !limbData.iterations || !limbData.iterations.length) return null;
+            const iterIdx = C.clampIdx(ilqrIter, limbData.iterations.length);
+            const it = limbData.iterations[iterIdx];
+            const chains = C.chainsWithBase(it.trajectory, limbData.base);
+            if (!chains.length) return null;
+            const step = ilqrStep != null ? C.clampIdx(ilqrStep, chains.length) : chains.length - 1;
+            const chain = chains[step];
+            const isTerminal = step === chains.length - 1;
+            const cfg = {
+              ...ilqrWeightCfg(meta),
+              attractTgt: limbData.final.attract_tgt,
+              attractSw: limbData.final.attract_sw,
+              repelTgt: limbData.final.repel_tgt,
+              repelSw: limbData.final.repel_sw,
+            };
+            // Per-node motor state (0..4): the suckers on a node share it, so read
+            // it off this limb's suckers (node index = local sucker row).
+            const limbRows = meta.anatomy.limb_rows;
+            const suckersPerLimb = limbRows * meta.anatomy.limb_cols;
+            const nodeStates = new Array(chain.length).fill(0);
+            curFrame.octopus.suckers.forEach((s, gi) => {
+              const li = s.limb != null ? s.limb : Math.floor(gi / suckersPerLimb);
+              if (li !== ilqrLimb) return;
+              const ni = (gi % suckersPerLimb) % limbRows;
+              if (s.state != null && ni < nodeStates.length) nodeStates[ni] = s.state;
+            });
+            const rows = [];
+            for (let ci = 1; ci < chain.length; ci++) {
+              const vel = !isTerminal
+                ? [chains[step + 1][ci][0] - chain[ci][0],
+                   chains[step + 1][ci][1] - chain[ci][1]]
+                : null;
+              const costs = C.nodeCosts(chain, ci, cfg, isTerminal, vel);
+              const g = (k) => (costs[k] ? costs[k].cost : 0);
+              const total = Object.values(costs).reduce((a, v) => a + v.cost, 0);
+              rows.push({
+                ci, st: nodeStates[ci] || 0,
+                spring: g("spring") + g("springStiffen"), bend: g("bending"),
+                attract: g("attract"), repel: g("repel"),
+                effort: g("effort") + g("effortStiffen"), total,
+              });
+            }
+            // Dominant applied term per row, to tint the total (what's driving it).
+            const num = (v) => v > 1e-4
+              ? <span className="text-slate-300">{v.toFixed(2)}</span>
+              : <span className="text-slate-700">·</span>;
+            return (
+              <div className="bg-slate-900 p-3 rounded">
+                <div className="font-bold mb-2 text-sky-400">
+                  limb {ilqrLimb} nodes{" "}
+                  <span className="text-slate-500 font-normal">
+                    iter {iterIdx} · step {step}{isTerminal ? " (terminal)" : ""} · base→tip
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                <table className="w-full text-[10px] tabular-nums">
+                  <thead>
+                    <tr className="text-slate-500 text-left">
+                      <th className="pr-1 font-normal">#</th>
+                      <th className="pr-1 font-normal">st</th>
+                      <th className="text-right pl-1 font-normal">spring</th>
+                      <th className="text-right pl-1 font-normal">bend</th>
+                      <th className="text-right pl-1 font-normal">attr</th>
+                      <th className="text-right pl-1 font-normal">repel</th>
+                      <th className="text-right pl-1 font-normal">eff</th>
+                      <th className="text-right pl-1">total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.ci} className="border-t border-slate-800">
+                        <td className="pr-1 text-slate-400">{r.ci}</td>
+                        <td className="pr-1">
+                          <span className="inline-block w-2 h-2 rounded-sm align-middle"
+                                style={{ background: stateColor(r.st) }}
+                                title={STATE_LABELS[r.st]}></span>
+                        </td>
+                        <td className="text-right pl-1">{num(r.spring)}</td>
+                        <td className="text-right pl-1">{num(r.bend)}</td>
+                        <td className="text-right pl-1">{num(r.attract)}</td>
+                        <td className="text-right pl-1">{num(r.repel)}</td>
+                        <td className="text-right pl-1">{num(r.effort)}</td>
+                        <td className="text-right pl-1 font-bold text-slate-200">{r.total.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                  {STATE_LABELS.map((label, i) => (
+                    <span key={i} className="inline-flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 rounded-sm"
+                            style={{ background: stateColor(i) }}></span>{label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="bg-slate-900 p-3 rounded text-slate-400">
             <div className="font-bold mb-1 text-slate-300">keys</div>
