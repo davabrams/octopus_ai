@@ -259,6 +259,23 @@ const STATE_COLORS = ["#64748b", "#38bdf8", "#22c55e", "#f43f5e", "#f59e0b"];
 const STATE_LABELS = ["idle", "exploring", "chasing prey", "avoiding threat", "gripping"];
 function stateColor(code) { return STATE_COLORS[code] || STATE_COLORS[0]; }
 
+// Playback cache sizing. Frame geometry (~50KB/frame) and recency grids (small)
+// cache the WHOLE run up to a memory-safe ceiling, so scrubbing/replay stays in
+// RAM. iLQR data is heavy (per-iteration trajectories), so it stays a generous
+// sliding window around the current frame rather than the whole run.
+const FRAME_CACHE_MAX = 2000;    // ~100 MB at ~50KB/frame
+const ILQR_CACHE_MAX = 200;      // window; heavy per-frame
+const EXPLORE_CACHE_MAX = 2000;  // recency grids are small
+// Caps for THIS run: cache all of it if it fits under the ceiling.
+function cacheCaps(total) {
+  const t = Math.max(1, total | 0);
+  return {
+    frame: Math.min(t, FRAME_CACHE_MAX),
+    ilqr: Math.min(t, ILQR_CACHE_MAX),
+    explore: Math.min(t, EXPLORE_CACHE_MAX),
+  };
+}
+
 // Draw a fleshy CONSTANT-WIDTH limb "skin": a round-capped tube along the
 // centerline (no taper - our suckers are uniform), wide enough to enclose the
 // suckers, rendered as a translucent fill under a dark outline (like clip-art
@@ -836,9 +853,11 @@ function App() {
 
   // ---- run loading ----
   const loadRun = useCallback((runId) => {
-    frameCache.current = C.makeLru(400);
-    ilqrCache.current = C.makeLru(40);
-    exploreCache.current = C.makeLru(60);
+    // Release the previous run's cached data immediately; the real caches are
+    // sized to THIS run below, once frames_recorded is known.
+    frameCache.current = C.makeLru(1);
+    ilqrCache.current = C.makeLru(1);
+    exploreCache.current = C.makeLru(1);
     lastExploreRef.current = null;   // don't carry a prior run's overlay
     setFrameIdx(0);
     setPlaying(false);
@@ -847,19 +866,25 @@ function App() {
       setMeta(msg.data);
       stateRef.current.background = msg.data.background;
       dirtyRef.current = true;
-      // frame 0 then bulk fill
+      // Size the caches to this run (cache the whole run if it fits the ceiling),
+      // then fetch frame 0 and bulk-fill the rest.
+      const caps = cacheCaps(msg.data.frames_recorded);
+      frameCache.current = C.makeLru(caps.frame);
+      ilqrCache.current = C.makeLru(caps.ilqr);
+      exploreCache.current = C.makeLru(caps.explore);
       send("get_frame", { run_id: runId, frame: 0 });
       bulkFill(runId, msg.data.frames_recorded);
     });
   }, [send]);
 
   const bulkFill = useCallback((runId, total) => {
-    // Chunked prefetch of state-only frames while under the memory budget.
+    // Chunked prefetch of state-only frames into the frame cache (whole run up
+    // to the cache ceiling), so scrubbing/replay never re-fetches.
     const CHUNK = 20;
-    const cap = Math.min(total, Math.floor(25 * 1024 * 1024 / (50 * 1024))); // ~500
+    const cap = cacheCaps(total).frame;
     let start = 0;
     const step = () => {
-      if (start >= Math.min(total, cap)) return;
+      if (start >= cap) return;
       send("get_frames", { run_id: runId, start, count: CHUNK });
       start += CHUNK;
       setTimeout(step, 30);
