@@ -149,7 +149,18 @@ class ILQRConfig:
     how hard each arm's attract/repel influence tugs the shared body.
     """
     horizon: int = 10            # trajectory length planned each frame
-    max_iters: int = 5           # iLQR iterations per frame (MPC, warm-started)
+    max_iters: int = 30          # iLQR iteration CAP per frame (MPC, warm-started).
+                                 # The solver early-exits when rel_improve < tol, so
+                                 # this is headroom, not a fixed count - typical
+                                 # frames converge in ~6-8 iters, so raising the cap
+                                 # is nearly free. Raised from 5: against the stiff
+                                 # spring/effort landscape the line search takes
+                                 # small steps (alpha ~0.25-0.5), so a cap of 5 cut
+                                 # the descent off mid-solve - solves finished
+                                 # UNconverged every frame (~8% converged) and the
+                                 # arm only crept ~0.04 units/frame, unable to act
+                                 # on a threat before the solve was truncated. At 30
+                                 # it converges ~100% of frames
     body_stiffness: float = 3.0  # gain from the arm's base-segment spring
                                  # tension to the body's drift (the body only
                                  # ever moves via this tension - never sensing
@@ -166,7 +177,11 @@ class ILQRConfig:
     w_spring_stiffen: float = 30.0  # super-linear (cubic-force) spring term: a
                                     # soft wall against large stretch/compression
                                     # so a strong attractor can't ball up or
-                                    # stretch the chain (min seg ~= rest)
+                                    # stretch the chain (min seg ~= rest). Also acts
+                                    # as ROTATIONAL DAMPING - softening it (tried 12)
+                                    # let the reaching arm oscillate, feeding
+                                    # residual torque into the body so its rotation
+                                    # never settled (~half the cap rate). Keep stiff
     spring_slack: float = 0.00   # deadband: a segment may deviate +-this from
                                  # rest length for FREE (nodes move paying only
                                  # effort within the slack). Narrowed from 0.25:
