@@ -603,26 +603,31 @@ function drawIlqrOverlay(ctx, view) {
     }
     const it = iters[iterIdx];
     const chains = C.chainsWithBase(it.trajectory, limbData.base);
-    // Ghost horizon poses.
+    // Ghost horizon poses as a FORWARD-INTENT gradient: dim near the current pose
+    // (steps 0-1 sit ON the centerline - step 1 IS this frame's applied pose)
+    // ramping BRIGHT toward the horizon end, so the plan reads as intent LEAVING
+    // the centerline instead of a pose stacked on top of it. Step 0 (the previous
+    // frame's pose) is dashed. Amber throughout, so it stays distinct from the
+    // (red / state-coloured) centerline it overlaps. The step slider no longer
+    // recolours a whole pose (that buried the centerline); it just marks the
+    // selected step's nodes so you can locate the pose the cost table refers to.
     chains.forEach((chain, t) => {
-      const selected = selStep != null && t === selStep;
-      const dimmed = selStep != null && !selected;
-      const a = dimmed ? 0.08 : 0.15 + 0.65 * (t / Math.max(1, chains.length - 1));
-      ctx.strokeStyle = selected ? `rgba(56,189,248,0.95)` : `rgba(251,191,36,${a})`;
-      ctx.lineWidth = selected ? 3 : 1.5;
-      if (t === 0 && !selected) ctx.setLineDash([4, 3]); else ctx.setLineDash([]);
+      const frac = t / Math.max(1, chains.length - 1);
+      const a = 0.12 + 0.66 * frac;
+      ctx.strokeStyle = `rgba(251,191,36,${a})`;
+      ctx.lineWidth = (selStep != null && t === selStep) ? 2.5 : 1.5;
+      if (t === 0) ctx.setLineDash([4, 3]); else ctx.setLineDash([]);
       strokeChain(ctx, chain, cs);
       ctx.setLineDash([]);
-      // Draw node dots on selected step.
-      if (selected) {
-        chain.forEach((pt) => {
-          ctx.fillStyle = "#38bdf8";
-          ctx.beginPath();
-          ctx.arc(pt[0] * cs, pt[1] * cs, cs * 0.1, 0, 2 * Math.PI);
-          ctx.fill();
-        });
-      }
     });
+    if (selStep != null && chains[selStep]) {
+      chains[selStep].forEach((pt) => {
+        ctx.fillStyle = "rgba(251,191,36,0.95)";
+        ctx.beginPath();
+        ctx.arc(pt[0] * cs, pt[1] * cs, cs * 0.08, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    }
     // Tip path.
     if (chains.length) {
       ctx.strokeStyle = "#22d3ee";
