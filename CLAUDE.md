@@ -259,7 +259,7 @@ bazel run //inference_server:server        # or: cd inference_server && python s
 # Headless record & replay: step N frames, write logs/runs/<run_id>.duckdb
 python simulator/headless_runner.py --frames 120   # or: bazel run //simulator:headless_runner_bin -- --frames 120
 python simulator/headless_runner.py --frames 120 --profile   # + a hierarchical timing report (frame -> move -> limb.move -> ilqr.solve, camouflage, record)
-python simulator/headless_runner.py --frames 120 --compiled-backward   # graph-compiled iLQR backward pass (~3.3x faster per solve; opt-in, tiny float32 diffs)
+python simulator/headless_runner.py --frames 120 --eager-backward   # slower EAGER iLQR backward pass (the compiled one is now default; for A/B profiling)
 
 # Analyzer server (Simulate + Playback), then open http://localhost:8765/ in a browser
 bazel run //visualizer:websocket_server  # or: python visualizer/websocket_server.py; ws://localhost:8765
@@ -343,13 +343,14 @@ unused imports); clean opportunistically, don't let it block work.
    its own compiled `ArmController`, `simulator/ilqr/` + `Limb._move_ilqr`,
    MPC-style). Agents only implement `RANDOM`/`REACTIVE`. The active iLQR path
    is `solver.py` + `arm.py` + `residuals.py` (the cost library — new cost terms
-   go there). **Perf:** the solve is ~84% of sim wall time (the eager backward
-   Riccati loop dispatches ~15k tiny TF ops); `octo_ilqr_compiled_backward` (off
-   by default) swaps in `solver_parallel.py`, which runs the WHOLE backward pass
-   as one `@tf.function` per iteration — ~3.3× faster per solve, same arm (no
-   cross-arm batching), numerically equal to float32 op-reorder noise (~1e-3), so
-   it's opt-in per run. Profile with `python simulator/headless_runner.py
-   --frames N --profile [--compiled-backward]`. The old `nodemesh.py` + `costs.py`
+   go there). **Perf:** the solve is the bulk of sim wall time. The backward
+   Riccati recursion runs as one graph `@tf.function` per iteration
+   (`solver_parallel.py`, `octo_ilqr_compiled_backward` — **on by default**),
+   instead of ~2·horizon eager op dispatches; ~3.3× faster per solve (~1.7× whole
+   sim), same arm (no cross-arm batching), numerically equal to float32 op-reorder
+   noise (~1e-3). Set the flag False (or `headless_runner --eager-backward`) for
+   the slower eager reference path. Profile with `python simulator/headless_runner
+   .py --frames N --profile`. The old `nodemesh.py` + `costs.py`
    gradient-relaxation prototype
    was **deleted** July 2026 (incompatible paradigm, never wired in). See
    ARCHITECTURE.md §4.5 and §11 for the compute-placement rationale. Note

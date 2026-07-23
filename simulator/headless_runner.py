@@ -364,10 +364,10 @@ def main(argv=None):
         "frame loop spends its time (per-phase / per-limb / iLQR solve)",
     )
     parser.add_argument(
-        "--compiled-backward",
+        "--eager-backward",
         action="store_true",
-        help="use the graph-compiled iLQR backward pass (solver_parallel); "
-        "~3x faster per solve, same arm, tiny float32 trajectory differences",
+        help="use the EAGER iLQR backward pass instead of the (default) "
+        "graph-compiled one - the slower reference path, for A/B profiling",
     )
     args = parser.parse_args(argv)
 
@@ -390,11 +390,11 @@ def main(argv=None):
         cfg = replace(cfg, octopus=replace(
             o, limb=replace(o.limb, ilqr=replace(
                 o.limb.ilqr, explore_enabled=True))))
-    if args.compiled_backward:
+    if args.eager_backward:
         o = cfg.octopus
         cfg = replace(cfg, octopus=replace(
             o, limb=replace(o.limb, ilqr=replace(
-                o.limb.ilqr, compiled_backward=True))))
+                o.limb.ilqr, compiled_backward=False))))
 
     print_config(cfg, "headless_runner CONFIG")
     runner = HeadlessRunner(cfg, label=args.label)

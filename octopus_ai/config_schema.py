@@ -161,15 +161,15 @@ class ILQRConfig:
                                  # arm only crept ~0.04 units/frame, unable to act
                                  # on a threat before the solve was truncated. At 30
                                  # it converges ~100% of frames
-    compiled_backward: bool = False  # use the graph-compiled backward pass
+    compiled_backward: bool = True   # use the graph-compiled backward pass
                                      # (simulator/ilqr/solver_parallel.py) instead
                                      # of the eager Riccati loop. Same arm, same
                                      # math, but the whole backward pass is ONE
                                      # tf.function call/iter instead of ~2*horizon
                                      # eager dispatches - measured ~3.3x faster per
-                                     # solve. Off by default: it changes recorded
-                                     # trajectories by float32 op-reorder noise
-                                     # (~1e-3), so opt in per run
+                                     # solve (~1.7x whole sim). Set False for the
+                                     # eager reference path; results differ only by
+                                     # float32 op-reorder noise (~1e-3)
     body_stiffness: float = 3.0  # gain from the arm's base-segment spring
                                  # tension to the body's drift (the body only
                                  # ever moves via this tension - never sensing

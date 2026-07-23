@@ -83,9 +83,10 @@ class ArmController:
                                      # end recoils hardest and the tip least
     max_iters: int = 50
     tol: float = 1e-4
-    compiled_backward: bool = False  # use solver_parallel (graph-compiled
+    compiled_backward: bool = True   # use solver_parallel (graph-compiled
                                      # backward pass) instead of the eager solver;
-                                     # same arm, same math, fewer TF dispatches
+                                     # same arm, same math, fewer TF dispatches.
+                                     # Set False for the eager reference path.
 
     def __post_init__(self):
         n_free = self.n_free
