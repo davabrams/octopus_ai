@@ -91,6 +91,7 @@ from octopus_ai.config import (
     print_config,
 )
 from simulator.headless_runner import HeadlessRunner
+from simulator.profiling import PROFILER
 from simulator.run_store import FrameOutOfRangeError, RunNotFoundError, RunStore
 from simulator.sim_recorder import DEFAULT_RUNS_DIR, new_run_id
 
@@ -289,6 +290,10 @@ class OctopusSimulationServer:
 
         drain = asyncio.create_task(self._drain_progress(active))
         status, error, summary = "complete", None, None
+        # Profile the run so the analyzer can show where the time went. Only one
+        # sim runs at a time (self._active guards it), and the run is awaited
+        # before we read the tree, so the single-threaded PROFILER is safe here.
+        PROFILER.enable()
         try:
             summary = await asyncio.to_thread(
                 runner.run, progress_cb, active.cancel.is_set)
@@ -298,9 +303,12 @@ class OctopusSimulationServer:
             error = str(e)
             logging.exception("simulate run failed: %s", e)
         finally:
+            PROFILER.disable()
             active.done = True
             await drain
             self._active = None
+        profile_report = PROFILER.render()
+        logging.info("simulate %s profile:\n%s", run_id, profile_report)
 
         frames_recorded = summary.frames_recorded if summary else 0
         elapsed = summary.elapsed_s if summary else 0.0
@@ -317,7 +325,8 @@ class OctopusSimulationServer:
             "data": {"run_id": run_id, "status": status,
                      "frames_recorded": frames_recorded,
                      "elapsed_s": round(elapsed, 4), "error": error,
-                     "final_state": final_state}})
+                     "final_state": final_state,
+                     "profile": profile_report}})
 
     async def _drain_progress(self, active: ActiveRun):
         """Broadcast progress, coalescing (latest wins) so a slow client can

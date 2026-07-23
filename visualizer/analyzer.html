@@ -750,6 +750,7 @@ function App() {
   const [ctxMenu, setCtxMenu] = useState(null); // {x, y} or null
   const [measureMode, setMeasureMode] = useState(false); // ruler tool active
   const [measurePts, setMeasurePts] = useState([]); // up to 2 world pts {wx,wy}
+  const [profileReport, setProfileReport] = useState(null); // last sim's timing tree
   const dragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
@@ -851,6 +852,7 @@ function App() {
       }
     } else if (type === "simulate_complete") {
       setSim((s) => ({ ...s, running: false, progress: null }));
+      setProfileReport(data.profile || null);  // timing tree for the sim panel
       // draw final_state immediately, then auto-select in playback
       if (data.final_state && data.final_state.octopus) {
         stateRef.current.finalState = data.final_state;
@@ -1940,6 +1942,21 @@ function App() {
               </div>
             );
           })()}
+
+          {/* profiler report from the last Simulate (where the frame loop spent
+              its time: frame -> move -> limb.move -> ilqr.solve, camouflage, ...) */}
+          {profileReport && (
+            <div className="bg-slate-900 p-3 rounded">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-sky-400">profiler</span>
+                <button className="text-slate-500 hover:text-slate-300"
+                        onClick={() => setProfileReport(null)}>✕</button>
+              </div>
+              <div className="overflow-x-auto">
+                <pre className="text-[10px] leading-tight text-slate-300 whitespace-pre">{profileReport}</pre>
+              </div>
+            </div>
+          )}
 
           <div className="bg-slate-900 p-3 rounded text-slate-400">
             <div className="font-bold mb-1 text-slate-300">keys</div>
