@@ -705,6 +705,7 @@ class Limb:
                 w_repel=ic.w_repel,
                 repel_radius=ic.repel_radius,
                 repel_tip_fraction=ic.repel_tip_fraction,
+                compiled_backward=ic.compiled_backward,
             )
 
         # The arm is NOT rigidly carried through the body's rotation. The body

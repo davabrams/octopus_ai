@@ -272,6 +272,7 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_chain_move_k': cfg.octopus.limb.chain.move_k,
         'octo_ilqr_horizon': cfg.octopus.limb.ilqr.horizon,
         'octo_ilqr_max_iters': cfg.octopus.limb.ilqr.max_iters,
+        'octo_ilqr_compiled_backward': cfg.octopus.limb.ilqr.compiled_backward,
         'octo_ilqr_body_stiffness': cfg.octopus.limb.ilqr.body_stiffness,
         'octo_ilqr_w_spring': cfg.octopus.limb.ilqr.w_spring,
         'octo_ilqr_w_spring_stiffen':
@@ -453,6 +454,8 @@ def config_from_flat(d: dict) -> Config:
                               D.octopus.limb.ilqr.horizon),
                     max_iters=g('octo_ilqr_max_iters',
                                 D.octopus.limb.ilqr.max_iters),
+                    compiled_backward=g('octo_ilqr_compiled_backward',
+                                        D.octopus.limb.ilqr.compiled_backward),
                     body_stiffness=g('octo_ilqr_body_stiffness',
                                      D.octopus.limb.ilqr.body_stiffness),
                     body_torque_gain=g('octo_ilqr_body_torque_gain',

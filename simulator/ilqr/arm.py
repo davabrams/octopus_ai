@@ -39,6 +39,7 @@ import tensorflow as tf
 
 from simulator.ilqr import residuals as res
 from simulator.ilqr.solver import DT, ILQRResult, make_solver
+from simulator.ilqr.solver_parallel import make_solver_parallel
 
 
 @dataclass
@@ -82,6 +83,9 @@ class ArmController:
                                      # end recoils hardest and the tip least
     max_iters: int = 50
     tol: float = 1e-4
+    compiled_backward: bool = False  # use solver_parallel (graph-compiled
+                                     # backward pass) instead of the eager solver;
+                                     # same arm, same math, fewer TF dispatches
 
     def __post_init__(self):
         n_free = self.n_free
@@ -147,7 +151,8 @@ class ArmController:
             ], axis=0)
 
         self._dynamics = dynamics
-        self._solve = make_solver(
+        factory = make_solver_parallel if self.compiled_backward else make_solver
+        self._solve = factory(
             dynamics, running_cost, terminal_cost,
             control_dim=2 * n_free,
             max_iters=self.max_iters, tol=self.tol)

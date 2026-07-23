@@ -363,6 +363,12 @@ def main(argv=None):
         help="time the sim and print a hierarchical breakdown of where the "
         "frame loop spends its time (per-phase / per-limb / iLQR solve)",
     )
+    parser.add_argument(
+        "--compiled-backward",
+        action="store_true",
+        help="use the graph-compiled iLQR backward pass (solver_parallel); "
+        "~3x faster per solve, same arm, tiny float32 trajectory differences",
+    )
     args = parser.parse_args(argv)
 
     # Import profiles here so the module stays import-light for the server.
@@ -384,6 +390,11 @@ def main(argv=None):
         cfg = replace(cfg, octopus=replace(
             o, limb=replace(o.limb, ilqr=replace(
                 o.limb.ilqr, explore_enabled=True))))
+    if args.compiled_backward:
+        o = cfg.octopus
+        cfg = replace(cfg, octopus=replace(
+            o, limb=replace(o.limb, ilqr=replace(
+                o.limb.ilqr, compiled_backward=True))))
 
     print_config(cfg, "headless_runner CONFIG")
     runner = HeadlessRunner(cfg, label=args.label)
