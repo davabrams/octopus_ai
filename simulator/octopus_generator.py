@@ -1042,6 +1042,8 @@ class Octopus:
         start_xy: optional (x, y) tuple to override the default center position.
         """
         cfg = as_config(params)
+        self.x_len = cfg.world.x_len   # play-area bounds; the body centre is
+        self.y_len = cfg.world.y_len   # clamped into [0, x_len-1] x [0, y_len-1]
         if start_xy is not None:
             self.x = float(start_xy[0])
             self.y = float(start_xy[1])
@@ -1141,6 +1143,12 @@ class Octopus:
                     coordinated_influence = self._drift_body_by_tension()
         else:
             assert False, "Unknown movement mode"
+
+        # Keep the body CENTRE inside the play area - a jet escape can otherwise
+        # rocket it clean off the grid. Clamp to [0, x_len-1] x [0, y_len-1] (the
+        # same bound the agents use); the limbs below then track the clamped body.
+        self.x = float(min(max(self.x, 0.0), self.x_len - 1.0))
+        self.y = float(min(max(self.y, 0.0), self.y_len - 1.0))
 
         with span("limbs"):
             for l in self.limbs:

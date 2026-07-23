@@ -164,5 +164,32 @@ class JetEscape(unittest.TestCase):
         self.assertAlmostEqual(float(np.hypot(*octo.last_jet_v)), 0.0, places=6)
 
 
+class _AgHolder:
+    """Minimal agent-generator stand-in for Octopus.move (reads .agents only)."""
+    def __init__(self, agents):
+        self.agents = agents
+
+    def increment_all(self, *a, **k):
+        pass
+
+
+class BodyBounds(unittest.TestCase):
+    def test_body_clamped_to_grid_under_jet(self):
+        """A jet escape can't rocket the body off the grid: move() clamps the
+        centre to [0, x_len-1] x [0, y_len-1]."""
+        octo = _reaction_octo(num_arms=2)
+        octo.x, octo.y = octo.x_len / 2.0, 1.5   # near the TOP edge
+        threat = _Threat(octo.x, octo.y + 2.0)   # below -> jet fires UP toward y=0
+        ag = _AgHolder([threat])
+        y_start = octo.y
+        for _ in range(30):
+            threat.x, threat.y = octo.x, octo.y + 2.0   # keep it chasing, in range
+            octo.move(ag)
+            self.assertTrue(0.0 <= octo.x <= octo.x_len - 1.0 + 1e-9)
+            self.assertTrue(0.0 <= octo.y <= octo.y_len - 1.0 + 1e-9)
+        self.assertLess(octo.y, y_start)         # the jet did push it up, then clamped
+        self.assertAlmostEqual(octo.y, 0.0, places=6)  # pinned at the top edge
+
+
 if __name__ == '__main__':
     unittest.main()
