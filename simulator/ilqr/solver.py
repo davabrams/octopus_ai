@@ -36,6 +36,8 @@ from typing import NamedTuple
 import numpy as np
 import tensorflow as tf
 
+from simulator.profiling import span
+
 DT: float = 1.0  # sample time, matches the simulator's dt
 
 
@@ -173,8 +175,9 @@ def make_solver(dynamics: Callable,
         u_traj = tf.convert_to_tensor(u_init, dtype=tf.float32)
         horizon = int(u_traj.shape[0])
 
-        x_traj = rollout(x0, u_traj)
-        cost = total_cost(x_traj, u_traj, params)
+        with span("ilqr.rollout"):
+            x_traj = rollout(x0, u_traj)
+            cost = total_cost(x_traj, u_traj, params)
 
         mu = mu_init
         converged = False
@@ -192,49 +195,55 @@ def make_solver(dynamics: Callable,
             iters_run = iteration + 1
 
             # ---- Backward pass: feedforward k_t and feedback gains K_t ----
-            v_x, v_xx = quad_term(x_traj[-1], params)
-            k_seq = [None] * horizon
-            big_k_seq = [None] * horizon
-            backward_ok = True
+            with span("ilqr.backward"):
+                v_x, v_xx = quad_term(x_traj[-1], params)
+                k_seq = [None] * horizon
+                big_k_seq = [None] * horizon
+                backward_ok = True
 
-            for t in reversed(range(horizon)):
-                xt, ut = x_traj[t], u_traj[t]
-                f_x, f_u = dyn_jac(xt, ut)
-                l_x, l_u, l_xx, l_uu, l_ux = quad_run(xt, ut, params)
+                for t in reversed(range(horizon)):
+                    xt, ut = x_traj[t], u_traj[t]
+                    # Autodiff'd dynamics + running-cost derivatives (compiled).
+                    with span("bwd.derivs"):
+                        f_x, f_u = dyn_jac(xt, ut)
+                        l_x, l_u, l_xx, l_uu, l_ux = quad_run(xt, ut, params)
 
-                q_x = l_x + tf.linalg.matvec(f_x, v_x, transpose_a=True)
-                q_u = l_u + tf.linalg.matvec(f_u, v_x, transpose_a=True)
-                q_xx = l_xx + tf.matmul(f_x, tf.matmul(v_xx, f_x),
-                                        transpose_a=True)
-                q_uu = l_uu + tf.matmul(f_u, tf.matmul(v_xx, f_u),
-                                        transpose_a=True)
-                q_ux = l_ux + tf.matmul(f_u, tf.matmul(v_xx, f_x),
-                                        transpose_a=True)
+                    # Riccati recursion: assemble Q, regularize, Cholesky-solve
+                    # for the gains, propagate the value function.
+                    with span("bwd.riccati"):
+                        q_x = l_x + tf.linalg.matvec(f_x, v_x, transpose_a=True)
+                        q_u = l_u + tf.linalg.matvec(f_u, v_x, transpose_a=True)
+                        q_xx = l_xx + tf.matmul(f_x, tf.matmul(v_xx, f_x),
+                                                transpose_a=True)
+                        q_uu = l_uu + tf.matmul(f_u, tf.matmul(v_xx, f_u),
+                                                transpose_a=True)
+                        q_ux = l_ux + tf.matmul(f_u, tf.matmul(v_xx, f_x),
+                                                transpose_a=True)
 
-                q_uu_reg = q_uu + mu * eye_u
-                chol = tf.linalg.cholesky(q_uu_reg)
-                if bool(tf.reduce_any(tf.math.is_nan(chol))):
-                    backward_ok = False
-                    break
+                        q_uu_reg = q_uu + mu * eye_u
+                        chol = tf.linalg.cholesky(q_uu_reg)
+                        if bool(tf.reduce_any(tf.math.is_nan(chol))):
+                            backward_ok = False
+                            break
 
-                neg_q_u = -tf.expand_dims(q_u, -1)
-                k_t = tf.squeeze(tf.linalg.cholesky_solve(chol, neg_q_u), -1)
-                big_k_t = tf.linalg.cholesky_solve(chol, -q_ux)
-                k_seq[t] = k_t
-                big_k_seq[t] = big_k_t
+                        neg_q_u = -tf.expand_dims(q_u, -1)
+                        k_t = tf.squeeze(tf.linalg.cholesky_solve(chol, neg_q_u), -1)
+                        big_k_t = tf.linalg.cholesky_solve(chol, -q_ux)
+                        k_seq[t] = k_t
+                        big_k_seq[t] = big_k_t
 
-                v_x = (q_x
-                       + tf.linalg.matvec(big_k_t,
-                                          tf.linalg.matvec(q_uu, k_t),
-                                          transpose_a=True)
-                       + tf.linalg.matvec(big_k_t, q_u, transpose_a=True)
-                       + tf.linalg.matvec(q_ux, k_t, transpose_a=True))
-                v_xx = (q_xx
-                        + tf.matmul(big_k_t, tf.matmul(q_uu, big_k_t),
-                                    transpose_a=True)
-                        + tf.matmul(big_k_t, q_ux, transpose_a=True)
-                        + tf.matmul(q_ux, big_k_t, transpose_a=True))
-                v_xx = 0.5 * (v_xx + tf.transpose(v_xx))
+                        v_x = (q_x
+                               + tf.linalg.matvec(big_k_t,
+                                                  tf.linalg.matvec(q_uu, k_t),
+                                                  transpose_a=True)
+                               + tf.linalg.matvec(big_k_t, q_u, transpose_a=True)
+                               + tf.linalg.matvec(q_ux, k_t, transpose_a=True))
+                        v_xx = (q_xx
+                                + tf.matmul(big_k_t, tf.matmul(q_uu, big_k_t),
+                                            transpose_a=True)
+                                + tf.matmul(big_k_t, q_ux, transpose_a=True)
+                                + tf.matmul(q_ux, big_k_t, transpose_a=True))
+                        v_xx = 0.5 * (v_xx + tf.transpose(v_xx))
 
             if not backward_ok:
                 if record_history:
@@ -253,15 +262,16 @@ def make_solver(dynamics: Callable,
             # ---- Forward pass with line search over the step size alpha. ----
             improved = False
             rel_improve = tf.constant(0.0)
-            for alpha in alphas:
-                x_cand, u_cand, cost_cand = forward(
-                    x0, u_traj, k_stack, big_k_stack,
-                    tf.constant(alpha, tf.float32), x_traj, params)
-                if bool(cost_cand < cost):
-                    rel_improve = (cost - cost_cand) / (tf.abs(cost) + 1e-12)
-                    x_traj, u_traj, cost = x_cand, u_cand, cost_cand
-                    improved = True
-                    break
+            with span("ilqr.forward"):
+                for alpha in alphas:
+                    x_cand, u_cand, cost_cand = forward(
+                        x0, u_traj, k_stack, big_k_stack,
+                        tf.constant(alpha, tf.float32), x_traj, params)
+                    if bool(cost_cand < cost):
+                        rel_improve = (cost - cost_cand) / (tf.abs(cost) + 1e-12)
+                        x_traj, u_traj, cost = x_cand, u_cand, cost_cand
+                        improved = True
+                        break
 
             if not improved:
                 if record_history:
