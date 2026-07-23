@@ -383,23 +383,6 @@ function drawWorld(ctx, background, state, view) {
     });
   }
 
-  // Limb centerlines.
-  if (view.showCenterlines !== false) {
-    ctx.lineWidth = 3;
-    const limbStates = state.octopus.limb_states;
-    state.octopus.limbs.forEach((limb, limbIdx) => {
-      // With a limb selected, show only ITS centerline (like the skin).
-      if (hasSelection && limbIdx !== selLimb) return;
-      ctx.strokeStyle = view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444";
-      if (limb.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
-        for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
-        ctx.stroke();
-      }
-    });
-  }
-
   // Head.
   if (view.showHead !== false) {
     const hx = state.octopus.head.x * cs, hy = state.octopus.head.y * cs;
@@ -491,6 +474,24 @@ function drawWorld(ctx, background, state, view) {
         }
       }
     }
+  }
+
+  // Limb centerlines, drawn OVER the suckers/skin so the arm's spine stays
+  // visible through the sucker discs (was hidden underneath them).
+  if (view.showCenterlines !== false) {
+    ctx.lineWidth = 3;
+    const limbStates = state.octopus.limb_states;
+    state.octopus.limbs.forEach((limb, limbIdx) => {
+      // With a limb selected, show only ITS centerline (like the skin).
+      if (hasSelection && limbIdx !== selLimb) return;
+      ctx.strokeStyle = view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444";
+      if (limb.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
+        for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
+        ctx.stroke();
+      }
+    });
   }
 
   // Agents.
