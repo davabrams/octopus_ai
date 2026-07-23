@@ -160,7 +160,12 @@ class TestThreatResponse(unittest.TestCase):
         ag.agents = [agent]
         x0, y0 = octo.x, octo.y
         for _ in range(20):
-            agent.x, agent.y = cx + dx, cy + dy  # freeze the stimulus
+            agent.x, agent.y = cx + dx, cy + dy  # freeze the stimulus position
+            # ...but swim it TOWARD the body, so a threat reads as APPROACHING
+            # (the jet now fires only on a closing threat, not mere proximity).
+            bx, by = octo.x - agent.x, octo.y - agent.y
+            bd = math.hypot(bx, by) or 1.0
+            agent.vx, agent.vy = bx / bd * 0.25, by / bd * 0.25
             octo.move(ag)
         return octo.x - x0, octo.y - y0
 

@@ -29,10 +29,15 @@ from simulator.simutil import AgentType, MovementMode, PropulsionMode
 
 
 class _Threat:
-    """Minimal duck-typed agent: _nearest_threat_escape reads only these."""
-    def __init__(self, x, y):
+    """Minimal duck-typed agent: _nearest_threat_escape reads x/y/vx/vy/type.
+    vx/vy default to a velocity TOWARD the origin-ish so a threat placed +x of
+    the body reads as APPROACHING (the jet now fires only on closing threats);
+    pass explicit vx/vy for other geometries."""
+    def __init__(self, x, y, vx=-0.3, vy=0.0):
         self.x = float(x)
         self.y = float(y)
+        self.vx = float(vx)
+        self.vy = float(vy)
         self.agent_type = AgentType.THREAT
 
 
@@ -163,6 +168,29 @@ class JetEscape(unittest.TestCase):
         self.assertAlmostEqual(octo.x - x0, 0.0, places=6)
         self.assertAlmostEqual(float(np.hypot(*octo.last_jet_v)), 0.0, places=6)
 
+    def test_non_approaching_threat_does_not_fire(self):
+        """A close threat that is NOT closing in (its velocity points away, e.g.
+        a wanderer drifting off) does not trigger the jet - the octopus reacts to
+        looming MOTION, not mere proximity, so a camouflaged octopus stops
+        thrashing at threats that aren't bearing down on it."""
+        octo = _reaction_octo(jet_enabled=True, jet_trigger_radius=8.0,
+                              threat_approach_speed=0.05)
+        _quiesce(octo)
+        x0 = octo.x
+        # 2 units +x of the body but swimming further +x (AWAY): closing < 0.
+        octo._propel_body(agents=[_Threat(octo.x + 2.0, octo.y, vx=+0.3, vy=0.0)])
+        self.assertAlmostEqual(octo.x - x0, 0.0, places=6)
+        self.assertAlmostEqual(float(np.hypot(*octo.last_jet_v)), 0.0, places=6)
+        # ...but the SAME position, now swimming toward the body, DOES fire.
+        octo2 = _reaction_octo(jet_enabled=True, jet_trigger_radius=8.0,
+                               threat_approach_speed=0.05)
+        _quiesce(octo2)
+        x2 = octo2.x
+        octo2._propel_body(agents=[_Threat(octo2.x + 2.0, octo2.y,
+                                           vx=-0.3, vy=0.0)])
+        self.assertLess(octo2.x, x2)  # fled -x from the closing-in threat
+        self.assertGreater(float(np.hypot(*octo2.last_jet_v)), 0.0)
+
 
 class _AgHolder:
     """Minimal agent-generator stand-in for Octopus.move (reads .agents only)."""
@@ -179,7 +207,8 @@ class BodyBounds(unittest.TestCase):
         centre to [0, x_len-1] x [0, y_len-1]."""
         octo = _reaction_octo(num_arms=2)
         octo.x, octo.y = octo.x_len / 2.0, 1.5   # near the TOP edge
-        threat = _Threat(octo.x, octo.y + 2.0)   # below -> jet fires UP toward y=0
+        # Below and swimming UP at the body (vy<0) -> approaching -> jet fires up.
+        threat = _Threat(octo.x, octo.y + 2.0, vx=0.0, vy=-0.3)
         ag = _AgHolder([threat])
         y_start = octo.y
         for _ in range(30):

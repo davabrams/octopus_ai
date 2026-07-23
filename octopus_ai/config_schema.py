@@ -370,6 +370,19 @@ class OctopusConfig:
                                      # mantle refills (0 = one-shot, 1 = never)
     max_jet_velocity: float = 1.2    # escape-speed cap; >> max_body_velocity so
                                      # a jet burst clearly outruns a crawl
+    threat_approach_speed: float = 0.10  # a threat triggers the jet only if it is
+                                     # APPROACHING - its velocity component toward
+                                     # the body exceeds this (a pursuer closes at
+                                     # ~agent max_velocity 0.25, so 0.10 fires for
+                                     # a real chase but ignores tangential drift). The
+                                     # octopus can't read a predator's intent, only
+                                     # its MOTION; a hunter swims at it, a wanderer's
+                                     # heading is random, so "closing in" is the
+                                     # observable proxy for "coming after me". Keeps
+                                     # a camouflaged octopus (whose predators all
+                                     # wander) from thrashing at threats that aren't
+                                     # actually bearing down on it. 0 = react to any
+                                     # approach; negative = the old proximity-only.
     limb: LimbConfig = field(default_factory=LimbConfig)
     sucker: SuckerConfig = field(default_factory=SuckerConfig)
 

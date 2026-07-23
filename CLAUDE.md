@@ -159,9 +159,17 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   free body). `REACTION` (`_propel_body`, what `VIZ_ILQR`/analyzer use) =
   external-reaction: **crawl** (a tip that's *planted*, i.e. world-stationary
   under `crawl_plant_speed`, and pulling, hauls the body toward its grip, capped
-  by `crawl_grip_limit`) + **jet** (a threat within `jet_trigger_radius` fires a
-  siphon burst away from it, decaying by `jet_decay`, capped at
-  `max_jet_velocity`). Rotation (summed torque → θ) is shared by both.
+  by `crawl_grip_limit`) + **jet** (a threat within `jet_trigger_radius` that is
+  **APPROACHING** — its velocity component toward the body exceeds
+  `threat_approach_speed`, `_threat_is_closing` — fires a siphon burst away from
+  it, decaying by `jet_decay`, capped at `max_jet_velocity`). Rotation (summed
+  torque → θ) is shared by both. The **approach** gate (not mere proximity) is
+  how a cornered, camouflaged octopus stops thrashing: it can't read a predator's
+  intent, only its motion, so *closing in* is the observable proxy for *hunting
+  me* (a camouflaged octopus's predators all wander, so none are closing → it
+  goes still). The body CENTRE is also clamped to `[0, x_len-1] × [0, y_len-1]` in
+  `Octopus.move` so a jet can't rocket it off the grid. (The arm flee is still
+  proximity-based — a point-blank flinch — only the body jet is approach-gated.)
 - **Behavior policy** (analyzer colour-coding): a per-node/limb/body state code
   is computed each frame (0 idle · 1 exploring · 2 chasing prey · 3
   avoiding/fleeing · 4 gripping/crawling) — `Limb.last_node_state`/

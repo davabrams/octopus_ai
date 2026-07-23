@@ -1074,6 +1074,7 @@ class Octopus:
         self.jet_impulse = cfg.octopus.jet_impulse
         self.jet_decay = cfg.octopus.jet_decay
         self.max_jet_velocity = cfg.octopus.max_jet_velocity
+        self.threat_approach_speed = cfg.octopus.threat_approach_speed
         # Persistent jet velocity (decays each frame; refreshed on threat).
         self._jet_v = np.zeros(2, dtype=float)
         self.last_jet_v = np.zeros(2, dtype=float)      # diagnostics
@@ -1357,10 +1358,30 @@ class Octopus:
             self.last_body_state = 0       # resting
         return None
 
+    def _threat_is_closing(self, ag):
+        """Is this threat APPROACHING the body? True when its velocity component
+        toward the body centre exceeds ``threat_approach_speed``. The octopus
+        cannot read a predator's intent, only its MOTION (looming): a hunter swims
+        at it, a wanderer's heading is random, so "closing in" is the observable
+        proxy for "coming after me". A ``threat_approach_speed`` < 0 disables the
+        gate (any nearby threat counts, the old proximity-only behaviour)."""
+        if self.threat_approach_speed < 0:
+            return True
+        dx, dy = self.x - ag.x, self.y - ag.y
+        d = float(np.hypot(dx, dy))
+        if d < 1e-9:
+            return True  # point-blank: react regardless of its heading
+        vx = float(getattr(ag, "vx", 0.0))
+        vy = float(getattr(ag, "vy", 0.0))
+        closing = (vx * dx + vy * dy) / d   # velocity toward the body (world/frame)
+        return closing > self.threat_approach_speed
+
     def _nearest_threat_escape(self, agents):
-        """Unit vector from the nearest threat (within jet_trigger_radius of the
-        body) toward the body - the siphon-jet escape direction. None if no
-        threat is close enough to trigger a jet."""
+        """Unit vector from the nearest APPROACHING threat (within
+        jet_trigger_radius of the body) toward the body - the siphon-jet escape
+        direction. None if no threat is close enough AND closing in to trigger a
+        jet, so a camouflaged octopus (whose predators all wander) stops thrashing
+        at threats that aren't actually bearing down on it."""
         best_d = self.jet_trigger_radius
         away = None
         bx, by = self.x, self.y
@@ -1369,7 +1390,7 @@ class Octopus:
                 continue
             dx, dy = bx - ag.x, by - ag.y
             d = float(np.hypot(dx, dy))
-            if 1e-9 < d < best_d:
+            if 1e-9 < d < best_d and self._threat_is_closing(ag):
                 best_d = d
                 away = np.array([dx / d, dy / d], dtype=float)
         return away

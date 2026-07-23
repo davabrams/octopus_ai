@@ -316,6 +316,7 @@ def config_to_flat(cfg: Config) -> dict:
         'octo_jet_impulse': cfg.octopus.jet_impulse,
         'octo_jet_decay': cfg.octopus.jet_decay,
         'octo_max_jet_velocity': cfg.octopus.max_jet_velocity,
+        'octo_threat_approach_speed': cfg.octopus.threat_approach_speed,
         'octo_max_sucker_distance': cfg.octopus.limb.max_sucker_distance,
         'octo_min_sucker_distance': cfg.octopus.limb.min_sucker_distance,
         'octo_sucker_col_spacing': cfg.octopus.limb.sucker_col_spacing,
@@ -413,6 +414,8 @@ def config_from_flat(d: dict) -> Config:
             jet_decay=g('octo_jet_decay', D.octopus.jet_decay),
             max_jet_velocity=g('octo_max_jet_velocity',
                                D.octopus.max_jet_velocity),
+            threat_approach_speed=g('octo_threat_approach_speed',
+                                    D.octopus.threat_approach_speed),
             limb=LimbConfig(
                 rows=g('limb_rows', D.octopus.limb.rows),
                 cols=g('limb_cols', D.octopus.limb.cols),
