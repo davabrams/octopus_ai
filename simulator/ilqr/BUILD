@@ -2,6 +2,17 @@ py_library(
     name = "solver",
     srcs = ["solver.py"],
     visibility = ["//visibility:public"],
+    deps = ["//simulator:profiling"],
+)
+
+py_library(
+    name = "solver_parallel",
+    srcs = ["solver_parallel.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":solver",
+        "//simulator:profiling",
+    ],
 )
 
 py_library(
@@ -17,5 +28,6 @@ py_library(
     deps = [
         ":residuals",
         ":solver",
+        ":solver_parallel",
     ],
 )

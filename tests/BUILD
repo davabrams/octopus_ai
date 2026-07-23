@@ -354,3 +354,23 @@ py_test(
         "//simulator:spring_chain",
     ],
 )
+
+py_test(
+    name = "test_ilqr_parallel",
+    srcs = ["test_ilqr_parallel.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//simulator/ilqr:arm",
+        "//simulator/ilqr:solver",
+        "//simulator/ilqr:solver_parallel",
+    ],
+)
+
+py_test(
+    name = "test_profiling",
+    srcs = ["test_profiling.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+    deps = ["//simulator:profiling"],
+)

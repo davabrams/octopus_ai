@@ -5,6 +5,12 @@ py_library(
 )
 
 py_library(
+    name = "profiling",
+    srcs = ["profiling.py"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
     name = "agent_generator",
     srcs = ["agent_generator.py"],
     visibility = ["//visibility:public"],
@@ -60,6 +66,7 @@ py_library(
     deps = [
         ":agent_generator",
         ":octopus_generator",
+        ":profiling",
         ":sim_recorder",
         ":simutil",
         ":surface_generator",
@@ -82,6 +89,7 @@ py_library(
     srcs = ["octopus_generator.py"],
     visibility = ["//visibility:public"],
     deps = [
+        ":profiling",
         ":simutil",
         ":spring_chain",
         ":surface_generator",
@@ -111,6 +119,7 @@ py_library(
         ":force_logger",
         ":frame_recorder",
         ":octopus_generator",
+        ":profiling",
         ":run_store",
         ":sim_recorder",
         ":simutil",
