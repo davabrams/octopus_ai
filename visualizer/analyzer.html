@@ -256,8 +256,8 @@ function cellSizeFor(xLen, yLen, availW, availH) {
 
 // Draw one frame's world into ctx. `view` carries the anatomy + cellSize +
 // overlay options. Reuses the old page's draw code, upgraded for RGB + iLQR.
-// Behavior-policy palette, shared by node (sucker outline), limb (centerline)
-// and body (head) levels. Codes: 0 idle/resting, 1 exploring/foraging, 2 chasing
+// Behavior-policy palette, shared by node (sucker outline) and body (head)
+// levels. Codes: 0 idle/resting, 1 exploring/foraging, 2 chasing
 // prey, 3 avoiding threat/fleeing, 4 gripping/crawling.
 const STATE_COLORS = ["#64748b", "#38bdf8", "#22c55e", "#f43f5e", "#f59e0b"];
 const STATE_LABELS = ["idle", "exploring", "chasing prey", "avoiding threat", "gripping"];
@@ -304,8 +304,8 @@ function cacheCaps(total) {
   };
 }
 
-// Draw a fleshy CONSTANT-WIDTH limb "skin": a round-capped tube along the
-// centerline (no taper - our suckers are uniform), wide enough to enclose the
+// Draw a fleshy CONSTANT-WIDTH limb "skin": a round-capped tube along the arm's
+// node spine (no taper - our suckers are uniform), wide enough to enclose the
 // suckers, rendered as a translucent fill under a dark outline (like clip-art
 // tentacle line-art). halfWorld is the tube half-width in grid cells.
 function drawLimbSkin(ctx, chain, cs, halfWorld, outline) {
@@ -373,8 +373,8 @@ function drawWorld(ctx, background, state, view) {
   const hasSelection = selLimb !== "all" && selLimb != null;
 
   // Fleshy limb skins (octopus look): a constant-width outlined tube around each
-  // arm's centerline, wide enough to enclose its suckers, drawn UNDER the
-  // suckers/centerline. Half-width tracks the sucker column spacing.
+  // arm's node spine, wide enough to enclose its suckers, drawn UNDER the
+  // suckers. Half-width tracks the sucker column spacing.
   if (view.showSkin && state.octopus.limbs) {
     const halfW = Math.max(0.25, (view.suckerColSpacing || 0.1) / 2 + 0.23);
     state.octopus.limbs.forEach((limb, limbIdx) => {
@@ -474,24 +474,6 @@ function drawWorld(ctx, background, state, view) {
         }
       }
     }
-  }
-
-  // Limb centerlines, drawn OVER the suckers/skin so the arm's spine stays
-  // visible through the sucker discs (was hidden underneath them).
-  if (view.showCenterlines !== false) {
-    ctx.lineWidth = 3;
-    const limbStates = state.octopus.limb_states;
-    state.octopus.limbs.forEach((limb, limbIdx) => {
-      // With a limb selected, show only ITS centerline (like the skin).
-      if (hasSelection && limbIdx !== selLimb) return;
-      ctx.strokeStyle = view.stateColors && limbStates ? stateColor(limbStates[limbIdx] || 0) : "#ff4444";
-      if (limb.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(limb[0].x * cs, limb[0].y * cs);
-        for (let i = 1; i < limb.length; i++) ctx.lineTo(limb[i].x * cs, limb[i].y * cs);
-        ctx.stroke();
-      }
-    });
   }
 
   // Agents.
@@ -604,13 +586,13 @@ function drawIlqrOverlay(ctx, view) {
     }
     const it = iters[iterIdx];
     const chains = C.chainsWithBase(it.trajectory, limbData.base);
-    // Two overlay modes (amber throughout, distinct from the red/state centerline):
+    // Two overlay modes (amber throughout, distinct from the suckers/skin):
     // - a SPECIFIC step selected (the step slider is a number, not 'all'): show
     //   ONLY that one pose, bright with node dots (step 0 = current pose, dashed).
     //   This is what isolates a single planned step.
     // - 'all': the FORWARD-INTENT gradient - EVERY horizon pose, dim near the
     //   current pose ramping bright toward the horizon end, plus the tip path -
-    //   so the whole plan reads as a trajectory leaving the centerline.
+    //   so the whole plan reads as a trajectory leaving the current pose.
     if (selStep != null) {
       const si = Math.min(Math.max(selStep, 0), chains.length - 1);
       const chain = chains[si];
@@ -751,7 +733,6 @@ function App() {
   const [showOutlines, setShowOutlines] = useState(true);
   const [stateColors, setStateColors] = useState(true); // colour by behavior policy
   const [showSkin, setShowSkin] = useState(true); // fleshy limb outlines (octopus look)
-  const [showCenterlines, setShowCenterlines] = useState(false);
   const [showHead, setShowHead] = useState(true);
   const [showSuckers, setShowSuckers] = useState(true);
   const [showAgents, setShowAgents] = useState(true);
@@ -800,7 +781,6 @@ function App() {
   stateRef.current.showOutlines = showOutlines;
   stateRef.current.stateColors = stateColors;
   stateRef.current.showSkin = showSkin;
-  stateRef.current.showCenterlines = showCenterlines;
   stateRef.current.showHead = showHead;
   stateRef.current.showSuckers = showSuckers;
   stateRef.current.showAgents = showAgents;
@@ -986,7 +966,7 @@ function App() {
   // Mark dirty when ANY visual toggle changes so the RAF loop redraws.
   useEffect(() => { dirtyRef.current = true; },
     [colorMode, showGrid, showSensing, ilqrOverlay, ilqrLimb, ilqrIter,
-     ilqrStep, convergence, zoom, pan, showOutlines, showCenterlines,
+     ilqrStep, convergence, zoom, pan, showOutlines,
      showHead, showSuckers, showAgents, tab, setupGrid, setupOctoStart,
      setupAgents, placementTool, measurePts, measureMode, stateColors, showSkin]);
 
@@ -1113,7 +1093,6 @@ function App() {
         explore: exploreGrid, exploreOverlay: S.exploreOverlay,
         zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
         showOutlines: S.showOutlines,
-        showCenterlines: S.showCenterlines,
         showHead: S.showHead,
         showSuckers: S.showSuckers,
         showAgents: S.showAgents,
@@ -1149,7 +1128,7 @@ function App() {
       showSkin: S.showSkin,
       suckerColSpacing: (S.meta && S.meta.config.octo_sucker_col_spacing) || 0.1,
       zoom: S.zoom, panX: S.pan.x, panY: S.pan.y,
-      showOutlines: S.showOutlines, showCenterlines: S.showCenterlines,
+      showOutlines: S.showOutlines,
       showHead: S.showHead, showSuckers: S.showSuckers, showAgents: S.showAgents,
     });
     drawMeasureOverlay(cv.getContext("2d"), S, cs);
@@ -1397,7 +1376,6 @@ function App() {
 
   const visToggles = [
     ["Surface grid",   showGrid,        setShowGrid],
-    ["Centerlines",    showCenterlines,  setShowCenterlines],
     ["Suckers",        showSuckers,      setShowSuckers],
     ["Sucker outlines",showOutlines,     setShowOutlines],
     ["Head",           showHead,         setShowHead],
@@ -1553,13 +1531,12 @@ function App() {
           {/* debug controls */}
           <div className="flex items-center gap-3 mt-2 text-xs bg-slate-900 p-2 rounded flex-wrap">
             <label><input type="checkbox" checked={showOutlines} onChange={(e) => setShowOutlines(e.target.checked)} /> outlines <kbd>O</kbd></label>
-            <label title="Colour outlines/centerlines/head by behavior policy (node/limb/body)">
+            <label title="Colour sucker outlines and the head by behavior policy (node/body)">
               <input type="checkbox" checked={stateColors} onChange={(e) => setStateColors(e.target.checked)} /> state colors
             </label>
             <label title="Draw a fleshy outlined limb around each arm's suckers (octopus look)">
               <input type="checkbox" checked={showSkin} onChange={(e) => setShowSkin(e.target.checked)} /> skin
             </label>
-            <label title="Red skeleton line joining each limb's nodes"><input type="checkbox" checked={showCenterlines} onChange={(e) => setShowCenterlines(e.target.checked)} /> centerline</label>
             <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> grid <kbd>G</kbd></label>
             <label><input type="checkbox" checked={showSensing} onChange={(e) => setShowSensing(e.target.checked)} /> sensing <kbd>D</kbd></label>
             {meta && meta.has_explore && (
