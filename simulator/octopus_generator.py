@@ -804,22 +804,29 @@ class Limb:
 
         # (3) every node acquires the limb state (uniform arm behavior).
         if limb_state == 3:
-            # FLEE: the whole arm retracts toward the body, at the intensity of
-            # the CLOSEST threat any node senses (the solver grades body>tip via
-            # repel_tip_fraction). repel_tgt is one repel_step toward the body -
-            # a constant-magnitude retraction that's body-distance-INDEPENDENT,
-            # so far tips aren't yanked in explosively.
+            # FLEE: the whole arm retracts toward its OWN BASE (its pinned point on
+            # the ring), NOT the shared body centre, at the intensity of the
+            # CLOSEST threat any node senses (the solver grades body>tip via
+            # repel_tip_fraction). Aiming every arm at the body centre pinched all
+            # 8 tips onto the central axis - they converged to one point and, with
+            # the body jetting away, trailed as a single tadpole tail. Retracting
+            # toward each arm's own root keeps the tips in their own angular
+            # sectors, so the arm scrunches ALONG its own axis and the fan stays
+            # distinct. repel_tgt is one repel_step toward the base - a constant-
+            # magnitude retraction, base-distance-INDEPENDENT, so far tips aren't
+            # yanked in explosively.
+            base = self.center_line[0]
             sw = float(np.sqrt(w_repel * float(threat_ramp.max())))
             for i in range(n_free):
                 node = self.center_line[i + 1]
-                bx, by = x_octo - node.x, y_octo - node.y  # node -> body
-                dbody = float(np.hypot(bx, by))
-                if dbody > 1e-9:
-                    s = min(self.repel_step, dbody)
-                    repel_tgt[i] = (node.x + bx / dbody * s,
-                                    node.y + by / dbody * s)
+                bx, by = base.x - node.x, base.y - node.y  # node -> THIS arm's root
+                dbase = float(np.hypot(bx, by))
+                if dbase > 1e-9:
+                    s = min(self.repel_step, dbase)
+                    repel_tgt[i] = (node.x + bx / dbase * s,
+                                    node.y + by / dbase * s)
                 else:
-                    repel_tgt[i] = (x_octo, y_octo)
+                    repel_tgt[i] = (base.x, base.y)
                 repel_sw[i] = sw
         elif limb_state == 2:
             # PREY: the whole arm reaches the nearest prey any node senses.

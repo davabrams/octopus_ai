@@ -111,19 +111,22 @@ def bending_residual(x: tf.Tensor, base_xy: tf.Tensor,
 
 
 def repel_residual(x: tf.Tensor, targets: tf.Tensor, node_sw) -> tf.Tensor:
-    """Per-node flee: each free node RETRACTS toward the body ("scrunch up").
+    """Per-node flee: each free node RETRACTS toward its arm's BASE ("scrunch up").
 
     A fleeing octopus arm does not extend away from the threat - it pulls IN
-    toward the body. So the flee force points node -> body, NOT node -> away-
-    from-threat. ``targets`` is ``(n_free, 2)`` = a point one ``repel_step`` TOWARD
-    the body from each node (NOT the body centre), so the residual magnitude is a
-    constant ``repel_step`` and the flee force is body-distance-INDEPENDENT -
-    every threatened node retracts toward the body at the same rate (set by the
-    weight), which preserves spacing instead of yanking far tips in hardest.
-    ``node_sw`` is the ``(n_free,)`` per-node sqrt-weight, 0 where the node senses
-    no threat and larger the closer its sensed threat is (so the arm pulls in
-    harder the nearer the danger). Same form as attract_residual - flee is just an
-    attract toward a body-ward point whose weight is threat proximity.
+    toward its own root. So the flee force points node -> BASE (the arm's pinned
+    point on the ring), NOT node -> away-from-threat and NOT node -> shared body
+    centre (aiming every arm at the centre pinched all the tips onto one point;
+    aiming at each arm's own base keeps the tips in their own angular sectors so
+    the fan stays distinct). ``targets`` is ``(n_free, 2)`` = a point one
+    ``repel_step`` TOWARD the base from each node, so the residual magnitude is a
+    constant ``repel_step`` and the flee force is base-distance-INDEPENDENT -
+    every threatened node retracts at the same rate (set by the weight), which
+    preserves spacing instead of yanking far tips in hardest. ``node_sw`` is the
+    ``(n_free,)`` per-node sqrt-weight, 0 where the node senses no threat and
+    larger the closer its sensed threat is (so the arm pulls in harder the nearer
+    the danger). Same form as attract_residual - flee is just an attract toward a
+    base-ward point whose weight is threat proximity.
     """
     free = tf.reshape(x, (-1, 2))       # (n_free, 2)
     tgt = tf.reshape(targets, (-1, 2))  # (n_free, 2)

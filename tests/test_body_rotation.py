@@ -188,6 +188,35 @@ class TestThreatResponse(unittest.TestCase):
                                    propulsion=PropulsionMode.REACTION)
         self.assertLess(ddx, -0.1)
 
+    def test_fleeing_arms_fan_out_not_converge(self):
+        """Fleeing arms retract toward their OWN base, so their tips stay in
+        distinct angular sectors (fanned) rather than pinching onto the shared
+        body centre - which used to collapse all 8 arms' tips onto one point
+        (tip spread ~0.2) and trail as a single tadpole tail behind the jet."""
+        from itertools import combinations
+
+        from simulator.simutil import Agent, AgentType
+        octo, ag = _ilqr_octo(agents=1)
+        cx, cy = octo.x, octo.y
+        threat = Agent(x=cx + 1.5, y=cy + 1.5, agent_type=AgentType.THREAT)
+        ag.agents = [threat]
+        for _ in range(10):
+            threat.x, threat.y = cx + 1.5, cy + 1.5  # freeze it in range
+            octo.move(ag)
+        self.assertTrue(any(3 in set(limb.last_node_state[1:].tolist())
+                            for limb in octo.limbs), "no arm fled the near threat")
+        tips = np.array([[limb.center_line[-1].x, limb.center_line[-1].y]
+                         for limb in octo.limbs])
+        bases = np.array([[limb.center_line[0].x, limb.center_line[0].y]
+                          for limb in octo.limbs])
+        pairs = list(combinations(range(len(octo.limbs)), 2))
+        tip_spread = np.mean([np.hypot(*(tips[i] - tips[j])) for i, j in pairs])
+        base_spread = np.mean([np.hypot(*(bases[i] - bases[j])) for i, j in pairs])
+        # Fanned, not pinched: the tips spread AT LEAST as wide as the base ring
+        # (they collapsed to << base_spread before the flee-toward-own-base fix).
+        self.assertGreater(tip_spread, base_spread,
+                           f"tips converged (tip {tip_spread:.2f} <= base {base_spread:.2f})")
+
     def test_threat_sensed_per_node(self):
         """Per-node sensing (node-autonomous): a threat inside a node's window
         makes THAT node flee (repel_sw > 0); a threat outside every node's window

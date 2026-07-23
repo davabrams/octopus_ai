@@ -148,9 +148,11 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   avoid boundary artifacts: (1) the sense weight **smoothstep-ramps** to 0 at the
   window edge (`sense_ramp_band`) instead of a hard on/off (`_sense_ramp`), so the
   flee intensity doesn't jump as a threat crosses the radius; (2) flee aims at a
-  point one `repel_step` **toward the body** (not the body centre), a
+  point one `repel_step` **toward each arm's own base** (its ring root) — NOT the
+  shared body centre (which pinched all 8 tips onto one axis so the fleeing arms
+  converged into a single trailing tail) and NOT away-from-threat. A
   constant-magnitude retraction **independent of how far the node is from the
-  body** — far tips no longer get yanked in explosively.
+  base**, so far tips aren't yanked in explosively and the fan stays distinct.
 - **Propulsion** (`octopus.propulsion_mode`, `simutil.PropulsionMode`): how the
   body's centre of mass translates. `INTERNAL` = the legacy summed-arm-tension
   drift (`_drift_body_by_tension`), non-physical (internal forces can't move a
