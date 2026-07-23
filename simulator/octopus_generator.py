@@ -749,7 +749,6 @@ class Limb:
         repel_tgt = np.zeros((n_free, 2), dtype=np.float32)
         repel_sw = np.zeros(n_free, dtype=np.float32)
         sw_prey = float(np.sqrt(self.ilqr_cfg.w_reach_terminal))
-        sw_explore = float(np.sqrt(self.w_explore))
         explore_on = self.explore_enabled and visit_recency is not None
         band = self.sense_ramp_band
         # The frontier CELL each exploring node picked (NaN where a node isn't
@@ -847,7 +846,16 @@ class Limb:
                         smoothed = s * prev + (1.0 - s) * ept  # low-pass
                     self._explore_ema[i] = smoothed
                     attract_tgt[i] = smoothed
-                    attract_sw[i] = sw_explore
+                    # GREEDY explore: weight ~ 1/(d^2 + 1) in the distance to the
+                    # chosen frontier CELL, so a node commits STRONGLY to a nearby
+                    # unexplored cell and only weakly drifts toward a distant one.
+                    # (The attract TARGET is a fixed short nudge toward the cell,
+                    # so the pull's DIRECTION is set there; this scales its
+                    # STRENGTH by how near the frontier is.) w_explore stays the
+                    # overall strength knob.
+                    d2 = float((ecell[0] - node.x) ** 2
+                               + (ecell[1] - node.y) ** 2)
+                    attract_sw[i] = float(np.sqrt(self.w_explore / (d2 + 1.0)))
                 else:
                     self._explore_ema[i] = np.nan
         if limb_state != 1:

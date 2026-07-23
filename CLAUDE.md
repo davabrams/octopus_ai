@@ -184,7 +184,13 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   recency in `explore_node_radius`), then the **closest** of that set — recency
   always beats distance, so a node never prefers a near recent cell to a far
   stale one. The chosen cell is recorded (`explore_cell`, schema v4) for the
-  analyzer's hover box. Prey **and threat** outrank explore at the **limb** level
+  analyzer's hover box. The pull is **greedy**: the attract weight is
+  `w_explore / (d² + 1)` in the distance `d` to the chosen frontier cell, so a
+  node commits **hard to a near** unexplored cell and only weakly drifts toward a
+  far one (a plain quadratic attract cost does the opposite — force `∝ w·d`, so
+  farther cells pull harder and the arm lunges/over-stretches). The attract
+  *target* itself is a fixed short nudge (`max_sucker_distance`) toward the cell,
+  so this scales the pull's **strength**, not its reach. Prey **and threat** outrank explore at the **limb** level
   (see Motor sensing): any node sensing prey/threat makes the whole arm
   chase/flee, so a limb explores only when *none* of its nodes senses either. See
   EXPLORATION_PLAN.md.

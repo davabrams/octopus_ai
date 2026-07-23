@@ -226,6 +226,31 @@ class TestRewardHierarchy(unittest.TestCase):
         self.assertLess(cfg.octopus.limb.ilqr.w_explore,
                         cfg.octopus.limb.ilqr.w_reach_terminal)
 
+    def test_explore_pull_is_greedy_toward_close_cells(self):
+        """GREEDY explore: the attract weight is w_explore/(d^2+1) in the distance
+        to the chosen frontier CELL, so a node commits harder to a NEAR unexplored
+        cell than a far one (a plain quadratic cost pulls farther cells harder -
+        the opposite)."""
+        octo, ag = _octo(explore=True, agents=0)
+        for _ in range(3):
+            octo.move(ag)
+        w = octo.limbs[0].w_explore
+        checked = 0
+        for limb in octo.limbs:
+            m = limb.last_ilqr_meta
+            if m is None or limb.last_limb_state != 1:
+                continue
+            asw = np.asarray(m["attract_sw"])
+            ec = np.asarray(m["explore_cell"])
+            x0 = np.asarray(m["x0"]).reshape(-1, 2)  # node positions AT solve time
+            for i in range(len(asw)):
+                if asw[i] > 0 and not np.isnan(ec[i, 0]):
+                    d2 = (ec[i, 0] - x0[i, 0]) ** 2 + (ec[i, 1] - x0[i, 1]) ** 2
+                    self.assertAlmostEqual(float(asw[i]),
+                                           float(np.sqrt(w / (d2 + 1.0))), places=4)
+                    checked += 1
+        self.assertGreater(checked, 0, "no exploring node to check")
+
     def test_limb_state_is_uniform_and_threat_preempts_prey(self):
         """LIMB-UNIFORM (not per-node): every free node in an arm shares ONE
         state, and the arm takes the highest-priority state among its nodes
