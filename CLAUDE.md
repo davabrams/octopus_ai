@@ -258,6 +258,7 @@ bazel run //inference_server:server        # or: cd inference_server && python s
 
 # Headless record & replay: step N frames, write logs/runs/<run_id>.duckdb
 python simulator/headless_runner.py --frames 120   # or: bazel run //simulator:headless_runner_bin -- --frames 120
+python simulator/headless_runner.py --frames 120 --profile   # + a hierarchical timing report (frame -> move -> limb.move -> ilqr.solve, camouflage, record)
 
 # Analyzer server (Simulate + Playback), then open http://localhost:8765/ in a browser
 bazel run //visualizer:websocket_server  # or: python visualizer/websocket_server.py; ws://localhost:8765
@@ -370,3 +371,13 @@ unused imports); clean opportunistically, don't let it block work.
    version gate), so older runs still open — they just read back the added fields
    as defaults (`motor_state`/`body_state`/`agents.behavior` = 0/idle,
    `explore_cell` = none).
+10. `simulator/profiling.py` is a hierarchical **span profiler** (a domain "where
+    did the time go" tree, not cProfile). Wrap logical phases in `with
+    span("name"):`; nesting builds the tree, re-entry accumulates. The sim loop
+    (`headless_runner` frame phases, `octopus_generator` move / limb.move /
+    ilqr.solve / apply) is already instrumented — run with `--profile` (or wrap
+    any code in `with PROFILER.profile(): ...` then `PROFILER.render()`).
+    Near-zero overhead when disabled (`span()` returns a shared no-op). **Single-
+    threaded only**: the span stack is shared mutable state, so never open a span
+    inside a ThreadPool worker (e.g. the parallel colour inference) — wrap the
+    whole parallel call in one span on the calling thread instead.

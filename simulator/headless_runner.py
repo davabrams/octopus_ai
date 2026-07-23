@@ -36,6 +36,7 @@ import numpy as np
 
 from simulator.agent_generator import AgentGenerator
 from simulator.octopus_generator import Octopus
+from simulator.profiling import PROFILER, span
 from simulator.sim_recorder import SimRecorder, new_run_id
 from simulator.simutil import AgentType, Color, MLMode
 from simulator.surface_generator import RandomSurface
@@ -248,33 +249,40 @@ class HeadlessRunner:
                 ]
                 vis_before = float(octo.visibility(surf))
                 if recorder is not None:
-                    recorder.begin_frame(frame)
-                    recorder.snapshot_state(octo, ag, surf, captured_this_frame)
-                color_matrix = octo.find_color(surf, inference_mode, model)
+                    with span("record.snapshot_state"):
+                        recorder.begin_frame(frame)
+                        recorder.snapshot_state(octo, ag, surf, captured_this_frame)
+                with span("find_color"):
+                    color_matrix = octo.find_color(surf, inference_mode, model)
                 for limb, c_array in zip(octo.limbs, color_matrix, strict=True):
                     limb.force_color(c_array)
                 if recorder is not None:
-                    recorder.snapshot_colors(color_matrix)
-                vis_after = float(octo.visibility(surf))
+                    with span("record.snapshot_colors"):
+                        recorder.snapshot_colors(color_matrix)
+                with span("visibility"):
+                    vis_after = float(octo.visibility(surf))
                 wall_ms = (time.perf_counter() - f_start) * 1000.0
                 if recorder is not None:
-                    recorder.end_frame(wall_ms=wall_ms)
+                    with span("record.end_frame"):
+                        recorder.end_frame(wall_ms=wall_ms)
                 frames_recorded += 1
-                last_state = serialize_state(
-                    octo,
-                    ag,
-                    surf,
-                    frame,
-                    vis_after,
-                    visibility_before=vis_before,
-                    color_before=before,
-                    prey_captured=(ag.prey_captured if ag else 0),
-                    prey_captured_this_frame=captured_this_frame,
-                )
+                with span("serialize_state"):
+                    last_state = serialize_state(
+                        octo,
+                        ag,
+                        surf,
+                        frame,
+                        vis_after,
+                        visibility_before=vis_before,
+                        color_before=before,
+                        prey_captured=(ag.prey_captured if ag else 0),
+                        prey_captured_this_frame=captured_this_frame,
+                    )
                 return vis_after, wall_ms
 
             # Frame 0: initial post-setup state, same seam, no movement (D11).
-            vis_prev, _ = do_camouflage(0, 0, time.perf_counter())
+            with span("frame"), span("camouflage"):
+                vis_prev, _ = do_camouflage(0, 0, time.perf_counter())
 
             # Frames 1..N.
             for frame in range(1, num_frames + 1):
@@ -282,10 +290,15 @@ class HeadlessRunner:
                     status = "cancelled"
                     break
                 f_start = time.perf_counter()
-                ag.increment_all(octo, visibility=vis_prev)
-                octo.move(ag)
-                captured = ag.remove_captured_prey(octo)
-                vis_after, frame_ms = do_camouflage(frame, captured, f_start)
+                with span("frame"):
+                    with span("agents.increment"):
+                        ag.increment_all(octo, visibility=vis_prev)
+                    with span("octo.move"):
+                        octo.move(ag)
+                    with span("capture"):
+                        captured = ag.remove_captured_prey(octo)
+                    with span("camouflage"):
+                        vis_after, frame_ms = do_camouflage(frame, captured, f_start)
                 vis_prev = vis_after
                 if progress_cb is not None:
                     progress_cb(
@@ -344,6 +357,12 @@ def main(argv=None):
         help="enable sucker exploration (off in the RECORD profile by default); "
         "records the visit-count map so the analyzer's exploration overlay lights up",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="time the sim and print a hierarchical breakdown of where the "
+        "frame loop spends its time (per-phase / per-limb / iLQR solve)",
+    )
     args = parser.parse_args(argv)
 
     # Import profiles here so the module stays import-light for the server.
@@ -378,7 +397,11 @@ def main(argv=None):
         )
 
     print(f"Recording run {runner.run_id} ...")
-    summary = runner.run(progress_cb=progress)
+    if args.profile:
+        with PROFILER.profile():
+            summary = runner.run(progress_cb=progress)
+    else:
+        summary = runner.run(progress_cb=progress)
     db_path = runner.db_path or os.path.join("logs", "runs", f"{runner.run_id}.duckdb")
     print(
         f"\nRun {runner.run_id}: {summary.status}, "
@@ -386,6 +409,8 @@ def main(argv=None):
         f"{summary.elapsed_s:.1f}s"
     )
     print(f"  -> {db_path}")
+    if args.profile:
+        print("\n" + PROFILER.render())
     return 0
 
 

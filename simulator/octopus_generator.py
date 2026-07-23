@@ -18,6 +18,7 @@ from simulator.simutil import (
 )
 from simulator.spring_chain import solve_chain, base_reaction
 from simulator.ilqr.arm import ArmController
+from simulator.profiling import span
 from octopus_ai.config import as_config
 
 class Sucker:
@@ -880,23 +881,25 @@ class Limb:
         # builds a fresh array, so this reference stays stable for recording.
         u_init = self._ilqr_u
 
-        res = self._ilqr_controller.solve(
-            base_xy=[base_x, base_y],
-            attract_tgt=attract_tgt, attract_sw=attract_sw,
-            repel_tgt=repel_tgt, repel_sw=repel_sw,
-            x0=x0, u_init=self._ilqr_u,
-            record_history=self.record_ilqr_history)
+        with span("ilqr.solve"):
+            res = self._ilqr_controller.solve(
+                base_xy=[base_x, base_y],
+                attract_tgt=attract_tgt, attract_sw=attract_sw,
+                repel_tgt=repel_tgt, repel_sw=repel_sw,
+                x0=x0, u_init=self._ilqr_u,
+                record_history=self.record_ilqr_history)
 
         # Receding horizon: apply only the first planned step (x_traj[1]).
-        new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
-        prev_x, prev_y = x_octo, y_octo
-        for i in range(1, self.rows):
-            nx = min(max(float(new_free[i - 1, 0]), -0.5), self.x_len - 0.51)
-            ny = min(max(float(new_free[i - 1, 1]), -0.5), self.y_len - 0.51)
-            self.center_line[i].x = nx
-            self.center_line[i].y = ny
-            self.center_line[i].t = float(np.arctan2(ny - prev_y, nx - prev_x))
-            prev_x, prev_y = nx, ny
+        with span("ilqr.apply"):
+            new_free = tf.reshape(res.x_traj[1], (-1, 2)).numpy()
+            prev_x, prev_y = x_octo, y_octo
+            for i in range(1, self.rows):
+                nx = min(max(float(new_free[i - 1, 0]), -0.5), self.x_len - 0.51)
+                ny = min(max(float(new_free[i - 1, 1]), -0.5), self.y_len - 0.51)
+                self.center_line[i].x = nx
+                self.center_line[i].y = ny
+                self.center_line[i].t = float(np.arctan2(ny - prev_y, nx - prev_x))
+                prev_x, prev_y = nx, ny
 
         # Warm-start next frame: shift the plan forward one step, pad with zero.
         u_np = res.u_traj.numpy()
@@ -1123,23 +1126,27 @@ class Octopus:
             # reaction in last_tension on the previous frame. First frame
             # (all-zero) just doesn't move. Rotation (summed torque) is shared;
             # the two propulsion modes differ only in how the CoM TRANSLATES.
-            if self.propulsion_mode == PropulsionMode.REACTION:
-                coordinated_influence = self._propel_body(agents)
-            else:
-                coordinated_influence = self._drift_body_by_tension()
+            with span("body_propel"):
+                if self.propulsion_mode == PropulsionMode.REACTION:
+                    coordinated_influence = self._propel_body(agents)
+                else:
+                    coordinated_influence = self._drift_body_by_tension()
         else:
             assert False, "Unknown movement mode"
 
-        for l in self.limbs:
-            l.move(self.x, self.y, agents, coordinated_influence,
-                   body_theta=self.theta, body_dtheta=self.last_body_dtheta,
-                   visit_recency=self.visit_recency if self.explore_enabled
-                   else None)
+        with span("limbs"):
+            for l in self.limbs:
+                with span("limb.move"):
+                    l.move(self.x, self.y, agents, coordinated_influence,
+                           body_theta=self.theta, body_dtheta=self.last_body_dtheta,
+                           visit_recency=self.visit_recency if self.explore_enabled
+                           else None)
 
         # Mark where the SUCKERS are as explored (after they moved). The idle
         # arms read last frame's map to seek the least-recently-visited cells, so this
         # runs after the moves - a one-frame lag, like the rest of the loop.
-        self._mark_explored()
+        with span("mark_explored"):
+            self._mark_explored()
 
     def _mark_explored(self):
         """Refresh the RECENCY of every cell a sucker now occupies to 1.0, after
