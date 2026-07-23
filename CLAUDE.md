@@ -129,26 +129,28 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   `theta` — so the arms fan out from distinct roots. The body integrates the
   arms' summed *torque* into `theta` (angular twin of the linear tension→drift),
   so the fan rotates. See BODY_ROTATION_PLAN.md.
-- **Motor sensing is PER-NODE** (node-autonomous, not a limb policy): in `ILQR`
-  mode every free centerline node independently **attracts** to the nearest prey
-  within its sense window (strong) and **flees** the nearest threat within it
-  (`repel`, graded so the body-adjacent node recoils hardest and the tip least,
-  `octo_ilqr_repel_tip_fraction`). Both can act on different nodes of one arm at
-  once — there is no single per-limb target or "target kind". A node sensing
-  neither prey **nor a threat** is drawn gently to a stale explore cell
-  (exploration); a node that senses a threat does **not** explore — threat
-  avoidance outranks explore, else the gentle explore pull (weight ≈ the repel
-  weight) fights the flee to a standstill and the arm neither scrunches nor
-  retreats. The body still
-  emerges from the summed base tension. `simulator/ilqr/residuals.py`
-  `attract_residual`/`repel_residual`; the per-node sensing loop is in
-  `Limb._move_ilqr`. Two refinements to avoid boundary artifacts: (1) the sense
-  weight **smoothstep-ramps** to 0 at the window edge (`sense_ramp_band`) instead
-  of a hard on/off (`_sense_ramp`), so nodes don't bunch at the radius; (2) flee
-  aims at a point one `repel_step` **toward the body** (not the body centre), so
-  the retraction magnitude comes from the threat-proximity weight and is
-  **independent of how far the node is from the body** — far tips no longer get
-  yanked in explosively.
+- **Motor sensing is LIMB-UNIFORM** (per-node categorize → limb decides → nodes
+  acquire): in `ILQR` mode each free centerline node is first **categorized** by
+  what it senses this frame (priority `idle < explore < prey < THREAT`); the
+  **limb** then takes the highest-priority state among its nodes, and **every node
+  acquires that one limb state**, so the whole arm commits to a single behavior.
+  This replaced the older node-autonomous scheme, where one arm could have some
+  nodes reaching **out** (explore/prey) while others scrunched **in** (flee) —
+  the two halves fought to a stretched standstill (huge base spring cost). Per
+  limb state: **THREAT** → every node **retracts toward the body** (`repel`, at
+  the intensity of the closest threat any node senses; the solver grades
+  body-adjacent hardest / tip least via `octo_ilqr_repel_tip_fraction`); **PREY**
+  → every node **attracts to the arm's nearest sensed prey** (strong); **EXPLORE**
+  → each node reaches its **own** nearest stale cell (so the arm spreads to cover
+  ground); **IDLE** → nothing. The body still emerges from the summed base
+  tension. `simulator/ilqr/residuals.py` `attract_residual`/`repel_residual`; the
+  categorize→decide→acquire logic is in `Limb._move_ilqr`. Two refinements to
+  avoid boundary artifacts: (1) the sense weight **smoothstep-ramps** to 0 at the
+  window edge (`sense_ramp_band`) instead of a hard on/off (`_sense_ramp`), so the
+  flee intensity doesn't jump as a threat crosses the radius; (2) flee aims at a
+  point one `repel_step` **toward the body** (not the body centre), a
+  constant-magnitude retraction **independent of how far the node is from the
+  body** — far tips no longer get yanked in explosively.
 - **Propulsion** (`octopus.propulsion_mode`, `simutil.PropulsionMode`): how the
   body's centre of mass translates. `INTERNAL` = the legacy summed-arm-tension
   drift (`_drift_body_by_tension`), non-physical (internal forces can't move a
@@ -175,16 +177,17 @@ which is baselined on `TEST` and raises `UnknownConfigKey` on a typo.
   when a sucker is on it (not incremented, so dwell time doesn't matter) and
   **ticks down linearly** by `1/octo_ilqr_explore_ticks` each frame, so its value
   is `max(1 - frames_since_last_visit / explore_ticks, 0)` and it fully reopens
-  exactly `explore_ticks` frames (default 1000) after its last visit. A node that
-  senses neither prey nor a threat is gently drawn
+  exactly `explore_ticks` frames (default 1000) after its last visit. When a limb
+  is in the **explore** state, each of its nodes is gently drawn
   (`w_explore ≪ w_reach_terminal`) to a stale cell chosen **lexicographically**
   (`_node_explore_target`): first the least-recently-visited set (minimum
-  recency in `explore_node_radius`, plus a threat penalty in the primary key),
-  then the **closest** of that set — recency always beats distance, so a node
-  never prefers a near recent cell to a far stale one. The chosen cell is
-  recorded (`explore_cell`, schema v4) for the analyzer's hover box. Prey **and
-  threat** both outrank it per node (a threatened node stops exploring and
-  flees). See EXPLORATION_PLAN.md.
+  recency in `explore_node_radius`), then the **closest** of that set — recency
+  always beats distance, so a node never prefers a near recent cell to a far
+  stale one. The chosen cell is recorded (`explore_cell`, schema v4) for the
+  analyzer's hover box. Prey **and threat** outrank explore at the **limb** level
+  (see Motor sensing): any node sensing prey/threat makes the whole arm
+  chase/flee, so a limb explores only when *none* of its nodes senses either. See
+  EXPLORATION_PLAN.md.
 - **Camouflage:** each sucker matches the surface color beneath it,
   constrained to change ≤ `octo_max_hue_change` per step **per channel**. Full
   **RGB**: the surface grid is `(y, x, 3)` and each of `Color.r/g/b` matches its

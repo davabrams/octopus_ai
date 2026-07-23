@@ -751,67 +751,91 @@ class Limb:
         sw_prey = float(np.sqrt(self.ilqr_cfg.w_reach_terminal))
         sw_explore = float(np.sqrt(self.w_explore))
         explore_on = self.explore_enabled and visit_recency is not None
-        # Per-node motor state for the analyzer (row 0 = base = idle). 0 idle,
-        # 1 exploring, 2 chasing prey, 3 avoiding threat (grip=4 set in _propel_body).
-        states = np.zeros(self.rows, dtype=np.int8)
-        # The actual frontier CELL each exploring node picked (NaN where a node
-        # isn't exploring), recorded so the analyzer's hover box lands on the real
-        # target rather than the 0.3-stepped attract point.
+        band = self.sense_ramp_band
+        # The frontier CELL each exploring node picked (NaN where a node isn't
+        # exploring), recorded so the analyzer's hover box lands on the real cell.
         explore_cell = np.full((n_free, 2), np.nan, dtype=np.float32)
+
+        # ---- Per-node sensing, then LIMB-UNIFORM behavior -------------------
+        # (1) Categorize every free node by what it senses this frame, priority
+        # idle < explore < prey < THREAT. (2) The LIMB takes the highest-priority
+        # state among its nodes. (3) Every node then ACQUIRES the limb state, so
+        # the whole arm commits to ONE behavior. This removes the split where
+        # some nodes explored (pulling OUT) while others fled (scrunching IN) and
+        # fought each other to a stretched standstill.
+        #
+        # (1) categorize: node_state + the nearest prey/threat each node senses.
+        node_state = np.zeros(n_free, dtype=np.int8)  # 0 idle 1 explore 2 prey 3 threat
+        threat_ramp = np.zeros(n_free, dtype=np.float32)
+        prey_d = np.full(n_free, np.inf, dtype=np.float32)
+        prey_ramp = np.zeros(n_free, dtype=np.float32)
+        prey_pos = np.zeros((n_free, 2), dtype=np.float32)
         for i in range(n_free):
             node = self.center_line[i + 1]
-            prey_i = False
-            # This node's nearest threat within its window: flee = retract toward
-            # the BODY, with the force MAGNITUDE set by threat proximity (the
-            # ramp weight), NOT by how far the node is from the body.
-            nthreat = None
             if len(threat_xy):
                 dtn = np.hypot(threat_xy[:, 0] - node.x, threat_xy[:, 1] - node.y)
                 k = int(np.argmin(dtn))
                 if dtn[k] <= R:
-                    nthreat = threat_xy[k]
-                    # Smooth ramp (full inside, smoothstep to 0 at R) instead of a
-                    # hard edge, so a node crossing the window doesn't jump from no
-                    # force to full force and pile up at the threshold.
-                    ramp = _sense_ramp(float(dtn[k]), R, self.sense_ramp_band)
-                    # Aim at a point ONE `repel_step` toward the body (capped at the
-                    # body), not the body centre: the residual magnitude is then
-                    # `repel_step` (constant), so the flee cost is w_repel*ramp*
-                    # step^2 - body-distance-INDEPENDENT. Targeting the body centre
-                    # made the cost ~ w_repel*ramp*|node-body|^2, which yanked far
-                    # tips explosively and let them catch up to inner nodes (bunch).
-                    bx, by = x_octo - node.x, y_octo - node.y  # node -> body
-                    dbody = float(np.hypot(bx, by))
-                    if dbody > 1e-9:
-                        s = min(self.repel_step, dbody)
-                        repel_tgt[i] = (node.x + bx / dbody * s,
-                                        node.y + by / dbody * s)
-                    else:
-                        repel_tgt[i] = (x_octo, y_octo)
-                    repel_sw[i] = float(np.sqrt(w_repel * ramp))
-            # Nearest PREY within the window -> strong attract, ramped the same way
-            # (was full weight the instant d <= R, which bunched boundary nodes).
-            if len(prey_xy):
+                    # Smooth ramp (full inside, smoothstep to 0 at R) so a node
+                    # crossing the window doesn't jump from no force to full force.
+                    threat_ramp[i] = _sense_ramp(float(dtn[k]), R, band)
+                    node_state[i] = 3
+            if node_state[i] != 3 and len(prey_xy):
                 dp = np.hypot(prey_xy[:, 0] - node.x, prey_xy[:, 1] - node.y)
                 j = int(np.argmin(dp))
                 if dp[j] <= R:
-                    ramp = _sense_ramp(float(dp[j]), R, self.sense_ramp_band)
-                    attract_tgt[i] = prey_xy[j]
-                    attract_sw[i] = sw_prey * float(np.sqrt(ramp))
-                    prey_i = True
-            # Else EXPLORE, PER NODE: this node is drawn (gently) to ITS OWN
-            # nearest least-recently-visited cell (whole-body visit map, per-node target).
-            # Each node seeks a different local cell, so the arm spreads to cover
-            # ground and the springs keep it spaced - drawing every node to one
-            # shared cell balls the whole arm up on it. A node that senses a THREAT
-            # does NOT explore: threat avoidance outranks explore (the stated
-            # priority), and a gentle explore pull with weight ~= the repel weight
-            # otherwise fights the flee to a standstill (the arm neither scrunches
-            # nor retreats), which is exactly what was observed.
-            explored_i = False
-            if attract_sw[i] == 0.0 and repel_sw[i] == 0.0 and explore_on:
+                    prey_d[i] = dp[j]
+                    prey_pos[i] = prey_xy[j]
+                    prey_ramp[i] = _sense_ramp(float(dp[j]), R, band)
+                    node_state[i] = 2
+            if node_state[i] == 0 and explore_on:
+                node_state[i] = 1
+
+        # (2) the limb takes the highest-priority state present among its nodes.
+        if (node_state == 3).any():
+            limb_state = 3
+        elif (node_state == 2).any():
+            limb_state = 2
+        elif (node_state == 1).any():
+            limb_state = 1
+        else:
+            limb_state = 0
+
+        # (3) every node acquires the limb state (uniform arm behavior).
+        if limb_state == 3:
+            # FLEE: the whole arm retracts toward the body, at the intensity of
+            # the CLOSEST threat any node senses (the solver grades body>tip via
+            # repel_tip_fraction). repel_tgt is one repel_step toward the body -
+            # a constant-magnitude retraction that's body-distance-INDEPENDENT,
+            # so far tips aren't yanked in explosively.
+            sw = float(np.sqrt(w_repel * float(threat_ramp.max())))
+            for i in range(n_free):
+                node = self.center_line[i + 1]
+                bx, by = x_octo - node.x, y_octo - node.y  # node -> body
+                dbody = float(np.hypot(bx, by))
+                if dbody > 1e-9:
+                    s = min(self.repel_step, dbody)
+                    repel_tgt[i] = (node.x + bx / dbody * s,
+                                    node.y + by / dbody * s)
+                else:
+                    repel_tgt[i] = (x_octo, y_octo)
+                repel_sw[i] = sw
+        elif limb_state == 2:
+            # PREY: the whole arm reaches the nearest prey any node senses.
+            j = int(np.argmin(prey_d))
+            tgt = prey_pos[j]
+            sw = sw_prey * float(np.sqrt(float(prey_ramp.max())))
+            for i in range(n_free):
+                attract_tgt[i] = tgt
+                attract_sw[i] = sw
+        elif limb_state == 1:
+            # EXPLORE: each node reaches its OWN nearest least-recently-visited
+            # cell, so the arm spreads to cover ground (springs keep it spaced);
+            # drawing every node to one shared cell would ball the arm up on it.
+            for i in range(n_free):
+                node = self.center_line[i + 1]
                 ept, ecell = self._node_explore_target(
-                    node.x, node.y, visit_recency, nthreat)
+                    node.x, node.y, visit_recency, None)
                 if ept is not None:
                     explore_cell[i] = ecell
                     ept = np.asarray(ept, dtype=float)
@@ -824,32 +848,25 @@ class Limb:
                     self._explore_ema[i] = smoothed
                     attract_tgt[i] = smoothed
                     attract_sw[i] = sw_explore
-                    explored_i = True
-            if not explored_i:
-                # Node isn't holding an explore target (prey/threat took it, or
-                # none) -> drop the EMA so a later re-entry reseeds cleanly.
-                self._explore_ema[i] = np.nan
-            # Motor state for this node (threat avoidance outranks prey outranks
-            # explore); row i+1 because row 0 is the pinned base.
-            if repel_sw[i] > 0.0:
-                states[i + 1] = 3      # avoiding threat
-            elif prey_i:
-                states[i + 1] = 2      # chasing prey
-            elif explored_i:
-                states[i + 1] = 1      # exploring
+                else:
+                    self._explore_ema[i] = np.nan
+        if limb_state != 1:
+            # Not exploring -> drop every EMA so a later re-entry reseeds cleanly.
+            self._explore_ema[:] = np.nan
+
+        # Per-node motor state = the limb state (row 0 = base, always idle). All
+        # free nodes share it now, so the analyzer shows one colour per arm.
+        states = np.zeros(self.rows, dtype=np.int8)
+        states[1:] = limb_state
         self.last_node_state = states
-        # Limb policy = the whole arm's dominant behavior (avoiding > chasing >
-        # gripping > exploring > idle). Grip comes from _propel_body (last frame).
-        if (states == 3).any():
-            self.last_limb_state = 3
-        elif (states == 2).any():
-            self.last_limb_state = 2
+        # Limb policy colour: grip (from _propel_body last frame) outranks explore
+        # but not prey/threat (avoiding > chasing > gripping > exploring > idle).
+        if limb_state >= 2:
+            self.last_limb_state = limb_state
         elif self.last_gripping:
             self.last_limb_state = 4
-        elif (states == 1).any():
-            self.last_limb_state = 1
         else:
-            self.last_limb_state = 0
+            self.last_limb_state = limb_state
 
         # Snapshot the warm-start controls BEFORE the solve: the np.roll below
         # builds a fresh array, so this reference stays stable for recording.

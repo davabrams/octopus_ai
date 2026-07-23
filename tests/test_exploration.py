@@ -226,12 +226,15 @@ class TestRewardHierarchy(unittest.TestCase):
         self.assertLess(cfg.octopus.limb.ilqr.w_explore,
                         cfg.octopus.limb.ilqr.w_reach_terminal)
 
-    def test_prey_and_threat_act_per_node(self):
-        """Node-autonomous (NOT a limb policy): with a prey AND a threat both in
-        range, some nodes attract (prey) while others flee (threat) at the same
-        time - neither preempts the other at the limb level."""
+    def test_limb_state_is_uniform_and_threat_preempts_prey(self):
+        """LIMB-UNIFORM (not per-node): every free node in an arm shares ONE
+        state, and the arm takes the highest-priority state among its nodes
+        (idle < explore < prey < THREAT). So with a prey AND a threat both in
+        range, the whole arm FLEES - no node chases prey while its neighbours
+        scrunch (the split that stretched the arm)."""
         octo, ag = _octo(explore=True, agents=0)
         cx, cy = octo.x, octo.y
+        # Close in, so every node senses BOTH the prey and the threat.
         prey = Agent(x=cx + 2.0, y=cy, agent_type=AgentType.PREY)
         threat = Agent(x=cx - 2.0, y=cy, agent_type=AgentType.THREAT)
         ag.agents = [prey, threat]
@@ -239,8 +242,14 @@ class TestRewardHierarchy(unittest.TestCase):
             prey.x, prey.y = cx + 2.0, cy
             threat.x, threat.y = cx - 2.0, cy
             octo.move(ag)
-        self.assertTrue(_attract_sw(octo).any())  # some node attracts (prey)
-        self.assertTrue(_repel_sw(octo).any())    # some node flees (threat)
+        # Each arm's free nodes share a single state (no mixed push/scrunch).
+        for limb in octo.limbs:
+            self.assertLessEqual(len(set(limb.last_node_state[1:].tolist())), 1)
+        # Threat in range -> the arm flees (3), never chases (2): prey preempted.
+        self.assertTrue(any(l.last_limb_state == 3 for l in octo.limbs))
+        self.assertFalse(any(l.last_limb_state == 2 for l in octo.limbs))
+        self.assertFalse(_attract_sw(octo).any())  # nobody chases prey
+        self.assertTrue(_repel_sw(octo).any())      # the arm flees
 
 
 if __name__ == '__main__':
