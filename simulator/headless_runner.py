@@ -219,6 +219,8 @@ class HeadlessRunner:
             ag.place_agents(agent_positions)
         else:
             ag.generate(num_agents=cfg.agents.count)
+            # Guarantee some food: `count`'s 50/50 flips can leave few/no prey.
+            ag.generate(num_agents=3, fixed_agent_type=AgentType.PREY)
         inference_mode, model = _load_model(cfg)
 
         recorder = None
