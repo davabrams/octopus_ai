@@ -16,6 +16,7 @@ frontends.
 | `ARCHITECTURE.md` | Deep module-by-module reference, data flow, APIs |
 | `TRAINING.md` | Step-by-step training/inference workflows and env setup |
 | `tests/README.md` | Per-file test coverage description |
+| `ILQR_PERF.md` | iLQR solve profiling + what optimizations were tried/reverted/rejected (READ before re-optimizing the solver) |
 | `README.md` | Public-facing intro |
 
 ## Tech Stack
@@ -400,3 +401,11 @@ unused imports); clean opportunistically, don't let it block work.
     threaded only**: the span stack is shared mutable state, so never open a span
     inside a ThreadPool worker (e.g. the parallel colour inference) — wrap the
     whole parallel call in one span on the calling thread instead.
+11. **Before re-optimizing the iLQR solve, read `ILQR_PERF.md`.** It records the
+    profiling and every optimization already tried. In particular: the compiled
+    backward (`solver_parallel.py`) is KEPT (~3.3× on the backward);
+    `jit_compile=True` (XLA) on `backward_pass` was measured (1.6×) and
+    deliberately **reverted** (per-controller XLA compile bloats the test suite +
+    tips a fragile rotation test) — don't re-add it without re-checking those
+    trade-offs. Do NOT batch the solve across arms (they must stay independent for
+    the future one-process-per-arm goal).
