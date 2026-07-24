@@ -132,6 +132,8 @@ def serialize_state(
                     "color_before": before_rgb,
                     "target_color": [float(target.r), float(target.g), float(target.b)],
                     "state": st,
+                    "limb": limb_ix,  # so the analyzer groups suckers by arm (the
+                                      # live-frame path lacked this; playback has it)
                 }
             )
 

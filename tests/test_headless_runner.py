@@ -170,7 +170,7 @@ class TestSerializeStateShape(unittest.TestCase):
                          {"head", "limbs", "suckers", "limb_states", "body_state"})
         self.assertEqual(
             set(state["octopus"]["suckers"][0].keys()),
-            {"x", "y", "color", "color_before", "target_color", "state"},
+            {"x", "y", "color", "color_before", "target_color", "state", "limb"},
         )
         self.assertEqual(
             set(state["agents"][0].keys()),

@@ -400,13 +400,18 @@ function drawWorld(ctx, background, state, view) {
   // draw dimmed and skin-less, and the selected limb draws LAST (on top).
   if (view.showSuckers !== false || view.showSkin) {
     const halfW = Math.max(0.25, (view.suckerColSpacing || 0.1) / 2 + 0.23);
-    const perLimb = (view.limbRows || 16) * (view.limbCols || 1);
+    const n = state.octopus.limbs.length;
+    // Group suckers by their arm. Prefer the recorded s.limb; else fall back to
+    // even limb-major chunks (suckers are appended limb by limb) sized by the
+    // ACTUAL sucker/limb counts, so a sucker can never land on a non-existent
+    // limb index and get dropped (a stale limbRows guess did exactly that).
+    const perLimb = n > 0 ? Math.ceil(state.octopus.suckers.length / n)
+                          : ((view.limbRows || 16) * (view.limbCols || 1));
     const byLimb = {};
     state.octopus.suckers.forEach((s, gi) => {
       const li = s.limb != null ? s.limb : Math.floor(gi / perLimb);
       (byLimb[li] = byLimb[li] || []).push(s);
     });
-    const n = state.octopus.limbs.length;
     const order = [];
     for (let i = 0; i < n; i++) if (!(hasSelection && i === selLimb)) order.push(i);
     if (hasSelection && selLimb != null && selLimb < n) order.push(selLimb);
