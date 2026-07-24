@@ -372,18 +372,7 @@ function drawWorld(ctx, background, state, view) {
   const selLimb = view.selectedLimb; // number or "all"
   const hasSelection = selLimb !== "all" && selLimb != null;
 
-  // Fleshy limb skins (octopus look): a constant-width outlined tube around each
-  // arm's node spine, wide enough to enclose its suckers, drawn UNDER the
-  // suckers. Half-width tracks the sucker column spacing.
-  if (view.showSkin && state.octopus.limbs) {
-    const halfW = Math.max(0.25, (view.suckerColSpacing || 0.1) / 2 + 0.23);
-    state.octopus.limbs.forEach((limb, limbIdx) => {
-      if (hasSelection && limbIdx !== selLimb) return;
-      drawLimbSkin(ctx, limb, cs, halfW, "#141414");
-    });
-  }
-
-  // Head.
+  // Head (drawn behind the arms).
   if (view.showHead !== false) {
     const hx = state.octopus.head.x * cs, hy = state.octopus.head.y * cs;
     ctx.fillStyle = hasSelection ? "rgba(255,102,102,0.25)"
@@ -403,40 +392,37 @@ function drawWorld(ctx, background, state, view) {
     }
   }
 
-  // Suckers, colored per the active color mode.
-  if (view.showSuckers !== false) {
-    state.octopus.suckers.forEach((s) => {
-      const dimmed = hasSelection && s.limb != null && s.limb !== selLimb;
-      let col = pickSuckerColor(s, view.colorMode);
-      if (dimmed) {
-        col = col.replace("rgb(", "rgba(").replace(")", ",0.15)");
+  // Limb skins + suckers, INTERLEAVED PER LIMB: each limb draws its own skin
+  // then its own suckers, so a limb's skin sits immediately behind THAT limb's
+  // suckers - not all skins behind all suckers, which merged the arms into one
+  // blob. Later limbs layer over earlier ones, so the individual arms stay
+  // legible even when the octopus balls up. With a limb selected, the others
+  // draw dimmed and skin-less, and the selected limb draws LAST (on top).
+  if (view.showSuckers !== false || view.showSkin) {
+    const halfW = Math.max(0.25, (view.suckerColSpacing || 0.1) / 2 + 0.23);
+    const perLimb = (view.limbRows || 16) * (view.limbCols || 1);
+    const byLimb = {};
+    state.octopus.suckers.forEach((s, gi) => {
+      const li = s.limb != null ? s.limb : Math.floor(gi / perLimb);
+      (byLimb[li] = byLimb[li] || []).push(s);
+    });
+    const n = state.octopus.limbs.length;
+    const order = [];
+    for (let i = 0; i < n; i++) if (!(hasSelection && i === selLimb)) order.push(i);
+    if (hasSelection && selLimb != null && selLimb < n) order.push(selLimb);
+    order.forEach((limbIdx) => {
+      const dimmed = hasSelection && limbIdx !== selLimb;
+      if (view.showSkin && !dimmed) {
+        drawLimbSkin(ctx, state.octopus.limbs[limbIdx], cs, halfW, "#141414");
       }
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
-      ctx.fill();
-      if (view.showOutlines) {
-        // Color the outline by the node's behavior policy when enabled. Give it a
-        // dark backing ring so the state colour reads on ANY background - the
-        // pale limb "skin" otherwise washes a thin coloured ring out.
-        if (view.stateColors && !dimmed) {
-          ctx.strokeStyle = "rgba(15,15,18,0.9)";
-          ctx.lineWidth = 3.5;
-          ctx.stroke();
-        }
-        ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)"
-          : (view.stateColors ? stateColor(s.state || 0) : "#222");
-        ctx.lineWidth = view.stateColors ? 2.25 : 1;
-        ctx.stroke();
-      } else {
-        // Outlines disabled: stroke in the sucker's OWN fill colour (not grey),
-        // so it reads as a clean solid dot with a crisp edge against the skin.
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.stroke();
+      if (view.showSuckers !== false) {
+        (byLimb[limbIdx] || []).forEach((s) => drawSucker(ctx, s, cs, view, dimmed));
       }
     });
+  }
 
+  // Suckers hover highlight + attract-target box (on top of the arms).
+  if (view.showSuckers !== false) {
     // Highlighted sucker (inspector hover).
     if (view.hoverSucker != null && state.octopus.suckers[view.hoverSucker]) {
       const s = state.octopus.suckers[view.hoverSucker];
@@ -559,6 +545,35 @@ function pickSuckerColor(s, mode) {
   }
   const [r, g, b] = C.asTriple(s.color); // "after" (default)
   return `rgb(${C.to255(r)},${C.to255(g)},${C.to255(b)})`;
+}
+
+// Draw one sucker disc (fill + outline). `dimmed` fades a non-selected limb's
+// suckers when a single limb is selected.
+function drawSucker(ctx, s, cs, view, dimmed) {
+  let col = pickSuckerColor(s, view.colorMode);
+  if (dimmed) col = col.replace("rgb(", "rgba(").replace(")", ",0.15)");
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.arc(s.x * cs, s.y * cs, cs * 0.15, 0, 2 * Math.PI);
+  ctx.fill();
+  if (view.showOutlines) {
+    // Colour the outline by the node's behavior policy when state colors are on.
+    // A dark backing ring makes the state colour read on the pale skin.
+    if (view.stateColors && !dimmed) {
+      ctx.strokeStyle = "rgba(15,15,18,0.9)";
+      ctx.lineWidth = 3.5;
+      ctx.stroke();
+    }
+    ctx.strokeStyle = dimmed ? "rgba(34,34,34,0.15)"
+      : (view.stateColors ? stateColor(s.state || 0) : "#222");
+    ctx.lineWidth = view.stateColors ? 2.25 : 1;
+    ctx.stroke();
+  } else {
+    // Outlines off: stroke in the sucker's own fill colour for a clean edge.
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 }
 
 function drawIlqrOverlay(ctx, view) {
