@@ -32,7 +32,9 @@ class TestPreyCapture(unittest.TestCase):
         return Octopus(p), AgentGenerator(p)
 
     def test_prey_on_a_sucker_is_captured(self):
-        octo, ag = self._octo_and_gen()
+        # respawn off so this isolates CAPTURE (the caught prey leaves the list);
+        # the respawn/replacement behaviour is covered separately below.
+        octo, ag = self._octo_and_gen(agent_respawn_captured_prey=False)
         s = octo.limbs[0].suckers[0]
         ag.agents = [Agent(x=s.x, y=s.y, agent_type=AgentType.PREY)]
         n = ag.remove_captured_prey(octo)
@@ -109,12 +111,21 @@ class TestPreyCapture(unittest.TestCase):
         self.assertEqual(len(ag.agents), 1)
         self.assertEqual(ag.agents[0].agent_type, AgentType.PREY)
 
-    def test_no_respawn_by_default(self):
+    def test_respawn_is_on_by_default(self):
+        """Respawn is the default: a caught prey is replaced (population constant)."""
         octo, ag = self._octo_and_gen()
         s = octo.limbs[0].suckers[0]
         ag.agents = [Agent(x=s.x, y=s.y, agent_type=AgentType.PREY)]
+        self.assertEqual(ag.remove_captured_prey(octo), 1)
+        self.assertEqual(len(ag.agents), 1)          # replaced, not removed
+        self.assertEqual(ag.agents[0].agent_type, AgentType.PREY)
+
+    def test_no_respawn_when_disabled(self):
+        octo, ag = self._octo_and_gen(agent_respawn_captured_prey=False)
+        s = octo.limbs[0].suckers[0]
+        ag.agents = [Agent(x=s.x, y=s.y, agent_type=AgentType.PREY)]
         ag.remove_captured_prey(octo)
-        self.assertEqual(len(ag.agents), 0)
+        self.assertEqual(len(ag.agents), 0)          # removed, not replaced
 
     def test_empty_agents_is_safe(self):
         octo, ag = self._octo_and_gen()

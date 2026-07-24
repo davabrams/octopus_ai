@@ -81,7 +81,9 @@ class AgentConfig:
                                  # see OctopusConfig.sensing_radius.
     prey_capture_radius: float = 0.3  # a PREY within this distance of any
                                       # sucker is captured; 0 disables
-    respawn_captured_prey: bool = False
+    respawn_captured_prey: bool = True  # when a prey is caught, spawn a fresh one
+                                        # (random position) so the prey count stays
+                                        # constant - the world never runs out of food
     visibility_threshold: float = 0.05  # PURSUIT_FLEE only: the octopus must be
                                         # at least this VISIBLE (mean squared
                                         # camouflage error, ~0 = perfectly hidden)
